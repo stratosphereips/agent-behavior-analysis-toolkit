@@ -1,0 +1,37 @@
+
+
+class Agent:
+    def __init__(self, **kwargs):
+        self.params = kwargs  # Store parameters in a dictionary
+        self._initialize_agent()
+
+    def _initialize_agent(self):
+        """
+        Optional: Allows subclasses to do specific initializations using self.params
+        """
+        pass
+
+    def step(state, training=False):
+        raise NotImplementedError
+    
+    def evaluate_policy(self, env, num_episodes:int, get_trajectories:bool=False):
+        trajectories = []
+        returns = []
+        for _ in range(num_episodes):
+            state, _ = env.reset()
+            done = False
+            ret = 0
+            t = []
+            while not done:
+                action = self.step(state)
+                next_state, reward, terminated, truncated, _ = env.step(action)
+                t.append((state, action, reward, next_state))
+                done = terminated or truncated
+                ret += reward
+                state = next_state
+            trajectories.append(t)
+            returns.append(ret)
+        return returns, trajectories
+
+    def train_policy(self, env, num_episodes , evaluate_each=None, evaluate_for=None):
+        raise NotImplementedError
