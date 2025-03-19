@@ -37,10 +37,10 @@ class Qlearning(Agent):
                 done = terminated or truncated
                 # update rule
                 if not done:
-                    self.Q[state, action] += self.alpha * (reward + self.gamma * max(self.Q[next_state, :]) - self.Q[next_state, action])
+                    self.Q[state, action] += self.alpha * (reward + self.gamma * max(self.Q[next_state, :]) - self.Q[state, action])
                 else:
-                    self.Q[state, action] += self.alpha * (reward - self.Q[state, action])  # Terminal update
-
+                    self.Q[state, action] += self.alpha * (reward - self.Q[state, action])
+                self.Q[state, action] = np.clip(self.Q[state, action], -1e10, 1e10)
                 state = next_state  # Move to the next step
             
             # Decay epsilon (gradually reduce exploration)
