@@ -17,19 +17,13 @@ class Qlearning(Agent):
         self.epsilon = epsilon
         self.epsilon_min = epsilon_min
         self.epsilon_decay = epsilon_decay
-        self._state_to_id = {}
         self.action_space_size = acion_space_size
 
-    def get_state_id(self, state):
-        if state not in self._state_to_id:
-            self._state_to_id[state] = len(self._state_to_id)
-        return self._state_to_id[state]
     def step(self, state, training=False):
-        state_id = self.get_state_id(state)
         if training:
-            return epsilon_greedy(self.Q, state_id, self.epsilon, self.action_space_size)
+            return epsilon_greedy(self.Q, state, self.epsilon, self.action_space_size)
         else:
-            return epsilon_greedy(self.Q, state_id, 0,self.action_space_size)
+            return epsilon_greedy(self.Q, state, 0,self.action_space_size)
     
     def train_policy(self, env, num_episodes:int, evaluate_each:int, evaluate_for:int):
         """Q_learning algorithm with periodic evaluation."""
@@ -42,12 +36,10 @@ class Qlearning(Agent):
                 next_state, reward, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
                 # update rule
-                state_id = self.get_state_id(state)
-                next_state_id = self.get_state_id(next_state)
                 if not done:
-                    self.Q[state_id, action] += self.alpha * (reward + self.gamma * max(self.Q[next_state_id, :]) - self.Q[state_id, action])
+                    self.Q[state, action] += self.alpha * (reward + self.gamma * max(self.Q[next_state, :]) - self.Q[next_state, action])
                 else:
-                    self.Q[state_id, action] += self.alpha * (reward - self.Q[state_id, action])  # Terminal update
+                    self.Q[state, action] += self.alpha * (reward - self.Q[state, action])  # Terminal update
 
                 state = next_state  # Move to the next step
             
