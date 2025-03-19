@@ -1,6 +1,5 @@
-import numpy as np
 import gymnasium as gym
-from utils import get_bins, discretize_observation
+from .utils import get_bins, discretize_observation
 
 
 class DiscretizedCartPoleEnv(gym.ObservationWrapper):
@@ -8,7 +7,7 @@ class DiscretizedCartPoleEnv(gym.ObservationWrapper):
     A wrapper that discretizes the observation space of CartPole.
     """
 
-    def __init__(self, num_bins=20, velocity_bound=5.0, angular_velocity_bound=5.0):
+    def __init__(self, num_bins=20, velocity_bound=3.0, angular_velocity_bound=2.0):
         env = gym.make("CartPole-v1")
         super().__init__(env)
 
@@ -24,7 +23,10 @@ class DiscretizedCartPoleEnv(gym.ObservationWrapper):
         observation_space_high[3] = angular_velocity_bound
         observation_space_low[1] = -velocity_bound
         observation_space_low[3] = -angular_velocity_bound
-        self.bins = get_bins(observation_space_high, observation_space_low, num_bins=20)
+        self.bins = get_bins(observation_space_high, observation_space_low, num_bins=num_bins)
+    @property
+    def observation_space_size(self)->int:
+        return self.num_bins**len(self.bins)
 
     def observation(self, observation):
         """Discretizes the observation."""
