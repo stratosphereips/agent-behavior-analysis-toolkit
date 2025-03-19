@@ -1,11 +1,16 @@
 import numpy as np
 from .base_agent import Agent
+import math
 
 def epsilon_greedy(Q, state, epsilon, action_space):
     """Select an action using the epsilon-greedy strategy."""
     if np.random.rand() < epsilon:
         return np.random.choice(action_space)
     return np.argmax(Q[state])
+
+def exponential_epsilon_decay(episode, initial_epsilon, min_epsilon, decay_rate):
+    """Calculates epsilon using exponential decay based on episode number."""
+    return max(min_epsilon, initial_epsilon * math.exp(-decay_rate * episode))
 
 class Qlearning(Agent):
     
@@ -40,11 +45,10 @@ class Qlearning(Agent):
                     self.Q[state, action] += self.alpha * (reward + self.gamma * max(self.Q[next_state, :]) - self.Q[state, action])
                 else:
                     self.Q[state, action] += self.alpha * (reward - self.Q[state, action])
-                self.Q[state, action] = np.clip(self.Q[state, action], -1e10, 1e10)
                 state = next_state  # Move to the next step
             
             # Decay epsilon (gradually reduce exploration)
-            self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+            self.epsilon = exponential_epsilon_decay(episode, 1.0, self.epsilon_min, self.epsilon_decay)
 
             # Periodic evaluation
             if evaluate_each:

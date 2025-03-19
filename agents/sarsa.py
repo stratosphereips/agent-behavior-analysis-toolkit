@@ -1,11 +1,16 @@
 import numpy as np
 from .base_agent import Agent
+import math
 
 def epsilon_greedy(Q, state, epsilon, action_space):
     """Select an action using the epsilon-greedy strategy."""
     if np.random.rand() < epsilon:
         return np.random.choice(action_space)
     return np.argmax(Q[state])
+
+def exponential_epsilon_decay(episode, initial_epsilon, min_epsilon, decay_rate):
+    """Calculates epsilon using exponential decay based on episode number."""
+    return max(min_epsilon, initial_epsilon * math.exp(-decay_rate * episode))
 
 class Sarsa(Agent):
 
@@ -47,7 +52,7 @@ class Sarsa(Agent):
                 state, action = next_state, next_action  # Move to the next step
             
             # Decay epsilon (gradually reduce exploration)
-            self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+            self.epsilon = exponential_epsilon_decay(episode, 1.0, self.epsilon_min, self.epsilon_decay)
 
             # Periodic evaluation
             if evaluate_each:
