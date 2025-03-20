@@ -1,151 +1,130 @@
-import gymnasium as gym
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.optim as optim
 import random
+from typing import List, Tuple
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.optimizers import Adam
 from collections import deque
+from .base_agent import Agent
+import tensorflow as tf
 
-# Hyperparameters
-LEARNING_RATE = 0.001
-GAMMA = 0.95
-EPSILON_START = 1.0
-EPSILON_MIN = 0.01
-EPSILON_DECAY = 0.005
-MEMORY_SIZE = 10000
-BATCH_SIZE = 64
-TARGET_UPDATE = 10  # How often to update the target network
-NUM_EPISODES = 10000
+class DQN(Agent):
+    def __init__(self, obs_space_size: int, action_space_size: int, learning_rate: float = 0.001,
+                 gamma: float = 0.99, epsilon: float = 1.0, epsilon_min: float = 0.01,
+                 epsilon_decay: float = 0.995, batch_size: int = 32, memory_size: int = 100000,
+                 hidden_units: int = 128, train_each=4):
+        super().__init__()
+        self.obs_space_size = obs_space_size
+        self.action_space_size = action_space_size
+        self.learning_rate = learning_rate
+        self.gamma = gamma
+        self.epsilon = epsilon
+        self.epsilon_min = epsilon_min
+        self.epsilon_decay = epsilon_decay
+        self.batch_size = batch_size
+        self.memory_size = memory_size
+        self.train_each = train_each
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Memory for experience replay (state, action, reward, next_state, done)
+        self.memory = deque(maxlen=self.memory_size)
+        self.memory_counter = 0
 
+        # Create models
+        self.model = self._build_model(hidden_units)
+        self.target_model = self._build_model(hidden_units)
+        self.update_target_model()
 
-# Define the Q-network
-class DQN(nn.Module):
-    def __init__(self, state_size, action_size):
-        super(DQN, self).__init__()
-        self.fc1 = nn.Linear(state_size, 128)
-        self.fc2 = nn.Linear(128, 128)
-        self.fc3 = nn.Linear(128, action_size)
-        self._state_size = state_size
+    def _build_model(self, hidden_units: int) -> Sequential:
+        model = Sequential([
+            Dense(hidden_units, input_dim=self.obs_space_size, activation='relu'),
+            Dense(hidden_units, activation='relu'),
+            Dense(self.action_space_size, activation='linear')
+        ])
+        model.compile(loss='mse', optimizer=Adam(learning_rate=self.learning_rate))
+        return model
+    
+    def update_target_model(self, tau=0.01):
+        """Soft update target model weights"""
+        model_weights = self.model.get_weights()
+        target_weights = self.target_model.get_weights()
+        new_weights = [tau * mw + (1 - tau) * tw for mw, tw in zip(model_weights, target_weights)]
+        self.target_model.set_weights(new_weights)
 
-    def forward(self, x):
-        x = torch.nn.functional.one_hot(x, num_classes=self.state_size).float()
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        return self.fc3(x)
+    def remember(self, state, action, reward, next_state, done):
+        self.memory.append((state, action, reward, next_state, done))
 
+    def step(self, state, training=False):
+        """ Choose an action based on epsilon-greedy policy. """
+        if training and np.random.random() < self.epsilon:
+            return np.random.randint(self.action_space_size)      
+        
+        # Ensure state is properly shaped for prediction
+        state = np.reshape(state, [1, self.obs_space_size])
+        act_values = self.model.predict(state, verbose=0)
+        return np.argmax(act_values[0])
+    
+    def replay(self):
+        """ Train the model using experience replay. """
+        if len(self.memory) < self.batch_size:
+            return  # Not enough samples in memory yet
 
-# Experience Replay Memory
-class ReplayMemory:
-    def __init__(self, capacity):
-        self.memory = deque(maxlen=capacity)
+        # Sample a batch from the deque (random.sample is faster and avoids conversion overhead)
+        indices = np.random.choice(len(self.memory), self.batch_size, replace=False)
+        batch = [self.memory[idx] for idx in indices]
+        
+        # Unpack batch elements into separate lists
+        states, actions, rewards, next_states, dones = zip(*batch)
+        
+        # Convert lists to NumPy arrays
+        states = np.array(states, dtype=np.float32)
+        actions = np.array(actions, dtype=np.int32)
+        rewards = np.array(rewards, dtype=np.float32)
+        next_states = np.array(next_states, dtype=np.float32)
+        dones = np.array(dones, dtype=np.float32)
 
-    def push(self, experience):
-        self.memory.append(experience)
+        # Predict current Q-values
+        targets = self.model.predict(states, verbose=0)
 
-    def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
+        # Predict next-state Q-values using target model
+        next_q_values = self.target_model.predict(next_states, verbose=0)
 
-    def __len__(self):
-        return len(self.memory)
+        # Update Q-values for the actions taken
+        target_values = rewards + self.gamma * np.max(next_q_values, axis=1) * (1 - dones)
+        targets[np.arange(self.batch_size), actions] = target_values
 
+        # Train the model
+        self.model.fit(states, targets, epochs=1, verbose=0, batch_size=self.batch_size)
 
-# Select action using epsilon-greedy policy
-def select_action(state, policy_net, epsilon, env):
-    if np.random.rand() < epsilon:
-        return env.action_space.sample()
-    with torch.no_grad():
-        state = torch.tensor([state], dtype=torch.long, device=device)
-        return torch.argmax(policy_net(state)).item()
+    def train_policy(self, env, num_episodes: int, evaluate_each: int, evaluate_for: int, target_update_interval: int = 10) -> List[Tuple[int, float]]:
+        """ Train the DQN agent in the environment. """
+        eval_results = []
+        step_counter = 0 
+        for episode in range(1, num_episodes + 1):
+            state, _ = env.reset()
+            state = np.reshape(state, [1, self.obs_space_size])
+            done = False
+            while not done:
+                action = self.step(state, training=True)
+                next_state, reward, terminated, truncated, _ = env.step(action)
+                done = terminated or truncated
+                next_state = np.reshape(next_state, [1, self.obs_space_size])
+                self.remember(state[0], action, reward, next_state[0], done)
+                step_counter += 1
+                if step_counter % self.train_each == 0 and len(self.memory) > self.batch_size:
+                    self.replay()
+                    # Linear decay of epsilon
+                    self.epsilon = max(self.epsilon_min, self.epsilon - (1.0 - self.epsilon_min) / (num_episodes * 0.5))
+                state = next_state
+            
+            # Update target network periodically
+            if episode % target_update_interval == 0:
+                self.update_target_model()
 
+            # Evaluate policy periodically
+            if evaluate_each and episode % evaluate_each == 0:
+                returns, _ = self.evaluate_policy(env, evaluate_for)
+                mean_ret = np.mean(returns)
+                eval_results.append((episode, mean_ret))
+                print(f"Episode {episode}: Mean return = {mean_ret:.2f}")
 
-# Train the DQN
-def train_dqn(env, eval_each, batch_size, gamma, learning_rate, memory_size, num_episodes, target_update):
-    # Initialize policy and target networks
-    policy_net = DQN(env.state_space.n, env.action_space.n).to(device)
-    target_net = DQN(env.state_space.n, env.action_space.n).to(device)
-    target_net.load_state_dict(policy_net.state_dict())  # Copy initial weights
-
-    optimizer = optim.Adam(policy_net.parameters(), lr=learning_rate)
-    memory = ReplayMemory(memory_size)
-    epsilon = EPSILON_START
-
-    for episode in range(num_episodes):
-        state, _ = env.reset()
-        done = False
-        total_reward = 0
-
-        while not done:
-            action = select_action(state, policy_net, epsilon)
-            next_state, reward, terminated, truncated, _ = env.step(action)
-            done = terminated or truncated
-
-            # Adjust reward for learning stability
-            if terminated and reward == 1.0:
-                reward = 10.0  # Large reward for reaching the goal
-            elif terminated and reward == 0.0:
-                reward = -10.0  # Penalty for falling into a hole
-            else:
-                reward = -0.1  # Small penalty for each step to encourage efficiency
-
-            # Store experience in memory
-            memory.push((state, action, reward, next_state, done))
-            state = next_state
-            total_reward += reward
-
-            # Sample a batch and train
-            if len(memory) > batch_size:
-                batch = memory.sample(batch_size)
-                states, actions, rewards, next_states, dones = zip(*batch)
-
-                states = torch.tensor(states, dtype=torch.long, device=device)
-                actions = torch.tensor(actions, dtype=torch.long, device=device)
-                rewards = torch.tensor(rewards, dtype=torch.float32, device=device)
-                next_states = torch.tensor(next_states, dtype=torch.long, device=device)
-                dones = torch.tensor(dones, dtype=torch.bool, device=device)
-
-                q_values = policy_net(states).gather(1, actions.unsqueeze(1)).squeeze(1)
-                next_q_values = target_net(next_states).max(1)[0].detach()
-                target_q_values = rewards + gamma * next_q_values * (~dones)
-
-                loss = nn.MSELoss()(q_values, target_q_values)
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-        # Update target network
-        if episode % target_update == 0:
-            target_net.load_state_dict(policy_net.state_dict())
-
-        # Decay epsilon
-        #epsilon = max(EPSILON_MIN, epsilon * EPSILON_DECAY)
-        epsilon = EPSILON_MIN + (EPSILON_START - EPSILON_MIN) * np.exp(-EPSILON_DECAY * episode)
-        # Print progress
-        if episode % eval_each == 0:
-            evaluate_dqn(policy_net, env)
-            print(f"Episode {episode}: Total Reward: {total_reward}, Epsilon: {epsilon:.3f}")
-
-    return policy_net
-
-# Evaluate the final policy
-def evaluate_dqn(model, env, num_episodes=1000):
-    success = 0
-    trajectories = []
-    for _ in range(num_episodes):
-        state, _ = env.reset()
-        done = False
-        ret = 0
-        t = []
-        while not done:
-            action = select_action(state, model, epsilon=0.0)  # Greedy action
-            next_state, reward, terminated, truncated, _ = env.step(action)
-            done = terminated or truncated
-            t.append((state, action, reward, next_state))
-            if done and reward == 1.0:
-                success += 1
-            state = next_state
-        trajectories.append(t)
-    TG_DQN_FROZEN.add_checkpoint(trajectories)
-    return success / num_episodes
+        return eval_results
