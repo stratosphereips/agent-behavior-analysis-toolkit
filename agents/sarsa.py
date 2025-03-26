@@ -14,8 +14,8 @@ def exponential_epsilon_decay(episode, initial_epsilon, min_epsilon, decay_rate)
 
 class Sarsa(Agent):
 
-    def __init__(self,obs_space_size, acion_space_size, alpha=0.1, gamma=0.99, epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.995):
-            super().__init__()
+    def __init__(self,obs_space_size, acion_space_size, alpha=0.1, gamma=0.99, epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.995, *args, **kwargs):
+            super().__init__(*args, **kwargs)
             self.Q = np.zeros((obs_space_size, acion_space_size))
             self.alpha = alpha
             self.gamma = gamma
