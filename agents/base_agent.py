@@ -6,6 +6,8 @@ class Agent:
         self.params = kwargs  # Store parameters in a dictionary       
         self._initialize_agent()
         self.wandb_run = kwargs.get("wandb_run", None)
+        if self.wandb_run:
+            self.tg = None
 
     def _initialize_agent(self):
         """
@@ -38,7 +40,11 @@ class Agent:
                 tg = TrajectoryGraph()
                 for t in trajectories:
                     tg.add_trajectory(t)
-                self.wandb_run.log({"static_graph_metrics":tg.get_graph_metrics()})
+                log_data = {"static_graph_metrics":tg.get_graph_metrics()}
+                if self.tg:
+                    log_data["tg_diff"] = tg.compare_with_previous(self.tg)
+                self.wandb_run.log(log_data)
+                self.tg = tg
         return returns, trajectories
 
     def train_policy(self, env, num_episodes , evaluate_each=None, evaluate_for=None):
