@@ -19,7 +19,7 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
     experiment_config = {
         "env": "CartPole-v1-discrete",
-        "model": "SARSA",
+        "model": "Q-learning",
     }
     experiment_config.update(vars(args))
     print(experiment_config)
@@ -33,27 +33,27 @@ if __name__ == "__main__":
     ) 
     discretized_env = CustomEnv(DiscreteCartPoleWrapper(gym.make("CartPole-v1"), bins=8), seed=args.seed)
     
-    # agent = Qlearning(
-    #     discretized_env.observation_space.n,
-    #     discretized_env.action_space.n,
-    #     alpha=0.1,
-    #     gamma=0.95,
-    #     epsilon=1,
-    #     epsilon_min=0.01,
-    #     epsilon_decay=0.0001,
-    #     wandb_run = wandb_run
-    #     )
-
-    agent = Sarsa(
+    agent = Qlearning(
         discretized_env.observation_space.n,
         discretized_env.action_space.n,
         alpha=0.1,
         gamma=0.95,
         epsilon=1,
-        epsilon_min=0.05,
-        epsilon_decay=0.0005,
+        epsilon_min=0.01,
+        epsilon_decay=0.0001,
         wandb_run = wandb_run
-    )
+        )
+
+    # agent = Sarsa(
+    #     discretized_env.observation_space.n,
+    #     discretized_env.action_space.n,
+    #     alpha=0.1,
+    #     gamma=0.95,
+    #     epsilon=1,
+    #     epsilon_min=0.05,
+    #     epsilon_decay=0.0005,
+    #     wandb_run = wandb_run
+    # )
     print(discretized_env.action_space.shape)  
 
 
