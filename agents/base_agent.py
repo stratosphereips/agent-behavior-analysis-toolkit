@@ -1,11 +1,13 @@
 import numpy as np
-from trajectory_graph import TrajectoryGraph, Transition
+from trajectory_graph import TrajectoryGraph, Transition, plot_tg_mdp
+import wandb
 
 class Agent:
     def __init__(self, **kwargs):
         self.params = kwargs  # Store parameters in a dictionary       
         self._initialize_agent()
         self.wandb_run = kwargs.get("wandb_run", None)
+        self._chechpoint_id = 0
         if self.wandb_run:
             self.tg = None
 
@@ -40,11 +42,14 @@ class Agent:
                 tg = TrajectoryGraph()
                 for t in trajectories:
                     tg.add_trajectory(t)
+                plot_tg_mdp(tg, filename="figures/tg_checkpoint_{}.png".format(self._chechpoint_id))
                 log_data = {"static_graph_metrics":tg.get_graph_metrics()}
                 if self.tg:
                     log_data["tg_diff"] = tg.compare_with_previous(self.tg)
+                log_data["transition_graph"] = wandb.Image(f"figures/tg_checkpoint_{self._chechpoint_id}.png")
                 self.wandb_run.log(log_data)
                 self.tg = tg
+        self._chechpoint_id += 1
         return returns, trajectories
 
     def train_policy(self, env, num_episodes , evaluate_each=None, evaluate_for=None):
