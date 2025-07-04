@@ -36,10 +36,10 @@ if __name__ == "__main__":
     env = gym.make("CartPole-v1")
     # Wrap with custom seed logic for reproducibility
     env = CustomEnv(env, seed=args.seed)
-    # add Trajectory recording Wrapper
-    env = TrajectoryRecorderWrapper(env)
     # Add Discretization Layer
     discretized_env = DiscreteCartPoleWrapper(env, bins=8)
+    # add Trajectory recording Wrapper
+    discretized_env = TrajectoryRecorderWrapper(discretized_env)
     
     agent = Qlearning(
         discretized_env.observation_space.n,

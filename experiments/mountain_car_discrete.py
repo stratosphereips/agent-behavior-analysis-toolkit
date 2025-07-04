@@ -35,10 +35,10 @@ if __name__ == "__main__":
     env = gym.make("MountainCar-v0")
     # add fixed seed
     env = CustomEnv(env, seed=args.seed)
-    # add Trajectory recording layer
-    env = TrajectoryRecorderWrapper(env)
     # add discretization layer
     discretized_env = DiscreteCartPoleWrapper(env, bins=16)
+    # add Trajectory recording layer
+    discretized_env = TrajectoryRecorderWrapper(discretized_env)
     
     agent = Qlearning(
         discretized_env.observation_space.n,
