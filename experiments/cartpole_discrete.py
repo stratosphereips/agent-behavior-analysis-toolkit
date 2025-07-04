@@ -1,5 +1,5 @@
 from environments.gym_discerete_wrappers import DiscreteCartPoleWrapper
-from environments.gym_discretization_wrapper import EvaluationEnv, CustomEnv
+from environments.gym_wrappers import TrajectoryRecorderWrapper, CustomEnv
 from agents.q_learning import Qlearning
 from agents.sarsa import Sarsa
 from agents.dqn import DQN
@@ -31,7 +31,15 @@ if __name__ == "__main__":
         # Track hyperparameters and run metadata.
         config=experiment_config,
     ) 
-    discretized_env = CustomEnv(DiscreteCartPoleWrapper(gym.make("CartPole-v1"), bins=8), seed=args.seed)
+
+    # basic env
+    env = gym.make("CartPole-v1")
+    # Wrap with custom seed logic for reproducibility
+    env = CustomEnv(env, seed=args.seed)
+    # add Trajectory recording Wrapper
+    env = TrajectoryRecorderWrapper(env)
+    # Add Discretization Layer
+    discretized_env = DiscreteCartPoleWrapper(env, bins=8)
     
     agent = Qlearning(
         discretized_env.observation_space.n,
