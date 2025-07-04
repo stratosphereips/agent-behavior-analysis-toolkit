@@ -54,12 +54,18 @@ class TrajectoryRecorderWrapper(gym.Wrapper):
         obs, reward, done, truncated, info = self.env.step(action)
 
         if self.record_trajectory:
+            if np.ndim(self._last_real_obs) > 1:
+                s = (self._last_real_obs.copy())
+                s_next = tuple(obs.copy())
+            else:
+                s = self._last_real_obs.copy()
+                s_next = obs.copy()
             self.current_trajectory.append(
                 Transition(
-                    state=self._last_real_obs.copy(),
+                    state=s,
                     action=action,
                     reward=reward,
-                    next_state=obs.copy()
+                    next_state=s_next
                 )
             )
         self._last_real_obs = obs.copy()
