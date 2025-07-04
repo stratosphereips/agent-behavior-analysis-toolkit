@@ -1,5 +1,6 @@
 from trajectory_graph import Transition
 import gymnasium as gym
+import numpy as np
 
 
 class CustomEnv(gym.Wrapper):
@@ -35,11 +36,19 @@ class TrajectoryRecorderWrapper(gym.Wrapper):
         self.record_trajectory = False
 
     def reset(self, **kwargs):
-        obs = self.env.reset(**kwargs)
+        result = self.env.reset(**kwargs)
+        # Unpack if it's (obs, info)
+        if isinstance(result, tuple):
+            obs, info = result
+        else:
+            obs = result
+            info = {}
+
         if self.record_trajectory:
             self.current_trajectory = []
-        self._last_real_obs = obs.copy()
-        return obs
+
+        self._last_real_obs = obs.copy() if hasattr(obs, "copy") else np.array(obs)
+        return result
 
     def step(self, action):
         obs, reward, done, truncated, info = self.env.step(action)
