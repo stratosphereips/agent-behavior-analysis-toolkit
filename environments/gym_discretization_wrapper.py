@@ -9,8 +9,6 @@ class EvaluationEnv(gym.Wrapper):
         self._evaluate_for = evaluate_for
         self._report_each = report_each
         self._report_verbose = os.getenv("VERBOSE") not in [None, "", "0"]
-
-        #self.seed(seed)
         self.action_space.seed(seed)
         self.observation_space.seed(seed)
 
@@ -60,18 +58,6 @@ class EvaluationEnv(gym.Wrapper):
                 sys.exit(0)
 
         return observation, reward, done, info
-
-
-class CustomEnv(gym.Wrapper):
-    def __init__(self, env, seed=None):
-        super().__init__(env)
-        self.seed = seed
-    
-    def reset(self, seed=None, options=None):
-        if self.seed is not None:
-            return super().reset(seed=self.seed, options=options)
-        else:
-            return super().reset(seed=seed, options=options)
             
 class DiscretizationWrapper(gym.ObservationWrapper):
     
