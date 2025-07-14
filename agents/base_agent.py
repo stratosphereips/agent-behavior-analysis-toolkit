@@ -1,5 +1,6 @@
 import numpy as np
 from trajectory_graph import TrajectoryGraph, Transition, plot_tg_mdp
+from utils.trajectory_utils import get_motifs
 import wandb
 
 class Agent:
@@ -8,6 +9,7 @@ class Agent:
         self._initialize_agent()
         self.wandb_run = kwargs.get("wandb_run", None)
         self._chechpoint_id = 0
+        self._motifs = set()
         if self.wandb_run:
             self.tg = None
 
@@ -21,8 +23,9 @@ class Agent:
         raise NotImplementedError
     
     def evaluate_policy(self, env, num_episodes:int, get_trajectories:bool=False, final_evaluation=False):
-        trajectories = []
         returns = []
+        # enable trajectory tracking
+        env.start_recording()
         for _ in range(num_episodes):
             state, _ = env.reset()
             done = False
@@ -31,25 +34,50 @@ class Agent:
             while not done:
                 action = self.step(state)
                 next_state, reward, terminated, truncated, _ = env.step(action)
-                t.append(Transition(state, action, reward, next_state))
                 done = terminated or truncated
                 ret += reward
                 state = next_state
-            trajectories.append(t)
             returns.append(ret)
         if self.wandb_run is not None:
             if not final_evaluation:
                 tg = TrajectoryGraph()
+                trajectories = env.trajectory_log
                 for t in trajectories:
                     tg.add_trajectory(t)
                 plot_tg_mdp(tg, filename="figures/tg_checkpoint_{}.png".format(self._chechpoint_id))
                 log_data = {"static_graph_metrics":tg.get_graph_metrics()}
+                motifs = {}
+                clusters = None
+                node_clusters = None
                 if self.tg:
                     log_data["tg_diff"] = tg.compare_with_previous(self.tg)
+                    log_data["tg_diff"]["total_surprise"] = self.tg.compute_trajectory_set_action_surprise(trajectories)
+                    motifs, clusters = get_motifs(trajectories, self.tg)
+                    new_motifs = {k for k in motifs.keys() if k not in self._motifs}
+                    #print(f"New motifs: {len(new_motifs)}, Total found motifs: {len(motifs)}, Total motifs in memory: {len(self._motifs)}")
+                    for k in motifs.keys():
+                        actions = [f"{str(x.state)}({str(x.action)})" for x in k]
+                        #print(f"Occurence:{motifs[k]}","Motif:", "->".join(actions), "cost:", sum([x.reward for x in k]))
+                    log_data["motifs"] = {}
+                    log_data["motifs"]["new_motifs"] = len(new_motifs)
+                    log_data["motifs"]["found_motifs"] = len(motifs)
+                    log_data["motifs"]["total_motifs"] = len(self._motifs)
+                if clusters:
+                    node_clusters ={}
+                    for k, v in clusters.items():
+                        node_clusters[k] = set()
+                        for segment in v:
+                            for t in segment[0]:
+                                node_clusters[k].add(t.state)
+                plot_tg_mdp(tg, filename="figures/tg_checkpoint_{}.png".format(self._chechpoint_id), node_clusters=node_clusters)
                 log_data["transition_graph"] = wandb.Image(f"figures/tg_checkpoint_{self._chechpoint_id}.png")
                 self.wandb_run.log(log_data)
                 self.tg = tg
-        self._chechpoint_id += 1
+                for k in motifs.keys():
+                    self._motifs.add(k)
+                self._chechpoint_id += 1
+        # stop the trajectory recording
+        env.stop_recording()
         return returns, trajectories
 
     def train_policy(self, env, num_episodes , evaluate_each=None, evaluate_for=None):
