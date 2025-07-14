@@ -54,7 +54,7 @@ class TrajectoryRecorderWrapper(gym.Wrapper):
         obs, reward, done, truncated, info = self.env.step(action)
 
         if self.record_trajectory:
-            if np.ndim(self._last_real_obs) > 1:
+            if isinstance(self._last_real_obs, np.ndarray):
                 s = (self._last_real_obs.copy())
                 s_next = tuple(obs.copy())
             else:
