@@ -104,3 +104,18 @@ class DiscretizationWrapper(gym.ObservationWrapper):
                         state += np.digitize(value, self._separators[i])
                 states.append(self._first_tile_states + (t - 1) * self._rest_tiles_states + state)
             return states
+    
+    # Expose the Recording API
+    def start_recording(self):
+        return getattr(self.env, "start_recording")()
+
+    def stop_recording(self):
+        return getattr(self.env, "stop_recording")()
+
+    @property
+    def trajectory_log(self):
+        return getattr(self.env, "trajectory_log")
+    
+    @property
+    def current_trajectory(self):
+        return getattr(self.env, "current_trajectory")
