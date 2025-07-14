@@ -9,7 +9,9 @@ import pickle
 import pandas as pd
 from collections import namedtuple
 # import ot
-# import ruptures as rpt
+import ruptures as rpt
+from sklearn.preprocessing import StandardScaler
+from utils.trajectory_utils import compute_lambda_returns
 # from scipy.spatial.distance import mahalanobis
 # from scipy.linalg import inv
 # from ruptures.base import BaseCost
@@ -57,30 +59,71 @@ def graph_trainsion_cross_entropy(G1, G2):
         row_ces.append(cross_entropy(probs1[i], probs2[i]))
     return np.mean(row_ces)
 
-def plot_tg_mdp(graph, filename):
+# def plot_tg_mdp(graph, filename):
+#     """
+#     Plots the transition graph of a Markov Decision Process (MDP) using NetworkX.
+
+#     Args:
+#         graph: The transition graph of the MDP.
+#     """
+#     G = nx.MultiDiGraph()
+#     for (s1,s2,a), freq in graph.get_probability_per_edge().items():
+#         G.add_edge(s1, s2, weight=freq, action=a)
+
+#     A = nx.nx_agraph.to_agraph(G)
+#     A.graph_attr['rankdir'] = 'LR'
+#     for u, v, k, d in G.edges(data=True, keys=True):
+#         label = f"{d['action']} ({d['weight']:.2f})"
+#         A.get_edge(u, v, k).attr['label'] = label
+
+#     A.graph_attr.update({
+#         "rankdir": "LR",     # Left to Right layout
+#         "nodesep": "0.2",    # ↓ Horizontal space between nodes (default is 0.25–0.5)
+#         "ranksep": "0.3",    # ↓ Vertical space between levels/ranks
+#         "splines": "true",
+#     }
+#     )
+#     # Set node colors
+#     for n in G.nodes():
+#         node = A.get_node(n)
+#         if n in graph.starting_states:
+#             node.attr['style'] = 'filled'
+#             node.attr['fillcolor'] = "green"
+#         elif n in graph.terminal_states:
+#             node.attr['style'] = 'filled'
+#             node.attr['fillcolor'] = "red"
+#         else:
+#             node.attr['style'] = 'filled'
+#             node.attr['fillcolor'] = 'white'  # or leave unstyled
+#     A.layout(prog='dot')
+#     A.draw(filename)
+
+def plot_tg_mdp(graph, filename, node_clusters=None):
     """
-    Plots the transition graph of a Markov Decision Process (MDP) using NetworkX.
+    Plots the transition graph of a Markov Decision Process (MDP) using NetworkX and highlights clusters.
 
     Args:
         graph: The transition graph of the MDP.
+        filename: Output filename for the rendered graph (e.g., 'mdp.png').
+        node_labels: Optional. Dict mapping node_id -> list of cluster_ids.
     """
     G = nx.MultiDiGraph()
-    for (s1,s2,a), freq in graph.get_probability_per_edge().items():
+    for (s1, s2, a), freq in graph.get_probability_per_edge().items():
         G.add_edge(s1, s2, weight=freq, action=a)
 
     A = nx.nx_agraph.to_agraph(G)
-    A.graph_attr['rankdir'] = 'LR'
+    A.graph_attr.update({
+        "rankdir": "LR",
+        "nodesep": "0.2",
+        "ranksep": "0.3",
+        "splines": "true",
+    })
+
+    # Add edge labels
     for u, v, k, d in G.edges(data=True, keys=True):
         label = f"{d['action']} ({d['weight']:.2f})"
         A.get_edge(u, v, k).attr['label'] = label
 
-    A.graph_attr.update({
-        "rankdir": "LR",     # Left to Right layout
-        "nodesep": "0.2",    # ↓ Horizontal space between nodes (default is 0.25–0.5)
-        "ranksep": "0.3",    # ↓ Vertical space between levels/ranks
-        "splines": "true",
-    }
-    )
     # Set node colors
     for n in G.nodes():
         node = A.get_node(n)
@@ -92,27 +135,41 @@ def plot_tg_mdp(graph, filename):
             node.attr['fillcolor'] = "red"
         else:
             node.attr['style'] = 'filled'
-            node.attr['fillcolor'] = 'white'  # or leave unstyled
-        # plt.figure(figsize=(32, 24))
-    # pos = nx.planar_layout(G)
-    # nx.draw_networkx_nodes(G, pos)
-    # nx.draw_networkx_labels(G, pos)
-    # #     nx.draw(G, pos, with_labels=True, node_size=200, node_color="lightblue", edge_color="gray", arrowsize=15)
-    # #     edge_labels = {(u, v): f"{data['action']} ({data['weight']:.2f})" for u, v, key, data in G.edges(data=True, keys=True)
-    # # }   
+            node.attr['fillcolor'] = 'white'
 
-    # nx.draw_networkx_edges(
-    #     G, pos,
-    #     edgelist=G.edges(keys=True),
-    #     connectionstyle="arc3,rad=0.2",  # << makes curved edges!
-    #     arrows=True
-    # )
-    # edge_labels = {(u, v): f"{data['action']} ({data['weight']:.2f})" for u, v, key, data in G.edges(data=True, keys=True)}
+    # Optional: Add subgraphs for clusters
+    if node_clusters:
+        for cluster_id, nodes in node_clusters.items():
+            sg = A.add_subgraph(
+                list(nodes),
+                name=f"cluster_{cluster_id}",
+                label=f"Cluster {cluster_id}",
+                style="dotted",
+                color="orange",
+                fontsize="10",
+                fontcolor="black"
+            )
+            sg.graph_attr.update({
+                "margin": "15",       # Increase space inside cluster boundary (default is 6–8)
+                "penwidth": "5",      # Thicker dotted line
+            })
 
-    # nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, label_pos=0.6, font_size=10)
-    # plt.title("Transition Graph of RL Agent")
     A.layout(prog='dot')
     A.draw(filename)
+
+def get_trajectory_rewards(trajectory:list):
+    return [x.reward for x in trajectory]
+
+def get_trajectory_action_surprises(trajectory:list, graph, epsilon=1e-8):
+    """
+    Computes the action surprise of a trajectory.
+    """
+    action_surprises = []
+    for transition in trajectory:
+        action_surprise = graph.compute_action_surprise(transition, epsilon)
+        action_surprises.append(action_surprise)
+    return action_surprises
+
 
 class TrajectoryGraph:
     """
@@ -125,32 +182,43 @@ class TrajectoryGraph:
         # self._id2action = {}
         self._edge_reward = {}
         self._edge_count = {}
+        self._src_state_count = {} # counter of how many times state was a source state
+        self._policy = {}
         self._returns = []
         self._lengths = []
         self._starting_states = set()
         self._terminal_states = set()
     
+    def update_policy(self, transition:Transition)->None:
+        """
+        Updates the policy of the graph.
+        """
+        state = transition.state
+        if state not in self._policy:
+            self._policy[state] = {}
+        if transition.action not in self._policy[state]:
+            self._policy[state][transition.action] = 0
+        self._policy[state][transition.action] += 1
+    
+    def get_empirical_policy_in_state(self, state)->dict:
+        """
+        Returns empirical probability of actions in a given state.
+        """
+        return self._policy.get(state, None)
+    
+    def get_action_empirical_probability(self, state, action)->float:
+        """
+        Returns empirical probability of taking action in a given state.
+        """
+        if state not in self._policy:
+            return 0
+        if action not in self._policy[state]:
+            return 0
+        return self._policy[state][action]/sum(self._policy[state].values())
+
     @property
     def num_trajectories(self)->int:
         return len(self._returns)
-    
-    # def get_state_id(self, state:Hashable)->int:
-    #     if state not in self._state2id:
-    #         self._state2id[state] = len(self._state2id)
-    #         self._id2state[self._state2id[state]] = state
-    #     return self._state2id[state]
-
-    # def get_state(self, id:int)->Hashable:
-    #     return self._id2state.get(id, None)
-    
-    # def get_state_id(self, action:Hashable)->int:
-    #     if action not in self._state2id:
-    #         self._action2id[action] = len(self._action2id)
-    #         self._id2action[self._action2id[action]] = action
-    #     return self._state2id[action]
-
-    # def get_action(self, id:int)->Hashable:
-    #     return self._id2action.get(id, None)
 
     def update_edge_reward(self, edge_id:tuple, reward)->None:
         if edge_id not in self._edge_reward:
@@ -158,14 +226,16 @@ class TrajectoryGraph:
         else:
             self._edge_reward[edge_id] += (reward - self._edge_reward[edge_id])/self._edge_count[edge_id]
     
+
     def add_trajectory(self, trajectory:Iterable)->None:
         trajectory_return = 0
         self._starting_states.add(trajectory[0].state)
         for transition in trajectory:
             src_id = transition.state
             action_id = transition.action
-            dst_id = transition.next_state
+            dst_id =transition.next_state
             reward = transition.reward
+            self.update_policy(transition)
             # add the edge to the dicts
             if (src_id, dst_id, action_id) not in self._edge_count:
                 self._edge_count[(src_id, dst_id, action_id)] = 0
@@ -215,9 +285,13 @@ class TrajectoryGraph:
         Produces set of loops in the transition graph
         """
         loops = set()
-        for (s,a,d) in self._edge_count.keys():
-            if s == d:
-                loops.add((s,a,d))
+        # for (s,a,d) in self._edge_count.keys():
+        #     if isinstance(s, np.array):
+        #         if np.array_equal(s, d):
+        #             loops.add((s,a,d))
+        #     else:
+        #         if s == d:
+        #             loops.add((s,a,d))
         return loops
 
     @property
@@ -289,6 +363,24 @@ class TrajectoryGraph:
         print(diff)
         return diff
 
+    def compute_action_surprise(self, transition:Transition, epsilon=1e-8):
+        """
+        Computes the surprise of taking an action in a given state.
+        """
+        action_surprise = -np.log(self.get_action_empirical_probability(transition.state, transition.action) + epsilon)
+        return action_surprise
+    
+    def compute_trajectory_set_action_surprise(self, trajectories:Iterable, epsilon=1e-8):
+        """
+        Computes the surprise of taking an action in a given state.
+        """
+        action_surprises = []
+        for trajectory in trajectories:
+            for transition in trajectory:
+                action_surprise = self.compute_action_surprise(transition, epsilon)
+                action_surprises.append(action_surprise)
+        return np.mean(action_surprises)
+    
 # # # class CostMahalanobis(BaseCost):
 # #     """Custom cost function using Mahalanobis distance."""
 
