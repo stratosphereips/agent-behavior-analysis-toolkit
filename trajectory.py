@@ -1,10 +1,11 @@
 from collections import namedtuple
 from dataclasses import dataclass, field
+from typing import List, Any, Iterable
 
 # Transition class to represent a single transition in the trajectory
 Transition = namedtuple("Transition", ["state", "action", "reward", "next_state"])
 
-@dataclass
+@dataclass(frozen=True)
 class Trajectory:
     """
     Class to represent a trajectory (sequence of transitions) in the environment.
@@ -62,3 +63,106 @@ class Trajectory:
         Get a list of rewards in the trajectory.
         """
         return [transition.reward for transition in self.transitions]
+    
+    def __str__(self) -> str:
+        """
+        String representation of the trajectory.
+        """
+        return " -> ".join(f"{t.state} -{t.action}-> {t.next_state} (r={t.reward})" for t in self.transitions)
+
+class Policy():
+    """
+    Abstract base class for policies.
+    Policies define how an agent behaves in the environment.
+    """
+    def select_action(self, observation: Any) -> Any:
+        """
+        Select an action based on the current observation.
+        This method should be implemented by subclasses.
+        """
+        raise NotImplementedError("Subclasses must implement this method.")
+    
+    def initial_state(self) -> Any:
+        """
+        Return the initial state of the policy.
+        Default is None
+        """
+        return None
+    def get_action_probability(self, state: Any, action: Any) -> float:
+        """
+        Get the probability of taking a specific action in a given state.
+        """
+        raise NotImplementedError("Subclasses must implement this method.")
+
+class EmpiricalPolicy(Policy):
+    """
+    Class representing an empirical policy based on a set of trajectories.
+    The policy is defined by the most frequent action taken in each state.
+    """
+    def __init__(self, trajectories: Iterable[Trajectory]):
+        # Store the trajectories and build the policy from them
+        self.trajectories = []
+        self._state_action_map = {}
+        self._edge_count = {}
+        self._edge_reward = {}
+        print(len(trajectories))
+        self.update_policy(trajectories)
+        print(len(self.trajectories))
+    @property
+    def num_states(self)->int:
+        """
+        Return number of unique states in the observed trajectories
+        """
+        states = set([state for state in self._state_action_map.keys()])
+        return len(states)
+    
+    @property
+    def num_actions(self)->int:
+        actions = set()
+        for action_dict in self._state_action_map.values():
+            actions.update(action_dict.keys())
+        return len(actions)
+    @property
+    def num_trajectories(self) -> int:
+        """
+        Return the number of trajectories in the policy.
+        """
+        return len(self.trajectories)
+    
+    def update_policy(self, new_trajectories: Iterable[Trajectory]):
+        for trajectory in new_trajectories:  
+            self.add_trajectory(trajectory)
+
+    def add_trajectory(self, trajectory: Trajectory) -> None:
+        """
+        Add a new trajectory and update the policy.
+        """
+        if not isinstance(trajectory, Trajectory):
+            raise ValueError("Expected a Trajectory instance.")
+        self.trajectories.append(trajectory)
+        for transition in trajectory:
+            self._add_transition(transition)
+    
+    def _add_transition(self, transition: Transition) -> None:
+        """
+        Add a single transition to the policy.
+        """
+        if transition.state not in self._state_action_map:
+            self._state_action_map[transition.state] = {}
+        if transition.action not in self._state_action_map[transition.state]:
+            self._state_action_map[transition.state][transition.action] = 0
+        self._state_action_map[transition.state][transition.action] += 1
+        self._edge_count[(transition.state, transition.action, transition.next_state)] = self._edge_count.get((transition.state, transition.action, transition.next_state), 0) + 1
+        self._edge_reward[(transition.state, transition.action, transition.next_state)] = self._edge_reward.get((transition.state, transition.action, transition.next_state), 0) + transition.reward
+
+    def get_action_probability(self, state: Any, action: Any) -> float:
+        """
+        Get the probability of taking a specific action in a given state.
+        """
+        if state not in self._state_action_map:
+            return 0.0
+        action_counts = self._state_action_map[state]
+        total_count = sum(action_counts.values())
+        if total_count == 0:
+            return 0.0
+        return action_counts.get(action, 0) / total_count
