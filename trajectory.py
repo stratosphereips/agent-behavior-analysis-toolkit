@@ -1,11 +1,12 @@
 from collections import namedtuple
 from dataclasses import dataclass, field
 from typing import List, Any, Iterable
+import copy
 
 # Transition class to represent a single transition in the trajectory
 Transition = namedtuple("Transition", ["state", "action", "reward", "next_state"])
 
-@dataclass(frozen=True)
+@dataclass
 class Trajectory:
     """
     Class to represent a trajectory (sequence of transitions) in the environment.
@@ -105,9 +106,7 @@ class EmpiricalPolicy(Policy):
         self._state_action_map = {}
         self._edge_count = {}
         self._edge_reward = {}
-        print(len(trajectories))
         self.update_policy(trajectories)
-        print(len(self.trajectories))
     @property
     def num_states(self)->int:
         """
