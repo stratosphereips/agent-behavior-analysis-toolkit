@@ -56,21 +56,16 @@ class TrajectoryRecorderWrapper(gym.Wrapper):
 
     def step(self, action):
         obs, reward, done, truncated, info = self.env.step(action)
-
         if self.record_trajectory:
-            if isinstance(self._last_real_obs, np.ndarray):
-                s = (self._last_real_obs.copy())
-                s_next = tuple(obs.copy())
-            else:
-                s = self._last_real_obs.copy()
-                s_next = obs.copy()
+            s = self._last_real_obs
+            s_next = obs
             self.current_trajectory.add_transition(
                 state=s,
                 action=action,
                 reward=reward,
                 next_state=s_next
             )
-        self._last_real_obs = obs.copy()
+        self._last_real_obs = obs
 
         if self.record_trajectory and (done or truncated):
             self.trajectory_log.append(copy.deepcopy(self.current_trajectory))

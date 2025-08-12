@@ -1,7 +1,8 @@
 from collections import namedtuple
 from dataclasses import dataclass, field
-from typing import List, Any, Iterable
+from typing import List, Any, Iterable, Hashable
 import copy
+import numpy as np
 
 # Transition class to represent a single transition in the trajectory
 Transition = namedtuple("Transition", ["state", "action", "reward", "next_state"])
@@ -70,7 +71,18 @@ class Trajectory:
         String representation of the trajectory.
         """
         return " -> ".join(f"{t.state} -{t.action}-> {t.next_state} (r={t.reward})" for t in self.transitions)
-
+    def __eq__(self, other):
+        if not isinstance(other, Trajectory):
+            return False
+        if len(self) != len(other):
+            return False
+        for (t1,t2) in zip(self.transitions, other.transitions):
+            if t1 != t2:
+                return False
+        return True
+    def __hash__(self):
+        return hash(str(self))
+        
 class Policy():
     """
     Abstract base class for policies.
@@ -127,7 +139,17 @@ class EmpiricalPolicy(Policy):
         Return the number of trajectories in the policy.
         """
         return len(self.trajectories)
-    
+    def _convert_to_hashable(self, value:Any)->Hashable:
+        """
+        Convert a value to a hashable type.
+        """
+        if isinstance(value, np.ndarray):
+            if np.ndim(value) == 0:
+                return int(value)
+            else:
+                return tuple(value)
+        return value
+        
     def update_policy(self, new_trajectories: Iterable[Trajectory]):
         for trajectory in new_trajectories:  
             self.add_trajectory(trajectory)
@@ -146,22 +168,43 @@ class EmpiricalPolicy(Policy):
         """
         Add a single transition to the policy.
         """
-        if transition.state not in self._state_action_map:
-            self._state_action_map[transition.state] = {}
-        if transition.action not in self._state_action_map[transition.state]:
-            self._state_action_map[transition.state][transition.action] = 0
-        self._state_action_map[transition.state][transition.action] += 1
-        self._edge_count[(transition.state, transition.action, transition.next_state)] = self._edge_count.get((transition.state, transition.action, transition.next_state), 0) + 1
-        self._edge_reward[(transition.state, transition.action, transition.next_state)] = self._edge_reward.get((transition.state, transition.action, transition.next_state), 0) + transition.reward
+       
+        state = self._convert_to_hashable(transition.state)
+        next_state = self._convert_to_hashable(transition.next_state)
+        action = self._convert_to_hashable(transition.action)
 
-    def get_action_probability(self, state: Any, action: Any) -> float:
-        """
-        Get the probability of taking a specific action in a given state.
-        """
         if state not in self._state_action_map:
-            return 0.0
+            self._state_action_map[state] = {}
+        if action not in self._state_action_map[state]:
+            self._state_action_map[state][action] = 0
+        self._state_action_map[state][action] += 1
+        self._edge_count[(state, action, next_state)] = self._edge_count.get((state, action, next_state), 0) + 1
+        self._edge_reward[(state, action, next_state)] = self._edge_reward.get((state, action, next_state), 0) + transition.reward
+
+    def get_action_probability(self, state: Any, action: Any, alpha=0.1) -> float:
+        """
+        Get the Laplace-smoothed probability of taking a specific action in a given state.
+        If the state is unseen, assume uniform probability over the action space.
+        
+        Parameters:
+            state: the state
+            action: the action
+            alpha: smoothing constant (default = 1.0)
+
+        Returns:
+            Smoothed probability π(a | s)
+        """
+        state = self._convert_to_hashable(state)
+        action = self._convert_to_hashable(action)
+        if state not in self._state_action_map:
+            # Unseen state: return uniform probability
+            return 1.0 / self.num_actions
+
         action_counts = self._state_action_map[state]
-        total_count = sum(action_counts.values())
-        if total_count == 0:
-            return 0.0
-        return action_counts.get(action, 0) / total_count
+        total_count = sum(action_counts.get(a, 0) for a in range(self.num_actions))
+
+        # Apply Laplace smoothing
+        numerator = action_counts.get(action, 0) + alpha
+        denominator = total_count + alpha * self.num_actions
+
+        return numerator / denominator
