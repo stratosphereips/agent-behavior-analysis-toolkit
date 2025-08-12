@@ -1,4 +1,4 @@
-from environments.gym_discerete_wrappers import DiscreteCartPoleWrapper
+from environments.gym_discerete_wrappers import DiscreteMountainCarWrapper
 from environments.gym_wrappers import TrajectoryRecorderWrapper, CustomEnv
 from agents.q_learning import Qlearning
 from agents.sarsa import Sarsa
@@ -36,13 +36,15 @@ if __name__ == "__main__":
     # add fixed seed
     env = CustomEnv(env, seed=args.seed)
     # add Trajectory recording layer
-    discretized_env = DiscreteCartPoleWrapper(env, bins=16)
+    discretized_env = DiscreteMountainCarWrapper(env)
     discretized_env = TrajectoryRecorderWrapper(discretized_env)
+    # add the method which determines if an agent wins
+    discretized_env.is_win_fn = lambda trajectory: len(trajectory) > -200
     
     agent = Qlearning(
         discretized_env.observation_space.n,
         discretized_env.action_space.n,
-        alpha=0.1,
+        alpha=0.01,
         gamma=0.95,
         epsilon=1,
         epsilon_min=0.01,
