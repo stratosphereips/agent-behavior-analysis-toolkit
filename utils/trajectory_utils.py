@@ -98,7 +98,7 @@ def empirical_policy_statistics(policy:EmpiricalPolicy, is_win_fn:Optional[Calla
     metrics["unique_nodes"] = policy.num_states
     metrics["unique_actions"] = policy.num_actions
     metrics["mean_trajectory_lenght"] = np.mean([len(t) for t in policy.trajectories])
-    metrics["mean_return"] = np.mean([np.mean(t.rewards) for t in policy.trajectories])
+    metrics["mean_return"] = np.mean([np.sum(t.rewards) for t in policy.trajectories])
     metrics["mean_winrate"] = sum([is_win_fn(t) for t in policy.trajectories])/policy.num_trajectories
     metrics["loops"] = nx.number_of_selfloops(policy_graph)
     metrics["unique_edges"] = len(policy_graph.edges)
@@ -169,18 +169,21 @@ def find_trajectory_segments(trajectory:Trajectory, policy:Policy, previous_poli
     features = np.stack([lambda_returns, surprises, rewards]).T # should be of shape (len(trajectory), num_features)
     features = StandardScaler().fit_transform(features) 
     algo = rpt.KernelCPD(kernel="rbf", min_size=2).fit(features)
-    break_points = algo.predict(pen=penalty)
-    break_points = [0] + break_points  # prepend 0
-    segments_idx = list(zip(break_points[:-1], break_points[1:]))
     trajectory_segments = []
-    for (start, end) in segments_idx:
-        if start==end:
-            continue 
-        trajectory_segments.append({
-            "start":start,
-            "end":end,
-            "features": get_segment_features(start, end, surprises, rewards, lambda_returns, trajectory)
-        })
+    try:
+        break_points = algo.predict(pen=penalty)
+        break_points = [0] + break_points  # prepend 0
+        segments_idx = list(zip(break_points[:-1], break_points[1:]))
+        for (start, end) in segments_idx:
+            if start==end:
+                continue 
+            trajectory_segments.append({
+                "start":start,
+                "end":end,
+                "features": get_segment_features(start, end, surprises, rewards, lambda_returns, trajectory)
+            })
+    except rpt.exceptions.BadSegmentationParameters:
+        pass
     return trajectory_segments
 
 def get_segment_features(seg_start:int, seg_end:int ,surprises:np.ndarray,rewards:np.ndarray, elegibility_traces:np.ndarray, trajectory:Trajectory):
