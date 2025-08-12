@@ -11,7 +11,7 @@ import wandb
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", default=4242, type=int, help="Random seed.")
-    parser.add_argument("--episodes", default=5000, type=int, help="Number of training episodes")
+    parser.add_argument("--episodes", default=10000, type=int, help="Number of training episodes")
     parser.add_argument("--evaluate_each", default=500, type=int, help="Periodic evluation frequency")
     parser.add_argument("--evaluate_for", default=500, type=int, help="Periodic evluation length")
     args = parser.parse_args()
@@ -40,6 +40,8 @@ if __name__ == "__main__":
     discretized_env = DiscreteCartPoleWrapper(env, bins=8)
     # add Trajectory recording Wrapper
     discretized_env = TrajectoryRecorderWrapper(discretized_env)
+    # add the method which determines if an agent wins
+    discretized_env.is_win_fn = lambda trajectory: len(trajectory) > 450
     
     agent = Qlearning(
         discretized_env.observation_space.n,
@@ -67,7 +69,7 @@ if __name__ == "__main__":
 
     agent.train_policy(discretized_env, num_episodes=args.episodes, evaluate_each=args.evaluate_each, evaluate_for=args.evaluate_for)
     # Final evaluation
-    returns, _ = agent.evaluate_policy(discretized_env, num_episodes=2000)
+    returns, _ = agent.evaluate_policy(discretized_env, num_episodes=2000,final_evaluation=True)
     print(f"Final evaluation:{np.mean(returns):.2f}+-{np.std(returns):.2f}")
     wandb_run.finish()
     
