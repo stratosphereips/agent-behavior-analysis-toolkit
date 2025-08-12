@@ -1,5 +1,6 @@
 import numpy as np
 from .gym_discretization_wrapper import DiscretizationWrapper
+import gymnasium as gym
 
 class DiscreteCartPoleWrapper(DiscretizationWrapper):
     """
@@ -34,3 +35,31 @@ class DiscreteLunarLanderWrapper(DiscretizationWrapper):
             [.5], #lc
             [.5], #rc
         ])
+
+class DiscreteTaxiWrapper(DiscretizationWrapper):
+    def __init__(self, env):
+        super().__init__(env, [
+            np.linspace(0, 4, num=5 + 1)[1:-1],   # taxi row
+            np.linspace(0, 4, num=5 + 1)[1:-1],   # taxi column
+            np.linspace(0, 4, num=5 + 1)[1:-1],   # passenger location
+        ])
+
+class DiscreteBlackJackWrapper(gym.ObservationWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        self.player_bins = 18  # player_sum 4-21
+        self.dealer_bins = 10  # dealer_card 1-10
+        self.ace_bins = 2      # usable_ace False/True
+        self.observation_space = gym.spaces.Discrete(self.player_bins * self.dealer_bins * self.ace_bins)
+        self.action_space = self.env.action_space  # Actions remain unchanged
+    
+    def observation(self, obs):
+        player_sum, dealer_card, usable_ace = obs
+
+        player_bin = player_sum - 4        # 0..17
+        dealer_bin = dealer_card - 1       # 0..9
+        ace_bin = int(usable_ace)          # 0 or 1
+
+        state_id = player_bin * self.dealer_bins * self.ace_bins + dealer_bin * self.ace_bins + ace_bin
+        print(obs, state_id)
+        return state_id
