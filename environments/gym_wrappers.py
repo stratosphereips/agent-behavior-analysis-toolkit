@@ -1,6 +1,7 @@
 from trajectory import Trajectory, Transition
 import gymnasium as gym
 import numpy as np
+import copy
 
 
 class CustomEnv(gym.Wrapper):
@@ -72,6 +73,6 @@ class TrajectoryRecorderWrapper(gym.Wrapper):
         self._last_real_obs = obs.copy()
 
         if self.record_trajectory and (done or truncated):
-            self.trajectory_log.append(self.current_trajectory)
+            self.trajectory_log.append(copy.deepcopy(self.current_trajectory))
 
         return obs, reward, done, truncated, info
