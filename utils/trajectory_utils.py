@@ -88,9 +88,9 @@ def compute_normalized_surprise(state, action, policy_new, policy_old, num_actio
     # KL divergence at state
     kl = compute_kl_divergence(state, policy_new, policy_old, num_actions, alpha, epsilon)
     js = compute_js_divergence(state, policy_new, policy_old, num_actions, alpha, epsilon)
-    print(kl, js)
+
     # Normalize
-    return log_diff / max(kl, epsilon)
+    return log_diff / max(js, epsilon)
 
 def compute_trajectory_surprises(trajectory:Trajectory, policy:Policy, previous_policy:Policy, epsilon=1e-8)->List[float]:
     """
