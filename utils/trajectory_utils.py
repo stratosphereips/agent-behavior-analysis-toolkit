@@ -270,6 +270,7 @@ def get_motifs(trajectories, graph, epsilon=1e-12, penalty=2):
     """
     Computes the motifs in the transition graph.
     """
+    raise DeprecationWarning("get_motifs is deprecated, use find_trajectory_segments instead")
     motifs = {}
     motfif_candidates = []
     for t in trajectories:
