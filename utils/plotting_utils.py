@@ -2,6 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
+import matplotlib.colors as mcolors
 from typing import Iterable
 from utils.trajectory_utils import compute_trajectory_surprises, find_trajectory_segments
 
@@ -15,11 +16,11 @@ def plot_trajectory_segments(trajectories:Iterable, policy, previous_policy, fil
         for j in range(0, len(surprises)):
             surprise_matrix[i,j] = surprises[j]
     fig, ax = plt.subplots(figsize=(10, 5))
-    print(np.mean(surprise_matrix,axis=0))
-    cmap = plt.cm.viridis
+    norm = mcolors.SymLogNorm(linthresh=10, linscale=1, vmin=-500, vmax=500)
+    cmap = plt.cm.seismic
     cmap_with_grey = cmap.copy()
     cmap_with_grey.set_bad(color='lightgrey')
-    im = ax.imshow(surprise_matrix, cmap=cmap_with_grey, interpolation='none', aspect='auto')
+    im = ax.imshow(surprise_matrix, cmap=cmap_with_grey, interpolation='none', aspect='auto', norm=norm)
     cbar = plt.colorbar(im, ax=ax)
     cbar.set_label('Surprise')
     # Highlight steps using rectangles
