@@ -4,15 +4,15 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import matplotlib.colors as mcolors
 from typing import Iterable
+
+from sklearn.base import defaultdict
 from utils.trajectory_utils import compute_trajectory_surprises, find_trajectory_segments
 
 def plot_trajectory_segments(trajectories:Iterable, policy, previous_policy, filename)->plt.Figure:
     max_len = max([len(t) for t in trajectories])
     surprise_matrix = np.full((len(trajectories), max_len), np.nan)
-    highlight_segments = {}
     for i, trajectory in enumerate(trajectories):
         surprises = compute_trajectory_surprises(trajectory, policy, previous_policy)
-        #highlight_segments[i] = find_trajectory_segments(trajectory, previous_policy)
         for j in range(0, len(surprises)):
             surprise_matrix[i,j] = surprises[j]
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -23,19 +23,9 @@ def plot_trajectory_segments(trajectories:Iterable, policy, previous_policy, fil
     im = ax.imshow(surprise_matrix, cmap=cmap_with_grey, interpolation='none', aspect='auto', norm=norm)
     cbar = plt.colorbar(im, ax=ax)
     cbar.set_label('Surprise')
-    # Highlight steps using rectangles
-    # for row_idx, segments in highlight_segments.items():
-    #     for segment in segments:
-    #         start = segment["start"]
-    #         end = segment["end"]
-    #         width = end - start + 1
-    #         rect = Rectangle((start - 0.5, row_idx - 0.5), width, 1,
-    #              linewidth=1.5, edgecolor='black',
-    #              facecolor='none', hatch='///',  alpha=0.2)
-    #         ax.add_patch(rect)
     ax.set_xlabel('Time Step')
     ax.set_ylabel('Trajectory')
-    ax.set_title('Surprise Across Trajectories')
+    ax.set_title('Surprise Across Trajectories (SymLogNorm)')
     return fig
 
 def plot_segment_cluster_features(clusters:dict)->plt.Figure:
@@ -68,5 +58,46 @@ def plot_segment_cluster_features(clusters:dict)->plt.Figure:
     ax.set_title("Feature values per cluster")
     plt.yscale('log') 
     ax.legend()
+    plt.tight_layout()
+    return fig
+
+def plot_action_per_step_distribution(trajectories: Iterable, num_actions: int, normalize=True) -> plt.Figure:
+    """
+    Plots a stacked bar chart of the distribution of actions taken at each time step
+    across multiple trajectories.
+
+    Parameters:
+        trajectories: iterable of trajectories, each trajectory is a list of transitions
+                      where transition.action is an int in [0, num_actions-1]
+        num_actions: number of discrete actions
+        normalize: if True, show proportions instead of counts
+    """
+    # Count actions per timestep
+    max_len = max(len(trajectory) for trajectory in trajectories)
+    action_counts = np.zeros((max_len, num_actions), dtype=float)
+    for trajectory in trajectories:
+        for i, transition in enumerate(trajectory):
+            action_counts[i, transition.action] += 1
+
+    if normalize:
+        action_counts = action_counts / action_counts.sum(axis=1, keepdims=True)
+
+    # Plot stacked bars
+    fig, ax = plt.subplots(figsize=(10, 5))
+    bottom = np.zeros(max_len)
+
+    for action_idx in range(num_actions):
+        ax.bar(
+            np.arange(max_len),
+            action_counts[:, action_idx],
+            bottom=bottom,
+            label=f"Action {action_idx}"
+        )
+        bottom += action_counts[:, action_idx]
+
+    ax.set_xlabel("Time step")
+    ax.set_ylabel("Proportion" if normalize else "Count")
+    ax.set_title("Action Distribution per Time Step")
+    ax.legend(title="Actions")
     plt.tight_layout()
     return fig
