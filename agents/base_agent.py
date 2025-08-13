@@ -2,7 +2,7 @@ import numpy as np
 from trajectory_graph import TrajectoryGraph, Transition, plot_tg_mdp
 from trajectory import EmpiricalPolicy
 from utils.trajectory_utils import get_motifs, empirical_policy_statistics, find_trajectory_segments, cluster_segments
-from utils.plotting_utils import plot_trajectory_segments, plot_segment_cluster_features
+from utils.plotting_utils import plot_trajectory_segments, plot_segment_cluster_features, plot_action_per_step_distribution
 import wandb
 import matplotlib.pyplot as plt
 
@@ -83,6 +83,9 @@ class Agent:
                         log_data['segmentation_metrics']["clusters"] = len(clustering)
                         log_data['segmentation_metrics']["mean_segment_in_cluster"] = np.mean(segments_per_cluster)
                         log_data['segmentation_metrics']["mean_unique_segment_in_cluster"] = np.mean(unique_segments_per_cluster)
+                        action_distribution_plot = plot_action_per_step_distribution(trajectories, env.action_space.n, normalize=True)
+                        log_data["Action Distribution Plot"] = wandb.Image(action_distribution_plot, caption="Action Distribution per Time Step")
+                        plt.close(action_distribution_plot)  # cleanup
                         print(log_data)
                 self.wandb_run.log(log_data,step=self._chechpoint_id)
                 self._previous_policy = empirical_policy
