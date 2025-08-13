@@ -41,6 +41,43 @@ def compute_kl_divergence(state: Any, policy1:EmpiricalPolicy, policy2:Empirical
         kl += p * (np.log(p) - np.log(q))
     return kl
 
+def compute_js_divergence(state: Any, policy1: EmpiricalPolicy, policy2: EmpiricalPolicy,
+                          num_actions: int, alpha=1.0, epsilon=1e-8) -> float:
+    """
+    Compute the Jensen–Shannon (JS) divergence between two empirical policies at a given state.
+    JS(P || Q) = 0.5 * KL(P || M) + 0.5 * KL(Q || M), where M = 0.5 * (P + Q)
+
+    Parameters:
+        state: any hashable state representation
+        policy1: empirical policy object with .get_action_probability(state, action, alpha)
+        policy2: another empirical policy object with the same API
+        num_actions: total number of discrete actions
+        alpha: Laplace smoothing constant
+        epsilon: small value to prevent log(0)
+
+    Returns:
+        float: JS divergence value
+    """
+    kl_p_m = 0.0
+    kl_q_m = 0.0
+
+    for action in range(num_actions):
+        p = policy1.get_action_probability(state, action, alpha)
+        q = policy2.get_action_probability(state, action, alpha)
+
+        # Clip to avoid log(0)
+        p = max(p, epsilon)
+        q = max(q, epsilon)
+
+        m = 0.5 * (p + q)
+        m = max(m, epsilon)
+
+        kl_p_m += p * (np.log(p) - np.log(m))
+        kl_q_m += q * (np.log(q) - np.log(m))
+
+    js = 0.5 * kl_p_m + 0.5 * kl_q_m
+    return js
+
 def compute_normalized_surprise(state, action, policy_new, policy_old, num_actions, alpha=0.1, epsilon=1e-8):
     # Get smoothed probabilities
     p_new = max(policy_new.get_action_probability(state, action, alpha), epsilon)
@@ -50,9 +87,10 @@ def compute_normalized_surprise(state, action, policy_new, policy_old, num_actio
     log_diff = np.log(p_new) - np.log(p_old)
     # KL divergence at state
     kl = compute_kl_divergence(state, policy_new, policy_old, num_actions, alpha, epsilon)
-    print(p_new, p_old, log_diff, kl)
+    js = compute_js_divergence(state, policy_new, policy_old, num_actions, alpha, epsilon)
+    print(kl, js)
     # Normalize
-    return log_diff / (kl + epsilon)
+    return log_diff / max(kl, epsilon)
 
 def compute_trajectory_surprises(trajectory:Trajectory, policy:Policy, previous_policy:Policy, epsilon=1e-8)->List[float]:
     """
