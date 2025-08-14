@@ -11,7 +11,7 @@ import wandb
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", default=4242, type=int, help="Random seed.")
-    parser.add_argument("--episodes", default=22000, type=int, help="Number of training episodes")
+    parser.add_argument("--episodes", default=50000, type=int, help="Number of training episodes")
     parser.add_argument("--evaluate_each", default=2000, type=int, help="Periodic evluation frequency")
     parser.add_argument("--evaluate_for", default=500, type=int, help="Periodic evluation length")
     args = parser.parse_args()
@@ -36,7 +36,7 @@ if __name__ == "__main__":
     # add fixed seed
     env = CustomEnv(env, seed=args.seed)
     # add Trajectory recording layer
-    discretized_env = DiscreteMountainCarWrapper(env)
+    discretized_env = DiscreteMountainCarWrapper(env, bins=20)
     discretized_env = TrajectoryRecorderWrapper(discretized_env)
     # add the method which determines if an agent wins
     discretized_env.is_win_fn = lambda trajectory: len(trajectory) > -200
@@ -44,7 +44,7 @@ if __name__ == "__main__":
     agent = Qlearning(
         discretized_env.observation_space.n,
         discretized_env.action_space.n,
-        alpha=0.01,
+        alpha=0.1,
         gamma=0.95,
         epsilon=1,
         epsilon_min=0.01,

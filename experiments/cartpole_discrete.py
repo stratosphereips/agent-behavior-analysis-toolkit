@@ -3,6 +3,7 @@ from environments.gym_wrappers import TrajectoryRecorderWrapper, CustomEnv
 from agents.q_learning import Qlearning
 from agents.sarsa import Sarsa
 from agents.dqn import DQN
+from agents.random import RandomAgent
 import gymnasium as gym
 import argparse
 import numpy as np
@@ -19,7 +20,7 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
     experiment_config = {
         "env": "CartPole-v1-discrete",
-        "model": "Q-learning",
+        "model": "Random",
     }
     experiment_config.update(vars(args))
     print(experiment_config)
@@ -53,6 +54,8 @@ if __name__ == "__main__":
         epsilon_decay=0.0001,
         wandb_run = wandb_run
         )
+
+    #agent = RandomAgent(discretized_env.action_space.n, wandb_run = wandb_run)
 
     # agent = Sarsa(
     #     discretized_env.observation_space.n,
