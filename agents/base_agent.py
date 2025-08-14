@@ -2,9 +2,12 @@ import numpy as np
 from trajectory_graph import TrajectoryGraph, Transition, plot_tg_mdp
 from trajectory import EmpiricalPolicy
 from utils.trajectory_utils import get_motifs, empirical_policy_statistics, find_trajectory_segments, cluster_segments
-from utils.plotting_utils import plot_trajectory_segments, plot_segment_cluster_features, plot_action_per_step_distribution
+from utils.plotting_utils import plot_trajectory_segments, plot_segment_cluster_features, plot_action_per_step_distribution, plot_trajectory_network_colored_nodes_by_cluster
 import wandb
 import matplotlib.pyplot as plt
+from PIL import Image
+import io
+
 
 class Agent:
     def __init__(self, **kwargs):
@@ -68,11 +71,16 @@ class Agent:
                         clustering  = cluster_segments(segments)
                         segments_per_cluster = []
                         unique_segments_per_cluster = []
+                        unique_segment_clusters = {}
                         for cluster_id, segments in clustering.items():
+
                             segments_per_cluster.append(len(segments))
                             s = set()
+                            unique_segment_clusters[cluster_id] = []
                             for segment in segments:
-                                s.add(tuple(segment["features"].values()))
+                                if tuple(segment["features"].values()) not in s:
+                                    unique_segment_clusters[cluster_id].append(segment)
+                                    s.add(tuple(segment["features"].values()))
                             unique_segments_per_cluster.append(len(s))
                         cluster_summary_fig = plot_segment_cluster_features(clustering)
                         log_data["Cluster Feature Summary"] = wandb.Image(cluster_summary_fig, caption="Feature Summary per cluster")
@@ -86,6 +94,9 @@ class Agent:
                         action_distribution_plot = plot_action_per_step_distribution(trajectories, env.action_space.n, normalize=True)
                         log_data["Action Distribution Plot"] = wandb.Image(action_distribution_plot, caption="Action Distribution per Time Step")
                         plt.close(action_distribution_plot)  # cleanup
+                        trajectory_plot = plot_trajectory_network_colored_nodes_by_cluster(trajectories[0], unique_segment_clusters)
+
+                        log_data["Trajectory Network Plot"] = wandb.Image(Image.open(io.BytesIO(trajectory_plot)), caption="Trajectory Network Colored by Cluster") # cleanup
                         print(log_data)
                 self.wandb_run.log(log_data,step=self._chechpoint_id)
                 self._previous_policy = empirical_policy

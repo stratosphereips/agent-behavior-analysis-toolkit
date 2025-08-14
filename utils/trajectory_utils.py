@@ -198,7 +198,7 @@ def compute_credit_per_step(trajectory:Trajectory, gamma=0.99, lam=0.95):
   
 
 
-def find_trajectory_segments(trajectory:Trajectory, policy:Policy, previous_policy:Policy, penalty=2)->List[dict]:
+def find_trajectory_segments(trajectory:Trajectory, policy:Policy, previous_policy:Policy, penalty=2, trajectory_id=None)->List[dict]:
     """
     """
     rewards = np.array(trajectory.rewards)
@@ -214,12 +214,15 @@ def find_trajectory_segments(trajectory:Trajectory, policy:Policy, previous_poli
         segments_idx = list(zip(break_points[:-1], break_points[1:]))
         for (start, end) in segments_idx:
             if start==end:
-                continue 
-            trajectory_segments.append({
-                "start":start,
-                "end":end,
-                "features": get_segment_features(start, end, surprises, rewards, lambda_returns, trajectory)
-            })
+                continue
+            seg = {
+                "start": start,
+                "end": end,
+                "features": get_segment_features(start, end, surprises, rewards, lambda_returns, trajectory),
+            }
+            if trajectory_id is not None:
+                seg["trajectory_id"] = trajectory_id
+            trajectory_segments.append(seg)
     except rpt.exceptions.BadSegmentationParameters:
         pass
     return trajectory_segments
