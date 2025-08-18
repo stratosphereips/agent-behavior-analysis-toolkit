@@ -174,3 +174,5 @@ cython_debug/
 # Weights and Biases
 wandb/
 figures/
+# stored trajectories
+trajectories/
