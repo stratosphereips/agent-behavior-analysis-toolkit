@@ -1,4 +1,5 @@
 # Author: Ondrej Lukas, ondrej.lukas@aic.fel.cvut.cz
+import json
 import numpy as np
 import ruptures as rpt
 from typing import Iterable
@@ -10,7 +11,41 @@ from collections import defaultdict
 from typing import List, Optional, Callable, Any
 from trajectory import Transition, Trajectory, Policy, EmpiricalPolicy
 import networkx as nx
+import json
 
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        elif isinstance(obj, (np.floating,)):
+            return float(obj)
+        elif isinstance(obj, (np.ndarray,)):
+            return obj.tolist()
+        return super().default(obj)
+
+def store_trajectories_to_json(trajectory_set:Iterable, filename:str, metadata:dict=None, encoder=None) -> None:
+    """
+    Store a set of trajectories to a JSON file.
+    """
+    json_data = {
+        "trajectories": [traj.to_json(metadata) for traj in trajectory_set]
+    }
+    if metadata:
+        json_data["metadata"] = metadata
+    with open(filename, 'w') as f:
+        if encoder:
+            json.dump(json_data, f, cls=encoder)
+        else:
+            json.dump(json_data, f)
+
+def load_trajectories_from_json(filename: str) -> Iterable[Trajectory]:
+    """
+    Load a set of trajectories from a JSON file.
+    """
+    with open(filename, 'r') as f:
+        json_data = json.load(f)
+    trajectories = [Trajectory.from_json(traj) for traj in json_data.get("trajectories", [])]
+    return trajectories
 
 def compute_kl_divergence(state: Any, policy1:EmpiricalPolicy, policy2:EmpiricalPolicy, num_actions:int, alpha=1.0, epsilon=1e-8) -> float:
     """
