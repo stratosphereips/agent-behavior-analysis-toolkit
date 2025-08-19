@@ -88,7 +88,7 @@ class Trajectory:
         Convert the trajectory to a JSON-serializable format.
         """
         json_data = {
-            "states": [t.state for t in self.transitions],
+            "states": [t.state for t in self.transitions] + [self.transitions[-1].next_state] if self.transitions else [],
             "actions": [t.action for t in self.transitions],
             "rewards": [t.reward for t in self.transitions],
         }
@@ -105,7 +105,7 @@ class Trajectory:
         actions = json_data.get("actions", [])
         rewards = json_data.get("rewards", [])
         trajectory = cls()
-        for s, a, r, s_next in zip(states, actions, rewards, states[1:] + [None]):
+        for s, a, r, s_next in zip(states, actions, rewards, states[1:]):
             trajectory.add_transition(s, a, r, s_next)
         return trajectory
 
