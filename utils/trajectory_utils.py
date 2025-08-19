@@ -145,16 +145,27 @@ def compute_trajectory_surprises(trajectory:Trajectory, policy:Policy, previous_
         surprises.append(surprise)
     return surprises
 
+def get_trajectory_action_change(trajectory, policy, previous_policy):
+    action_changes = []
+    for transition in trajectory:
+        previous_policy_action = np.argmax([previous_policy.get_action_probability(transition.state, a) for a in range(previous_policy.num_actions)])
+        if transition.action == previous_policy_action:
+            action_changes.append(0)
+        else:
+            action_changes.append(1)
+    return action_changes
+
 def build_graph(policy:EmpiricalPolicy)->nx.DiGraph:
     G = nx.DiGraph()
-    for (state, action, next_state) ,count in policy._edge_count.items():
-          G.add_edge(
-            state,
-            next_state,
-            action=action,
-            count=count,
-            reward=policy._edge_reward.get((state, action, next_state), 0)
-        )
+    for (state, action, next_state), count in policy._edge_count.items():
+        if next_state is not None:
+            G.add_edge(
+                state,
+                next_state,
+                action=action,
+                count=count,
+                reward=policy._edge_reward.get((state, action, next_state), 0)
+            )
     return G
 
 def empirical_policy_statistics(policy:EmpiricalPolicy, is_win_fn:Optional[Callable[[Trajectory], bool]] = lambda x: len(x) > 0 and x[-1].reward > 0)->dict:
@@ -333,3 +344,12 @@ def get_motifs(trajectories, graph, epsilon=1e-12, penalty=2):
             final_candidates.append((m_candidate, features))
     clusters = cluster_segments(final_candidates)
     return motifs, clusters
+
+
+def get_clusters_per_step(trajectory, clusters)->list:
+    clusters_per_step = defaultdict(list)
+    for cluster_id, segments in clusters.items():
+        for segment in segments:
+            for step in range(segment["start"], segment["end"]):
+                clusters_per_step[step].append(cluster_id)
+    return [int(list(set(clusters_per_step[i]))[0]) for i in range(len(trajectory))]
