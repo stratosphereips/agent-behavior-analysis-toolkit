@@ -41,7 +41,7 @@ class Agent:
             done = False
             ret = 0
             while not done:
-                action = self.step(state)
+                action = self.step(state, training=False)
                 next_state, reward, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
                 ret += reward
