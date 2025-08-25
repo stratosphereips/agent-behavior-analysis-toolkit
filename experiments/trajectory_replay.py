@@ -16,6 +16,7 @@ import json
 from PIL import Image
 import io
 import os
+import sys
 
 def load_metadata_from_json(filename)->dict:
     with open(filename, 'r') as f:
@@ -111,9 +112,9 @@ class TrajectoryReplay:
 
                         log_data["Trajectory Combined Heatmap"] = wandb.Image(trajectory_heatmap_plot, caption="Trajectory Combined Heatmap")
                         plt.close(trajectory_heatmap_plot)
-                        trajectory_plot = plot_trajectory_network_colored_nodes_by_cluster(trajectories[0], unique_segment_clusters)
+                        #trajectory_plot = plot_trajectory_network_colored_nodes_by_cluster(trajectories[0], unique_segment_clusters)
 
-                        log_data["Trajectory Network Plot"] = wandb.Image(Image.open(io.BytesIO(trajectory_plot)), caption="Trajectory Network Colored by Cluster") # cleanup
+                        #log_data["Trajectory Network Plot"] = wandb.Image(Image.open(io.BytesIO(trajectory_plot)), caption="Trajectory Network Colored by Cluster") # cleanup
                     print(log_data)
             if self._wandb_run:
                 wandb.config.update(trajectory_metadata)
@@ -121,7 +122,7 @@ class TrajectoryReplay:
             self._previous_policy = empirical_policy
 
 if __name__ == "__main__":
-    trajectory_replay = TrajectoryReplay("trajectories/CartPole-v1-discrete_Sarsa/alpha=0.5_episodes=10000_epsilon=1_epsilon_decay=0.0001_epsilon_min=0.05_evaluate_each=500_evaluate_for=500_gamma=0.95_seed=4242",
+    trajectory_replay = TrajectoryReplay(sys.argv[1],
     wandb_project="agent-trajectory-analysis",
     wandb_entity="ondrej-lukas-czech-technical-university-in-prague")
     trajectory_replay.process_trajectories()
