@@ -174,6 +174,8 @@ class EmpiricalPolicy(Policy):
                 return int(value)
             else:
                 return tuple(value)
+        elif isinstance(value, (list, tuple)):
+            return tuple(map(self._convert_to_hashable, value)) 
         return value
         
     def update_policy(self, new_trajectories: Iterable[Trajectory]):
@@ -198,7 +200,6 @@ class EmpiricalPolicy(Policy):
         state = self._convert_to_hashable(transition.state)
         next_state = self._convert_to_hashable(transition.next_state)
         action = self._convert_to_hashable(transition.action)
-
         if state not in self._state_action_map:
             self._state_action_map[state] = {}
         if action not in self._state_action_map[state]:
