@@ -242,3 +242,132 @@ def plot_trajectory_network_colored_nodes_by_cluster(trajectory: Trajectory, seg
     A.layout(prog='dot')
     png_bytes = A.draw(format='png')
     return png_bytes
+
+import matplotlib.patches as mpatches
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import matplotlib.patches as mpatches
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import matplotlib.patches as mpatches
+
+def plot_trajectory_heatmap(surprise, action_change, cluster, gap=1, min_height=4, max_height=25):
+    """
+    Plots a heatmap for trajectory data: surprise, action change, cluster.
+    
+    Args:
+        surprise: 2D array of surprise values
+        action_change: 2D array of 0/1 action change flags
+        cluster: 2D array of cluster IDs (-1 = outlier)
+        gap: vertical gap between bands
+        min_height: min figure height
+        max_height: max figure height
+    """
+    n_traj, n_steps = surprise.shape
+    band_height = 3
+    total_band = band_height + gap
+
+    # --- Stack bands with gaps ---
+    stacked = np.full((n_traj * total_band, n_steps), np.nan)
+    for t in range(n_traj):
+        base = t * total_band
+        stacked[base + 0] = surprise[t]
+        stacked[base + 1] = action_change[t]
+        stacked[base + 2] = cluster[t]
+
+    # --- Figure size ---
+    fig_height = np.clip(n_traj * 0.05 * total_band, min_height, max_height) + 1.2
+    fig, ax = plt.subplots(figsize=(14, fig_height), dpi=400)
+
+    # --- Colormaps ---
+    cmap_surprise = plt.cm.seismic
+    norm_surprise = mcolors.SymLogNorm(linthresh=10, linscale=1, vmin=-500, vmax=500)
+
+    cmap_binary = mcolors.ListedColormap(["white", "black"])
+    norm_binary = mcolors.BoundaryNorm([0, 0.5, 1], 2)
+
+    mask = np.isnan(stacked)
+
+    # --- Helper to plot each band ---
+    def plot_masked_rows(mod, cmap, norm=None):
+        msk = mask.copy()
+        for i in range(stacked.shape[0]):
+            if i % total_band != mod:
+                msk[i] = True
+        ax.imshow(np.ma.masked_where(msk, stacked), aspect="auto", cmap=cmap, norm=norm)
+
+    # Plot surprise and action change
+    plot_masked_rows(0, cmap_surprise, norm_surprise)
+    plot_masked_rows(1, cmap_binary, norm_binary)
+
+    # --- Plot clusters ---
+    cluster_mask = mask.copy()
+    for i in range(stacked.shape[0]):
+        if i % total_band != 2:
+            cluster_mask[i] = True
+
+    # Masked cluster array (still 2D)
+    masked_clusters = np.ma.masked_where(cluster_mask, stacked)
+
+    # Map unique clusters to colors
+    unique_clusters = np.unique(cluster[~np.isnan(cluster)])
+    set1_colors = plt.cm.Set1.colors
+    cluster_colors = {}
+    color_idx = 0
+    for c in sorted(unique_clusters):
+        if c == -1:
+            cluster_colors[c] = (0.8, 0.8, 0.8, 1.0)  # light gray for outlier
+        else:
+            cluster_colors[c] = set1_colors[color_idx % len(set1_colors)]
+            color_idx += 1
+
+    # Create ListedColormap and bounds for imshow
+    cmap_list = [cluster_colors[c] for c in sorted(cluster_colors)]
+    cmap_cluster = mcolors.ListedColormap(cmap_list)
+    bounds = sorted(cluster_colors)
+    norm_cluster = mcolors.BoundaryNorm(bounds + [bounds[-1]+1], cmap_cluster.N)
+
+    ax.imshow(masked_clusters, aspect="auto", cmap=cmap_cluster, norm=norm_cluster)
+
+    # --- Axis labels ---
+    ytick_every = max(1, n_traj // 20)
+    yticks = [(t * total_band) + 1.5 for t in range(0, n_traj, ytick_every)]
+    ax.set_yticks(yticks)
+    ax.set_yticklabels([f"T{t}" for t in range(0, n_traj, ytick_every)], fontsize=6)
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Trajectory")
+
+    # --- Surprise colorbar ---
+    sm = plt.cm.ScalarMappable(cmap=cmap_surprise, norm=norm_surprise)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, fraction=0.03, pad=0.02)
+    cbar.set_label("Surprise", fontsize=8)
+
+    # --- Legends above the figure ---
+    cluster_handles = [
+        mpatches.Patch(color=color, label=("No cluster" if c==-1 else f"C{c}"))
+        for c, color in cluster_colors.items()
+    ]
+    cluster_legend = ax.legend(
+        handles=cluster_handles, title="Clusters",
+        loc='lower left', bbox_to_anchor=(0, 1.05),
+        ncol=min(5, len(cluster_handles)), fontsize=6
+    )
+    ax.add_artist(cluster_legend)
+
+    binary_handles = [
+        mpatches.Patch(color="white", edgecolor="black", label="Same action"),
+        mpatches.Patch(color="black", label="Action changed")
+    ]
+    binary_legend = ax.legend(
+        handles=binary_handles, title="Action Change",
+        loc='lower left', bbox_to_anchor=(0.5, 1.025), fontsize=6
+    )
+    ax.add_artist(binary_legend)
+
+    plt.tight_layout(rect=[0, 0, 0.95, 0.92])
+    return fig, ax
