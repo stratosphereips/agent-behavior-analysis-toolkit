@@ -23,6 +23,15 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         return super().default(obj)
 
+def numpy_default(obj):
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    elif isinstance(obj, (np.floating,)):
+        return float(obj)
+    elif isinstance(obj, (np.ndarray,)):
+        return obj.tolist()
+    return obj
+
 def store_trajectories_to_json(trajectory_set:Iterable, filename:str, metadata:dict=None, encoder=None) -> None:
     """
     Store a set of trajectories to a JSON file.
@@ -32,9 +41,10 @@ def store_trajectories_to_json(trajectory_set:Iterable, filename:str, metadata:d
     }
     if metadata:
         json_data["metadata"] = metadata
+        print(metadata)
     with open(filename, 'w') as f:
         if encoder:
-            json.dump(json_data, f, cls=encoder)
+            json.dump(json_data, f, default=encoder)
         else:
             json.dump(json_data, f)
 
