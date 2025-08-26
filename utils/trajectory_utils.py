@@ -38,14 +38,18 @@ def store_trajectories_to_json(trajectory_set:Iterable, filename:str, metadata:d
         else:
             json.dump(json_data, f)
 
-def load_trajectories_from_json(filename: str) -> Iterable[Trajectory]:
+def load_trajectories_from_json(filename: str, load_metadata: bool=False, max_trajectories: int=None) -> tuple[Iterable[Trajectory], dict]:
     """
     Load a set of trajectories from a JSON file.
     """
     with open(filename, 'r') as f:
         json_data = json.load(f)
     trajectories = [Trajectory.from_json(traj) for traj in json_data.get("trajectories", [])]
-    return trajectories
+    if max_trajectories:
+        trajectories = trajectories[:max_trajectories]
+
+    metadata = json_data.get("metadata", {}) if load_metadata else {}
+    return trajectories, metadata
 
 def compute_kl_divergence(state: Any, policy1:EmpiricalPolicy, policy2:EmpiricalPolicy, num_actions:int, alpha=1.0, epsilon=1e-8) -> float:
     """
