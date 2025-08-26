@@ -1,18 +1,16 @@
-from utils.trajectory_utils import store_trajectories_to_json
-from utils.trajectory_utils import NumpyEncoder
+from utils.trajectory_utils import store_trajectories_to_json, numpy_default
 import os
+import numpy as np
 
 
 class Agent:
-    def __init__(self, **kwargs):
+    def __init__(self, trajectory_json_default_fn=None,**kwargs):
         self.params = kwargs  # Store parameters in a dictionary)
         self._initialize_agent()
+        self.trajectory_json_encoder = trajectory_json_default_fn if trajectory_json_default_fn else numpy_default# Use NumpyEncoder as default
         self.wandb_run = kwargs.get("wandb_run", None)
-        self._chechpoint_id = 0
-        self._previous_policy = None
-        self._motifs = set()
-        if self.wandb_run:
-            self.tg = None
+        self.store_trajectories = kwargs.get("store_trajectories", False)
+        self._checkpoint_id = 0
 
     def _initialize_agent(self):
         """
@@ -39,10 +37,14 @@ class Agent:
                 ret += reward
                 state = next_state
             returns.append(ret)
-        if self.wandb_run is not None:
+        if self.store_trajectories:
             if not final_evaluation:
                 trajectories = env.trajectory_log
-                metadata = {k:v for k,v in self.params.items() if k not in ["wandb_run", "discretized_env.observation_space.n", "discretized_env.action_space.n"]}
+                metadata = {k:v for k,v in self.params.get("experiment_config", {}).items()}
+                metadata["action_space_size"] = env.action_space.n
+                metadata["observation_space_size"] = env.observation_space.n
+
+                # Create folder based on env and model
                 foldername = ""
                 try:
                     foldername += metadata["experiment_config"]["env"]
@@ -65,12 +67,13 @@ class Agent:
                 foldername = f"{foldername}/{nested_foldername}"
                 if not os.path.exists(foldername):
                     os.makedirs(foldername)
-                filename = f"cp_{self._chechpoint_id:02d}.json"
-                store_trajectories_to_json(trajectories, f"{foldername}/{filename}", metadata=metadata, encoder=NumpyEncoder)
-                self._chechpoint_id += 1
+                filename = f"cp_{self._checkpoint_id:02d}.json"
+                store_trajectories_to_json(trajectories, f"{foldername}/{filename}", metadata=metadata, encoder=self.trajectory_json_encoder)
+        if self.wandb_run is not None:
+            self.wandb_run.log({"mean_return": np.mean(returns) if returns else 0}, step=self._checkpoint_id)
+        self._checkpoint_id += 1
         # stop the trajectory recording
         env.stop_recording()
-        print(env.starting_states)
         env.clear_trajectory_log()
         return returns, trajectories
 
