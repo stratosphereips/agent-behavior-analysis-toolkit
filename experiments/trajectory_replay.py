@@ -18,11 +18,6 @@ import io
 import os
 import sys
 
-def load_metadata_from_json(filename)->dict:
-    with open(filename, 'r') as f:
-        metadata = json.load(f)
-        metadata = metadata.get("metadata", {})
-    return metadata
 
 class TrajectoryReplay:
     """
@@ -43,12 +38,12 @@ class TrajectoryReplay:
 
     def process_trajectories(self):
         for checkpoint_id, json_file in enumerate(self.json_files):
-            trajectories = load_trajectories_from_json(json_file)
-            trajectory_metadata = load_metadata_from_json(json_file)
+            trajectories, trajectory_metadata = load_trajectories_from_json(json_file, load_metadata=True, max_trajectories=200)
             print(f"Loaded {len(trajectories)} trajectories from {json_file}: - checkpoint {checkpoint_id}")
             self.trajectories.extend(trajectories)
             empirical_policy = EmpiricalPolicy(trajectories)
-
+            print(f"Total_actions: {empirical_policy.num_actions}")
+            print(trajectory_metadata)
 
 
             log_data = {"static_graph_metrics":empirical_policy_statistics(empirical_policy)}
