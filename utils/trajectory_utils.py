@@ -23,6 +23,7 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         return super().default(obj)
 
+###### ENCODERS ######
 def numpy_default(obj):
     if isinstance(obj, (np.integer,)):
         return int(obj)
