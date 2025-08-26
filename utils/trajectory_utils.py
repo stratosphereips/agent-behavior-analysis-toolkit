@@ -244,7 +244,7 @@ def compute_credit_per_step(trajectory:Trajectory, gamma=0.99, lam=0.95):
   
 
 
-def find_trajectory_segments(trajectory:Trajectory, policy:Policy, previous_policy:Policy, penalty=2, trajectory_id=None)->List[dict]:
+def find_trajectory_segments(trajectory:Trajectory, policy:Policy, previous_policy:Policy, penalty=5, trajectory_id=None)->List[dict]:
     """
     """
     rewards = np.array(trajectory.rewards)
@@ -252,7 +252,11 @@ def find_trajectory_segments(trajectory:Trajectory, policy:Policy, previous_poli
     lambda_returns = np.array(compute_lambda_returns(trajectory))
     features = np.stack([lambda_returns, surprises, rewards]).T # should be of shape (len(trajectory), num_features)
     features = StandardScaler().fit_transform(features) 
-    algo = rpt.KernelCPD(kernel="rbf", min_size=2).fit(features)
+    algo = rpt.KernelCPD(
+        kernel="rbf",
+        min_size=max(3, len(trajectory)//20),                   # adjust: min meaningful segment length
+        params={"gamma": 0.3}           # sensitivity (tune: 0.1, 0.3, 1.0)
+    ).fit(features)
     trajectory_segments = []
     try:
         break_points = algo.predict(pen=penalty)
@@ -307,7 +311,7 @@ def get_cluster_features(segments:Iterable):
  
 def cluster_segments(segments:Iterable):
     features = [list(s["features"].values()) for s in segments]
-    clustering = DBSCAN(eps=5, min_samples=2).fit(features)
+    clustering = DBSCAN(eps=5, min_samples=len(segments[-1]["features"].values())+1).fit(features)
     clusters ={}
     for segment, cluster_id in zip(segments, clustering.labels_):
         if cluster_id not in clusters:
