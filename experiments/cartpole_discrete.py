@@ -20,7 +20,12 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
     experiment_config = {
         "env": "CartPole-v1-discrete",
-        "model": "Random",
+        "model": "Q-learning",
+        "alpha": 0.5,
+        "gamma": 0.99,
+        "epsilon":1,
+        "epsilon_min": 0.01,
+        "epsilon_decay": 0.0001
     }
     experiment_config.update(vars(args))
     print(experiment_config)
@@ -44,30 +49,40 @@ if __name__ == "__main__":
     # add the method which determines if an agent wins
     discretized_env.is_win_fn = lambda trajectory: len(trajectory) > 450
     
-    agent = Qlearning(
-        discretized_env.observation_space.n,
-        discretized_env.action_space.n,
-        alpha=0.1,
-        gamma=0.95,
-        epsilon=1,
-        epsilon_min=0.01,
-        epsilon_decay=0.0001,
-        wandb_run = wandb_run
+    match experiment_config["model"]:
+        case "Q-learning":
+            agent = Qlearning(
+                discretized_env.observation_space.n,
+                discretized_env.action_space.n,
+                alpha=experiment_config["alpha"],
+                gamma=experiment_config["gamma"],
+                epsilon=experiment_config["epsilon"],
+                epsilon_min=experiment_config["epsilon_min"],
+                epsilon_decay=experiment_config["epsilon_decay"],
+                wandb_run=wandb_run,
+                experiment_config=experiment_config
         )
-
-    #agent = RandomAgent(discretized_env.action_space.n, wandb_run = wandb_run)
-
-    # agent = Sarsa(
-    #     discretized_env.observation_space.n,
-    #     discretized_env.action_space.n,
-    #     alpha=0.1,
-    #     gamma=0.95,
-    #     epsilon=1,
-    #     epsilon_min=0.05,
-    #     epsilon_decay=0.0005,
-    #     wandb_run = wandb_run
-    # )
-    print(discretized_env.action_space.shape)  
+        case "random":
+            agent = RandomAgent(discretized_env.action_space.n, wandb_run=wandb_run)
+        case "Sarsa":
+            agent = Sarsa(
+                discretized_env.observation_space.n,
+                discretized_env.action_space.n,
+                alpha=experiment_config["alpha"],
+                gamma=experiment_config["gamma"],
+                epsilon=experiment_config["epsilon"],
+                epsilon_min=experiment_config["epsilon_min"],
+                epsilon_decay=experiment_config["epsilon_decay"],
+                wandb_run=wandb_run,
+                experiment_config=experiment_config
+            )
+        #     alpha=0.1,
+        #     gamma=0.95,
+        #     epsilon=1,
+        #     epsilon_min=0.05,
+        #     epsilon_decay=0.0005,
+        #     wandb_run = wandb_run
+        # )
 
 
     agent.train_policy(discretized_env, num_episodes=args.episodes, evaluate_each=args.evaluate_each, evaluate_for=args.evaluate_for)

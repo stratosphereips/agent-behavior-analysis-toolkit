@@ -82,7 +82,33 @@ class Trajectory:
         return True
     def __hash__(self):
         return hash(str(self))
-        
+
+    def to_json(self, metadata:dict=None) -> dict:
+        """
+        Convert the trajectory to a JSON-serializable format.
+        """
+        json_data = {
+            "states": [t.state for t in self.transitions] + [self.transitions[-1].next_state] if self.transitions else [],
+            "actions": [t.action for t in self.transitions],
+            "rewards": [t.reward for t in self.transitions],
+        }
+        if metadata:
+            json_data["metadata"] = metadata
+        return json_data
+
+    @classmethod
+    def from_json(cls, json_data: dict) -> 'Trajectory':
+        """
+        Convert JSON data to a Trajectory instance.
+        """
+        states = json_data.get("states", [])
+        actions = json_data.get("actions", [])
+        rewards = json_data.get("rewards", [])
+        trajectory = cls()
+        for s, a, r, s_next in zip(states, actions, rewards, states[1:]):
+            trajectory.add_transition(s, a, r, s_next)
+        return trajectory
+
 class Policy():
     """
     Abstract base class for policies.
@@ -148,6 +174,8 @@ class EmpiricalPolicy(Policy):
                 return int(value)
             else:
                 return tuple(value)
+        elif isinstance(value, (list, tuple)):
+            return tuple(map(self._convert_to_hashable, value)) 
         return value
         
     def update_policy(self, new_trajectories: Iterable[Trajectory]):
@@ -172,7 +200,6 @@ class EmpiricalPolicy(Policy):
         state = self._convert_to_hashable(transition.state)
         next_state = self._convert_to_hashable(transition.next_state)
         action = self._convert_to_hashable(transition.action)
-
         if state not in self._state_action_map:
             self._state_action_map[state] = {}
         if action not in self._state_action_map[state]:

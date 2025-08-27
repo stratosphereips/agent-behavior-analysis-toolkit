@@ -1,152 +1,131 @@
 import numpy as np
-import random
-from typing import List, Tuple
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
-from tensorflow.keras.optimizers import AdamW
-from collections import deque
-from .base_agent import Agent
 import tensorflow as tf
+from collections import deque
+import random
+from agents.base_agent import Agent
 
-class DQN(Agent):
-    def __init__(self, obs_space_size: int, action_space_size: int, learning_rate: float = 0.001,
-                 gamma: float = 0.99, epsilon: float = 1.0, epsilon_min: float = 0.01,
-                 epsilon_decay: float = 0.995, batch_size: int = 32, memory_size: int = 100000,
-                 hidden_units: int = 128, train_each=4):
-        super().__init__()
-        self.obs_space_size = obs_space_size
-        self.action_space_size = action_space_size
-        self.learning_rate = learning_rate
-        self.gamma = gamma
-        self.epsilon = epsilon
-        self.epsilon_min = epsilon_min
-        self.epsilon_decay = epsilon_decay
-        self.batch_size = batch_size
-        self.memory_size = memory_size
-        self.train_each = train_each
 
-        # Memory for experience replay (state, action, reward, next_state, done)
+class DQNAgent(Agent):
+
+    def __init__(self, obs_space, action_space, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.obs_space = obs_space
+        self.action_space = action_space
+        self.params = kwargs
+        # Hyperparameters
+        self.gamma = self.params.get("gamma", 0.99)
+        self.epsilon = self.params.get("epsilon", 1.0)
+        self.epsilon_min = self.params.get("epsilon_min", 0.01)
+        self.epsilon_decay = self.params.get("epsilon_decay", 0.999)
+        self.lr = self.params.get("lr", 0.001)
+        self.batch_size = self.params.get("batch_size", 64)
+        self.memory_size = self.params.get("memory_size", 10000)
+        self.replay_each = self.params.get("replay_each", 8)
+        self.target_update_every = self.params.get("target_update_every", 500)
+
+        # Replay buffer
         self.memory = deque(maxlen=self.memory_size)
 
-        # Create models
-        self._loss_fn = tf.keras.losses.Huber()
-        self._optimizer = AdamW(learning_rate=self.learning_rate, weight_decay=1e-5)
-        self.model = self._build_model(hidden_units)
-        self.model.compile(loss=self._loss_fn, optimizer=self._optimizer)
-        self.target_model = self._build_model(hidden_units)
-        self.update_target_model()
+        # Build Q-networks
+        self.q_network = self._build_network()
+        self.target_network = self._build_network()
+        self.target_network.set_weights(self.q_network.get_weights())
 
-    def _build_model(self, hidden_units: int) -> Sequential:
-        model = Sequential([
-            Dense(hidden_units, input_dim=self.obs_space_size, activation='relu'),
-            Dense(hidden_units, activation='relu'),
-            Dense(self.action_space_size, activation='linear')
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=self.lr)
+        self.loss_fn = tf.keras.losses.Huber()
+    
+    def _build_network(self):
+        model = tf.keras.Sequential([
+            tf.keras.layers.Input(shape=(self.obs_space)),
+            tf.keras.layers.Dense(128, activation="relu"),
+            tf.keras.layers.Dense(128, activation="relu"),
+            tf.keras.layers.Dense(self.action_space, activation="linear"),
         ])
         return model
-
-    def update_target_model(self, tau=0.01):
-        """Soft update target model weights"""
-        model_weights = self.model.get_weights()
-        target_weights = self.target_model.get_weights()
-        new_weights = [tau * mw + (1 - tau) * tw for mw, tw in zip(model_weights, target_weights)]
-        self.target_model.set_weights(new_weights)
 
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
 
-    def step(self, state, training=False):
-        """Choose an action based on epsilon-greedy policy."""
-        if training and np.random.random() < self.epsilon:
-            return int(tf.random.categorical(tf.math.log([[1.0] * self.action_space_size]), 1)[0, 0])
-        state = np.reshape(state, [1, self.obs_space_size])
-        act_values = self.model.predict(state, verbose=0)
-        return np.argmax(act_values[0])
-
-    def sample_batch(self):
-        """Sample a batch from the memory using Python/NumPy."""
-        if len(self.memory) < self.batch_size:
-            return None
-        batch = random.sample(self.memory, self.batch_size)
-        states, actions, rewards, next_states, dones = zip(*batch)
-        
-        return (
-            tf.convert_to_tensor(states, dtype=tf.float32),
-            tf.convert_to_tensor(actions, dtype=tf.int32),
-            tf.convert_to_tensor(rewards, dtype=tf.float32),
-            tf.convert_to_tensor(next_states, dtype=tf.float32),
-            tf.convert_to_tensor(dones, dtype=tf.float32)
-        )
-
-    @tf.function(
-    input_signature=[
-        tf.TensorSpec(shape=[None, None], dtype=tf.float32),  # states
-        tf.TensorSpec(shape=[None], dtype=tf.int32),  # actions
-        tf.TensorSpec(shape=[None], dtype=tf.float32),  # rewards
-        tf.TensorSpec(shape=[None, None], dtype=tf.float32),  # next_states
-        tf.TensorSpec(shape=[None], dtype=tf.float32)  # dones
-    ]
-    )
-    def train_step(self, states, actions, rewards, next_states, dones):
-        """Optimized training step with TensorFlow graph execution."""
-        with tf.GradientTape() as tape:
-            current_q = self.model(states)  
-            next_q = self.target_model(next_states)  
-            target_values = rewards + self.gamma * tf.reduce_max(next_q, axis=1) * (1.0 - dones)
-            target_values = tf.stop_gradient(tf.reshape(target_values, [-1]))  
-
-            # Select action Q-values efficiently
-            action_indices = tf.stack([tf.range(tf.shape(actions)[0]), actions], axis=1)
-            predicted_q_values = tf.gather_nd(current_q, action_indices)
-
-            loss = self._loss_fn(target_values, predicted_q_values)
-
-        gradients = tape.gradient(loss, self.model.trainable_variables)
-        self._optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
-
-        return loss
-
     def replay(self):
-        """Train the model using experience replay."""
-        batch = self.sample_batch()
-        if batch is None:
-            return  # Not enough samples in memory yet
+        # Only train if enough samples
+        if len(self.memory) < self.batch_size:
+            return
 
-        states, actions, rewards, next_states, dones = batch
+        # Sample random minibatch
+        minibatch = random.sample(self.memory, self.batch_size)
+        states, actions, rewards, next_states, dones = map(np.array, zip(*minibatch))
 
-        # Call the TF graph training step.
-        loss = self.train_step(states, actions, rewards, next_states, dones)
-        return loss
+        # Convert to tensors
+        states      = np.array(states)
+        next_states = np.array(next_states)
+        actions     = actions.astype(int)
+        rewards     = rewards.astype(float)
+        dones       = dones.astype(bool)
 
-    def train_policy(self, env, num_episodes: int, evaluate_each: int, evaluate_for: int, target_update_interval: int = 10) -> List[Tuple[int, float]]:
-        """Train the DQN agent in the environment."""
-        eval_results = []
-        step_counter = 0 
-        for episode in range(1, num_episodes + 1):
+        # Predict current Q-values
+        q_values = self.q_network(states, training=True)
+
+        # Predict next-state Q-values (from target network!)
+        next_q_values = self.target_network(next_states, training=False)
+        max_next_q = np.max(next_q_values.numpy(), axis=1)
+
+        # Build target Q-values
+        target_q = q_values.numpy()
+        for i in range(self.batch_size):
+            if dones[i]:
+                target_q[i, actions[i]] = rewards[i]
+            else:
+                target_q[i, actions[i]] = rewards[i] + self.gamma * max_next_q[i]
+
+        # Train step
+        with tf.GradientTape() as tape:
+            q_pred = self.q_network(states, training=True)
+            loss = self.loss_fn(target_q, q_pred)
+        grads = tape.gradient(loss, self.q_network.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.q_network.trainable_variables))
+
+        # Decay epsilon
+        if self.epsilon > self.epsilon_min:
+            self.epsilon *= self.epsilon_decay
+    
+    def act(self, state, training=False):
+        if training and np.random.rand() < self.epsilon:
+            return np.random.randint(self.action_space)
+        q_values = self.q_network(np.array([state]))
+        return np.argmax(q_values[0].numpy())
+
+    def step(self, state, training=False):
+        action = self.act(state, training=training)
+        return action
+
+    def train_policy(self, env, num_episodes, evaluate_each=None, evaluate_for=None):
+        steps = 0
+        for ep in range(num_episodes):
             state, _ = env.reset()
-            state = np.reshape(state, [1, self.obs_space_size])
-            done = False
-            while not done:
+            done, truncated = False, False
+            total_reward = 0
+
+            while not (done or truncated):
+                steps += 1
                 action = self.step(state, training=True)
-                next_state, reward, terminated, truncated, _ = env.step(action)
-                done = terminated or truncated
-                next_state = np.reshape(next_state, [1, self.obs_space_size])
-                self.remember(state[0], action, reward, next_state[0], done)
-                step_counter += 1
-                if step_counter % self.train_each == 0 and len(self.memory) > self.batch_size:
+                next_state, reward, done, truncated, _ = env.step(action)
+                total_reward += reward
+
+                # Store transition
+                self.remember(state, action, reward, next_state, done or truncated)
+
+                # Train if memory is ready
+                if len(self.memory) > self.batch_size and steps % self.replay_each == 0:
                     self.replay()
-                    # Linear decay of epsilon
-                    self.epsilon = max(self.epsilon_min, self.epsilon - (1.0 - self.epsilon_min) / (num_episodes * 0.5))
+
+                # Sync target network periodically
+                if steps % self.target_update_every == 0:
+                    self.target_network.set_weights(self.q_network.get_weights())
+
                 state = next_state
-            
-            # Update target network periodically
-            if episode % target_update_interval == 0:
-                self.update_target_model()
 
-            # Evaluate policy periodically (evaluation code unchanged)
-            if evaluate_each and episode % evaluate_each == 0:
+            # Evaluate periodically
+            if evaluate_each and ep % evaluate_each == 0 and ep > 0:
                 returns, _ = self.evaluate_policy(env, evaluate_for)
-                mean_ret = tf.math.reduce_mean(returns)
-                eval_results.append((episode, mean_ret))
-                print(f"Episode {episode}: Mean return = {mean_ret:.2f}")
-
-        return eval_results
+                mean_ret = np.mean(returns)
+                print(f"Episode {ep}: TrainReturn={total_reward:.2f}, EvalReturn={mean_ret:.2f}")

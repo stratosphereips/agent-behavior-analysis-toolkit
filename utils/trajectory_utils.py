@@ -1,4 +1,5 @@
 # Author: Ondrej Lukas, ondrej.lukas@aic.fel.cvut.cz
+import json
 import numpy as np
 import ruptures as rpt
 from typing import Iterable
@@ -10,6 +11,99 @@ from collections import defaultdict
 from typing import List, Optional, Callable, Any
 from trajectory import Transition, Trajectory, Policy, EmpiricalPolicy
 import networkx as nx
+import json
+import os
+from utils.aidojo_utils import aidojo_rebuild_trajectory
+
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        elif isinstance(obj, (np.floating,)):
+            return float(obj)
+        elif isinstance(obj, (np.ndarray,)):
+            return obj.tolist()
+        return super().default(obj)
+
+###### ENCODERS ######
+def numpy_default(obj):
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    elif isinstance(obj, (np.floating,)):
+        return float(obj)
+    elif isinstance(obj, (np.ndarray,)):
+        return obj.tolist()
+    return obj
+######################
+
+def store_trajectories_to_json(trajectory_set:Iterable, filename:str, metadata:dict=None, encoder=None) -> None:
+    """
+    Store a set of trajectories to a JSON file.
+    """
+    json_data = {
+        "trajectories": [traj.to_json(metadata) for traj in trajectory_set]
+    }
+    if metadata:
+        json_data["metadata"] = metadata
+        print(metadata)
+    with open(filename, 'w') as f:
+        if encoder:
+            json.dump(json_data, f, default=encoder)
+        else:
+            json.dump(json_data, f)
+
+def load_trajectories_from_json(filename: str, load_metadata: bool=False, max_trajectories: int=None) -> tuple[Iterable[Trajectory], dict]:
+    """
+    Load a set of trajectories from a JSON file.
+    """
+    ext = os.path.splitext(filename)[1].lower()
+    if ext == ".jsonl":
+        return load_trajectories_from_jsonl(filename, load_metadata, max_trajectories)
+    else:
+        with open(filename, 'r') as f:
+            json_data = json.load(f)
+        trajectories = [Trajectory.from_json(traj) for traj in json_data.get("trajectories", [])]
+        if max_trajectories:
+            trajectories = trajectories[:max_trajectories]
+
+        metadata = json_data.get("metadata", {}) if load_metadata else {}
+        return trajectories, metadata
+
+def load_trajectories_from_jsonl(
+    filename: str, 
+    load_metadata: bool = False, 
+    max_trajectories: int = None,
+) -> tuple[Iterable["Trajectory"], dict]:
+    """
+    Load a set of trajectories from a JSONL file (one JSON object per line).
+    Each line corresponds to a trajectory object.
+    """
+    print(f"\tLoading trajectories from {filename}")
+    trajectories = []
+    metadata = {}
+
+    with open(filename, 'r') as f:
+        for i, line in enumerate(f):
+            if max_trajectories and i >= max_trajectories:
+                break
+            obj = json.loads(line)
+
+            # Handle metadata if present
+            if load_metadata:
+                if "metadata" in obj:
+                    metadata.update(obj["metadata"])
+                else:
+                    metadata.update({k: v for k, v in obj.items() if k != "trajectory"})
+
+            try:
+                traj = obj["trajectory"]
+                states = traj.get("states", None)
+                actions = traj.get("actions", None)
+                rewards = traj.get("rewards", None)
+                trajectories.append(aidojo_rebuild_trajectory(states, actions, rewards))
+            except KeyError as e:
+                print(f"Error loading trajectory from line {i}: {e}")
+    return trajectories, metadata
 
 
 def compute_kl_divergence(state: Any, policy1:EmpiricalPolicy, policy2:EmpiricalPolicy, num_actions:int, alpha=1.0, epsilon=1e-8) -> float:
@@ -86,7 +180,7 @@ def compute_normalized_surprise(state, action, policy_new, policy_old, num_actio
     # Log-prob difference
     log_diff = np.log(p_new) - np.log(p_old)
     # KL divergence at state
-    kl = compute_kl_divergence(state, policy_new, policy_old, num_actions, alpha, epsilon)
+    #kl = compute_kl_divergence(state, policy_new, policy_old, num_actions, alpha, epsilon)
     js = compute_js_divergence(state, policy_new, policy_old, num_actions, alpha, epsilon)
 
     # Normalize
@@ -110,16 +204,27 @@ def compute_trajectory_surprises(trajectory:Trajectory, policy:Policy, previous_
         surprises.append(surprise)
     return surprises
 
+def get_trajectory_action_change(trajectory, policy, previous_policy):
+    action_changes = []
+    for transition in trajectory:
+        previous_policy_action = np.argmax([previous_policy.get_action_probability(transition.state, a) for a in range(previous_policy.num_actions)])
+        if transition.action == previous_policy_action:
+            action_changes.append(0)
+        else:
+            action_changes.append(1)
+    return action_changes
+
 def build_graph(policy:EmpiricalPolicy)->nx.DiGraph:
     G = nx.DiGraph()
-    for (state, action, next_state) ,count in policy._edge_count.items():
-          G.add_edge(
-            state,
-            next_state,
-            action=action,
-            count=count,
-            reward=policy._edge_reward.get((state, action, next_state), 0)
-        )
+    for (state, action, next_state), count in policy._edge_count.items():
+        if next_state is not None:
+            G.add_edge(
+                state,
+                next_state,
+                action=action,
+                count=count,
+                reward=policy._edge_reward.get((state, action, next_state), 0)
+            )
     return G
 
 def empirical_policy_statistics(policy:EmpiricalPolicy, is_win_fn:Optional[Callable[[Trajectory], bool]] = lambda x: len(x) > 0 and x[-1].reward > 0)->dict:
@@ -198,7 +303,7 @@ def compute_credit_per_step(trajectory:Trajectory, gamma=0.99, lam=0.95):
   
 
 
-def find_trajectory_segments(trajectory:Trajectory, policy:Policy, previous_policy:Policy, penalty=2, trajectory_id=None)->List[dict]:
+def find_trajectory_segments(trajectory:Trajectory, policy:Policy, previous_policy:Policy, penalty=5, trajectory_id=None)->List[dict]:
     """
     """
     rewards = np.array(trajectory.rewards)
@@ -206,7 +311,11 @@ def find_trajectory_segments(trajectory:Trajectory, policy:Policy, previous_poli
     lambda_returns = np.array(compute_lambda_returns(trajectory))
     features = np.stack([lambda_returns, surprises, rewards]).T # should be of shape (len(trajectory), num_features)
     features = StandardScaler().fit_transform(features) 
-    algo = rpt.KernelCPD(kernel="rbf", min_size=2).fit(features)
+    algo = rpt.KernelCPD(
+        kernel="rbf",
+        min_size=max(3, len(trajectory)//20),                   # adjust: min meaningful segment length
+        params={"gamma": 0.3}           # sensitivity (tune: 0.1, 0.3, 1.0)
+    ).fit(features)
     trajectory_segments = []
     try:
         break_points = algo.predict(pen=penalty)
@@ -219,6 +328,7 @@ def find_trajectory_segments(trajectory:Trajectory, policy:Policy, previous_poli
                 "start": start,
                 "end": end,
                 "features": get_segment_features(start, end, surprises, rewards, lambda_returns, trajectory),
+                "surprises": surprises[start:end],
             }
             if trajectory_id is not None:
                 seg["trajectory_id"] = trajectory_id
@@ -261,7 +371,7 @@ def get_cluster_features(segments:Iterable):
  
 def cluster_segments(segments:Iterable):
     features = [list(s["features"].values()) for s in segments]
-    clustering = DBSCAN(eps=5, min_samples=2).fit(features)
+    clustering = DBSCAN(eps=5, min_samples=len(segments[-1]["features"].values())+1).fit(features)
     clusters ={}
     for segment, cluster_id in zip(segments, clustering.labels_):
         if cluster_id not in clusters:
@@ -269,32 +379,41 @@ def cluster_segments(segments:Iterable):
         clusters[cluster_id].append(segment)
     return clusters
 
-def get_motifs(trajectories, graph, epsilon=1e-12, penalty=2):
-    """
-    Computes the motifs in the transition graph.
-    """
-    raise DeprecationWarning("get_motifs is deprecated, use find_trajectory_segments instead")
-    motifs = {}
-    motfif_candidates = []
-    for t in trajectories:
-        rewards = np.array([step.reward for step in t])
-        lambda_ret = compute_lambda_returns(t)
-        surprises = np.array(get_trajectory_action_surprises(t, graph, epsilon))
-        scaler = StandardScaler()
-        features_scaled = scaler.fit_transform(np.stack([lambda_ret, surprises, rewards], axis=1))
-        algo = rpt.KernelCPD(kernel="rbf", min_size=1).fit(features_scaled)
-        bkpts = algo.predict(pen=penalty)
-        segments = [(0, bkpts[0])] + [(bkpts[i], bkpts[i+1]) for i in range(len(bkpts)-1)]
-        for start, end in segments:
-            m = tuple(t[start:end])
-            motfif_candidates.append((m, get_segment_features(start, end, surprises, rewards, lambda_ret, t)))
-            if m not in motifs:
-                motifs[m] = 0
-            motifs[m] += 1
-        # add segment occurence to the motif features
-        final_candidates = []
-        for m_candidate, features in motfif_candidates:
-            features["occurences"] = motifs[m]
-            final_candidates.append((m_candidate, features))
-    clusters = cluster_segments(final_candidates)
-    return motifs, clusters
+# def get_motifs(trajectories, graph, epsilon=1e-12, penalty=2):
+#     """
+#     Computes the motifs in the transition graph.
+#     """
+#     raise DeprecationWarning("get_motifs is deprecated, use find_trajectory_segments instead")
+#     motifs = {}
+#     motfif_candidates = []
+#     for t in trajectories:
+#         rewards = np.array([step.reward for step in t])
+#         lambda_ret = compute_lambda_returns(t)
+#         surprises = np.array(get_trajectory_action_surprises(t, graph, epsilon))
+#         scaler = StandardScaler()
+#         features_scaled = scaler.fit_transform(np.stack([lambda_ret, surprises, rewards], axis=1))
+#         algo = rpt.KernelCPD(kernel="rbf", min_size=1).fit(features_scaled)
+#         bkpts = algo.predict(pen=penalty)
+#         segments = [(0, bkpts[0])] + [(bkpts[i], bkpts[i+1]) for i in range(len(bkpts)-1)]
+#         for start, end in segments:
+#             m = tuple(t[start:end])
+#             motfif_candidates.append((m, get_segment_features(start, end, surprises, rewards, lambda_ret, t)))
+#             if m not in motifs:
+#                 motifs[m] = 0
+#             motifs[m] += 1
+#         # add segment occurence to the motif features
+#         final_candidates = []
+#         for m_candidate, features in motfif_candidates:
+#             features["occurences"] = motifs[m]
+#             final_candidates.append((m_candidate, features))
+#     clusters = cluster_segments(final_candidates)
+#     return motifs, clusters
+
+
+def get_clusters_per_step(trajectory, clusters)->list:
+    clusters_per_step = defaultdict(list)
+    for cluster_id, segments in clusters.items():
+        for segment in segments:
+            for step in range(segment["start"], segment["end"]):
+                clusters_per_step[step].append(cluster_id)
+    return [int(list(set(clusters_per_step[i]))[0]) for i in range(len(trajectory))]
