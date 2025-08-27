@@ -1,4 +1,3 @@
-
 from cProfile import label
 import numpy as np
 import matplotlib.pyplot as plt
@@ -32,11 +31,12 @@ def plot_trajectory_segments(trajectories:Iterable, policy, previous_policy, fil
     return fig
 
 def plot_segment_cluster_features(clusters:dict)->plt.Figure:
+    feature_names = ["λ_ret", "λ_ret_std", "surprise", "surprise_std", "reward", "reward_std", "coverage", "pos_start", "pos_end"]
     cluster_data = {}
     for cluster_id, segments in clusters.items():
         feature_sums = {}
         for segment in segments:
-            for feature, value in segment["features"].items():
+            for feature, value in zip(feature_names, segment["features"]):
                 feature_sums[feature] = feature_sums.get(feature, 0) + value
         cluster_data[cluster_id] = {}
         for feature_idx, feature_name in enumerate(sorted(feature_sums)):
@@ -170,7 +170,7 @@ def plot_trajectory_network_colored_nodes_by_cluster(trajectory: Trajectory, seg
     # nx.draw_networkx_labels(G, pos, font_size=8, font_weight="bold")
     # # Legend handles
     # handles = [plt.Line2D([0], [0], marker='o', color='w', label=f'Cluster {cid}', markerfacecolor=cluster_to_color[cid], markersize=5) for cid in cluster_ids]
-    # handles.append(plt.Line2D([0], [0], marker='o', color='w', label='No cluster', markerfacecolor='lightgray', markersize=5))
+    # handles.append(plt.Line2D([0], [0], marker='o', color='w', label='No cluster', markerfacecolor='lightgrey', markersize=5))
     # plt.legend(
     #     handles=handles,
     #     loc='lower center',
@@ -387,10 +387,10 @@ def plot_trajectory_heatmap(surprise, action_change, cluster, gap=1, min_height=
 
 
 def _dedup_segments_by_features(segments):
-    """Keep only one segment per unique feature dict signature."""
+    """Keep only one segment per unique feature tuple signature."""
     seen, uniq = set(), []
     for s in segments:
-        sig = frozenset(s["features"].items())
+        sig = s["features"]  # Use the precomputed tuple
         if sig not in seen:
             seen.add(sig)
             uniq.append(s)
