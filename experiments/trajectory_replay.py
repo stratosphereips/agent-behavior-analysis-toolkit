@@ -6,7 +6,7 @@ from utils.plotting_utils   import plot_trajectory_segments, plot_action_per_ste
 from utils.plotting_utils   import plot_trajectory_heatmap, visualize_clusters
 from utils.trajectory_utils import get_trajectory_action_change
 from utils.trajectory_utils import get_clusters_per_step
-from utils.trajectory_utils import compute_trajectory_surprises
+from utils.trajectory_utils import compute_trajectory_surprises,compute_lambda_returns
 from trajectory import EmpiricalPolicy
 import os
 import wandb
@@ -17,7 +17,118 @@ from PIL import Image
 import io
 import os
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
+
+def create_empirical_policy(json_file, checkpoint_id):
+    """
+    Create an empirical policy from the trajectories in a JSON file.
+    """
+    trajectories, trajectory_metadata = load_trajectories_from_json(
+        json_file, load_metadata=True, max_trajectories=50
+    )
+    empirical_policy = EmpiricalPolicy(trajectories)
+    return checkpoint_id, trajectories, trajectory_metadata, empirical_policy
+
+def process_single_trajectory(args):
+        """
+        Process a single trajectory, finds segments and extract features.
+        """
+        traj_idx, t, curr_policy, prev_policy, checkpoint_id = args
+        rewards = np.array(t.rewards)
+        surprises = np.array(compute_trajectory_surprises(t, curr_policy, prev_policy, epsilon=1e-12))
+        lambda_returns = np.array(compute_lambda_returns(rewards))
+        return find_trajectory_segments(
+            surprises=surprises,
+            rewards=rewards,
+            lambda_returns=lambda_returns,
+            trajectory_id=f"{checkpoint_id}_{traj_idx}"
+        )
+
+def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_policy):
+    """
+    Worker function: compares two checkpoints (i-1, i) and computes log_data.
+    Returns raw metrics + images as bytes (safe to pass across processes).
+    """
+    log_data = {"static_graph_metrics": empirical_policy_statistics(curr_policy)}
+    log_data["Cluster Feature Summary"] = None
+    log_data["Segment Surprise Plot"] = None
+    log_data['segmentation_metrics'] = {
+        "segments": 0,
+        "unique_segments": 0,
+        "clusters": 0,
+        "mean_segment_in_cluster": 0.0,
+        "mean_unique_segment_in_cluster": 0.0,
+        "unique_trajectories": len(set(trajectories))
+    }
+
+    # find segments - run in parallel
+    segments = []
+    with ThreadPoolExecutor() as pool:
+        results = pool.map(
+            process_single_trajectory,
+            ((traj_idx, t, curr_policy, prev_policy, checkpoint_id) for traj_idx, t in enumerate(trajectories))
+        )
+        for segs in results:
+            segments += segs
+
+    if segments:
+        log_data['segmentation_metrics'].update({
+            "segments": len(segments),
+            "unique_segments": len({s["features"] for s in segments})
+        })
+
+        clustering = cluster_segments(segments)
+        segments_per_cluster = [len(segs) for segs in clustering.values()]
+        unique_segments_per_cluster = [
+            len({seg["features"] for seg in segs})
+            for segs in clustering.values()
+        ]
+
+        log_data['segmentation_metrics'].update({
+            "clusters": len(clustering),
+            "mean_segment_in_cluster": np.mean(segments_per_cluster) if segments_per_cluster else 0.0,
+            "mean_unique_segment_in_cluster": np.mean(unique_segments_per_cluster) if unique_segments_per_cluster else 0.0
+        })
+
+        # --- make plots, but save them as PNG bytes (wandb.Image is only in main proc) ---
+        figs = {}
+
+        fig = plot_segment_cluster_features(clustering)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png")
+        buf.seek(0)
+        figs["Cluster Feature Summary"] = buf.read()
+        plt.close(fig)
+
+        fig = plot_trajectory_segments(trajectories, curr_policy, prev_policy, f"Surprise_plot_cp_{checkpoint_id}")
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png")
+        buf.seek(0)
+        figs["Segment Surprise Plot"] = buf.read()
+        plt.close(fig)
+
+        num_actions = 6  # curr_policy.num_actions
+        fig = plot_action_per_step_distribution(trajectories, num_actions, normalize=True)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png")
+        buf.seek(0)
+        figs["Action Distribution Plot"] = buf.read()
+        plt.close(fig)
+
+        unique_trajectories = set(trajectories)
+        max_len = max(len(t) for t in unique_trajectories)
+        fig = visualize_clusters(clustering, max_len)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png")
+        buf.seek(0)
+        figs["Cluster Visualization"] = buf.read()
+        plt.close(fig)
+
+        log_data["_figs"] = figs  # stash for main process
+
+    return checkpoint_id, log_data, metadata
 
 class TrajectoryReplay:
     """
@@ -37,96 +148,63 @@ class TrajectoryReplay:
             self._wandb_run = None
 
     def process_trajectories(self):
-        for checkpoint_id, json_file in enumerate(self.json_files):
-            trajectories, trajectory_metadata = load_trajectories_from_json(json_file, load_metadata=True, max_trajectories=4)
-            print(f"Loaded {len(trajectories)} trajectories from {json_file}: - checkpoint {checkpoint_id}")
-            self.trajectories.extend(trajectories)
-            empirical_policy = EmpiricalPolicy(trajectories)
-            print(f"Total_actions: {empirical_policy.num_actions}")
-            # print(trajectory_metadata)
+        # Step 1: parallel load + policy creation
+        with ProcessPoolExecutor() as executor:
+            futures = {
+                executor.submit(create_empirical_policy, json_file, checkpoint_id): checkpoint_id
+                for checkpoint_id, json_file in enumerate(self.json_files)
+            }
+            results = {}
+            for f in as_completed(futures):
+                checkpoint_id, trajs, metadata, policy = f.result()
+                results[checkpoint_id] = (trajs, metadata, policy)
 
+        # --- First checkpoint (no comparison) ---
+        sorted_ids = sorted(results.keys())
+        first_id = sorted_ids[0]
+        trajectories, metadata, first_policy = results[first_id]
 
-            log_data = {"static_graph_metrics":empirical_policy_statistics(empirical_policy)}
-            log_data["Cluster Feature Summary"] = None
-            log_data["Segment Surprise Plot"] = None
-            log_data['segmentation_metrics'] = {     # Initialize with default/zero values
+        log_data = {
+            "static_graph_metrics": empirical_policy_statistics(first_policy),
+            "segmentation_metrics": {
                 "segments": 0,
                 "unique_segments": 0,
                 "clusters": 0,
                 "mean_segment_in_cluster": 0.0,
                 "mean_unique_segment_in_cluster": 0.0,
-                "unique_trajectories":len(set(trajectories))
+                "unique_trajectories": len(set(trajectories))
             }
-            if self._previous_policy:
-                segments = []
-                for traj_idx, t in enumerate(trajectories):
-                    new_segments = find_trajectory_segments(trajectory=t, policy=empirical_policy, previous_policy=self._previous_policy, trajectory_id=f"{checkpoint_id}_{traj_idx}")
-                    segments += new_segments
-                if len(segments) > 0:
-                    log_data['segmentation_metrics']["segments"] = len(segments)
-                    log_data['segmentation_metrics']["unique_segments"] = len(set([tuple(s["features"].values()) for s in segments]))
-                    clustering  = cluster_segments(segments)
-                    segments_per_cluster = []
-                    unique_segments_per_cluster = []
-                    unique_segment_clusters = {}
-                    for cluster_id, segments in clustering.items():
+        }
 
-                        segments_per_cluster.append(len(segments))
-                        s = set()
-                        unique_segment_clusters[cluster_id] = []
-                        for segment in segments:
-                            if tuple(segment["features"].values()) not in s:
-                                unique_segment_clusters[cluster_id].append(segment)
-                                s.add(tuple(segment["features"].values()))
-                        unique_segments_per_cluster.append(len(s))
-                    if self._wandb_run:
-                        cluster_summary_fig = plot_segment_cluster_features(clustering)
-                        log_data["Cluster Feature Summary"] = wandb.Image(cluster_summary_fig, caption="Feature Summary per cluster")
-                        plt.close(cluster_summary_fig)  # clean up
-                        segments_plot = plot_trajectory_segments(trajectories, empirical_policy, self._previous_policy,f"Surprise_plot_cp_{checkpoint_id}")
-                        log_data["Segment Surprise Plot"]  = wandb.Image(segments_plot, caption="Surprise per step in all trajectories")
-                        plt.close(segments_plot) #cleanup
-                        log_data['segmentation_metrics']["clusters"] = len(clustering)
-                        log_data['segmentation_metrics']["mean_segment_in_cluster"] = np.mean(segments_per_cluster)
-                        log_data['segmentation_metrics']["mean_unique_segment_in_cluster"] = np.mean(unique_segments_per_cluster)
-                        num_actions = 6 #empirical_policy.num_actions
-                        action_distribution_plot = plot_action_per_step_distribution(trajectories, num_actions, normalize=True)
-                        log_data["Action Distribution Plot"] = wandb.Image(action_distribution_plot, caption="Action Distribution per Time Step")
-                        plt.close(action_distribution_plot)  # cleanup
-                        
-                        unique_trajectories = set(trajectories)
-                        max_len = max(len(t) for t in unique_trajectories)
-                        # surprises = np.zeros((len(unique_trajectories), max_len))
-                        # action_change = np.zeros((len(unique_trajectories), max_len))
-                        # cluster_per_step = np.zeros((len(unique_trajectories), max_len))
-                        # for i, trajectory in enumerate(unique_trajectories):
-                        #     surprises[i, :len(trajectory)] = compute_trajectory_surprises(trajectory, empirical_policy, self._previous_policy)
-                        #     action_change[i, :len(trajectory)] = get_trajectory_action_change(trajectory, empirical_policy, self._previous_policy)
-                        #     cluster_per_step[i, :len(trajectory)] = get_clusters_per_step(trajectory, clustering)
-                        # trajectory_heatmap_plot = plot_trajectory_heatmap(surprises, action_change, cluster_per_step)[0]
-                        # # trajectory_plot = plot_trajectory_network_colored_nodes_by_cluster(trajectories[0], unique_segment_clusters)
+        if self._wandb_run:
+            wandb.config.update(metadata)
+            self._wandb_run.log(log_data, step=first_id)
 
-                        # log_data["Trajectory Combined Heatmap"] = wandb.Image(trajectory_heatmap_plot, caption="Trajectory Combined Heatmap")
-                        # plt.close(trajectory_heatmap_plot)
-                        #trajectory_plot = plot_trajectory_network_colored_nodes_by_cluster(trajectories[0], unique_segment_clusters)
+        # Step 2: parallel comparisons (i-1, i)
+        tasks = []
+        for i in range(1, len(sorted_ids)):
+            prev_id = sorted_ids[i - 1]
+            curr_id = sorted_ids[i]
+            trajectories, metadata, curr_policy = results[curr_id]
+            _, _, prev_policy = results[prev_id]
+            tasks.append((curr_id, trajectories, metadata, prev_policy, curr_policy))
 
-                        #log_data["Trajectory Network Plot"] = wandb.Image(Image.open(io.BytesIO(trajectory_plot)), caption="Trajectory Network Colored by Cluster") # cleanup
-                        for cluster_id,segments in clustering.items():
-                            traj_ids = set()
-                            for seg in segments:
-                                traj_ids.add(seg["trajectory_id"])
-                            print(f"\tCluster {cluster_id} contains segments from {traj_ids} trajectories.")
-                        cluster_visualization = visualize_clusters(
-                            clustering,
-                            max_len,
-                        )
-                        log_data["Cluster Visualization"] = wandb.Image(cluster_visualization, caption="Cluster Visualization")
-                        plt.close(cluster_visualization)
-                    print(log_data)
-            if self._wandb_run:
-                wandb.config.update(trajectory_metadata)
-                self._wandb_run.log(log_data,step=checkpoint_id)
-            self._previous_policy = empirical_policy
+        with ProcessPoolExecutor() as executor:
+            futures = [executor.submit(process_comparison, *task) for task in tasks]
+            results_list = [f.result() for f in futures]  # blocking, but done in parallel
+            for checkpoint_id, log_data, metadata in sorted(results_list, key=lambda x: x[0]):
+                # 🔹 Convert raw PNG bytes -> wandb.Image here
+                if "_figs" in log_data:
+                    for k, v in log_data["_figs"].items():
+                        img = Image.open(io.BytesIO(v))   # convert back to PIL
+                        log_data[k] = wandb.Image(img, caption=k)
+                    del log_data["_figs"]
+
+                # 🔹 Now safe to log
+                if self._wandb_run:
+                    wandb.config.update(metadata)
+                    self._wandb_run.log(log_data, step=checkpoint_id)
+
 
 if __name__ == "__main__":
     trajectory_replay = TrajectoryReplay(sys.argv[1],
