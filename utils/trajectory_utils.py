@@ -105,6 +105,26 @@ def load_trajectories_from_jsonl(
                 print(f"Error loading trajectory from line {i}: {e}")
     return trajectories, metadata
 
+def calculate_ecdf_auc(returns: np.ndarray) -> float:
+    """
+    Calculate the area under the empirical cumulative distribution function (ECDF)
+    of the given returns.
+    """
+    if returns.size < 2:
+        return 0.0
+
+    sorted_returns = np.sort(returns)
+    n = sorted_returns.size
+
+    # Widths between consecutive sorted returns
+    widths = np.diff(sorted_returns)
+    # Heights of ECDF on each interval [x_i, x_{i+1})
+    heights = np.arange(1, n) / n  
+
+    # Vectorized dot product = sum(heights * widths)
+    auc = np.dot(heights, widths)
+
+    return float(auc)
 
 def compute_kl_divergence(state: Any, policy1:EmpiricalPolicy, policy2:EmpiricalPolicy, num_actions:int, alpha=1.0, epsilon=1e-8) -> float:
     """
@@ -205,10 +225,12 @@ def empirical_policy_statistics(policy:EmpiricalPolicy, is_win_fn:Optional[Calla
     Returns:
     """
     metrics = {}
+    # static metrics
     metrics["unique_nodes"] = policy.num_states
     metrics["unique_actions"] = policy.num_actions
-    metrics["mean_trajectory_lenght"] = np.mean([len(t) for t in policy.trajectories])
+    metrics["mean_trajectory_length"] = np.mean([len(t) for t in policy.trajectories])
     metrics["mean_return"] = np.mean([np.sum(t.rewards) for t in policy.trajectories])
+    metrics["return_ecdf_auc"] = calculate_ecdf_auc(np.array([np.sum(t.rewards) for t in policy.trajectories]))
     metrics["mean_winrate"] = sum([is_win_fn(t) for t in policy.trajectories])/policy.num_trajectories
 
     # Compute self-loops directly from edge counts
