@@ -3,7 +3,7 @@ import json
 import numpy as np
 import ruptures as rpt
 from typing import Iterable
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, RobustScaler
 from pyclustering.cluster.xmeans import xmeans
 from pyclustering.cluster.center_initializer import kmeans_plusplus_initializer
 from sklearn.cluster import DBSCAN
@@ -14,7 +14,7 @@ import networkx as nx
 import json
 import os
 from utils.aidojo_utils import aidojo_rebuild_trajectory
-
+import hdbscan
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (np.integer,)):
@@ -301,7 +301,7 @@ def get_segment_features(seg_start:int, seg_end:int ,surprises:np.ndarray,reward
     """
     Computes the features for a segment.
     """
-    feature_names = ["λ_ret", "λ_ret_std", "surprise", "surprise_std", "reward", "reward_std", "coverage", "pos_start", "pos_end"]
+    feature_names = ["λ_ret", "λ_ret_std", "surprise", "surprise_std", "reward", "reward_std", "length", "pos_start", "pos_end"]
     features = {}
     features["λ_ret"] = np.mean(elegibility_traces[seg_start:seg_end])
     features["λ_ret_std"] = np.std(elegibility_traces[seg_start:seg_end])
@@ -309,37 +309,64 @@ def get_segment_features(seg_start:int, seg_end:int ,surprises:np.ndarray,reward
     features["surprise_std"] = np.std(surprises[seg_start:seg_end])
     features["reward"] = np.mean(rewards[seg_start:seg_end])
     features["reward_std"] = np.std(rewards[seg_start:seg_end])
-    features["coverage"] = (seg_end - seg_start)/trajectory_len
-    features["pos_start"] = seg_start/trajectory_len
-    features["pos_end"] = seg_end/trajectory_len
+    features["length"] = (seg_end - seg_start)
+    features["pos_start"] = seg_start
+    features["pos_end"] = seg_end
     return features
-
-def get_cluster_features(segments:Iterable):
-    features = np.zeros([len(segments), len(segments[0][1].values())]) 
-    for i,s in enumerate(segments):
-        for j,x in enumerate(s[1].values()):
-            features[i][j] = x
-    ret = {}
-    for i, k in enumerate(segments[0][1].keys()):
-        ret[k] = {
-            "mean":np.mean(features[:, i]),
-            "std":np.std(features[:, i]),
-            # "min":np.min(features[:, i]),
-            # "max":np.max(features[:, i]),
-            # "median":np.median(features[:, i]),
-        }
-    return ret
  
-def cluster_segments(segments: Iterable):
-    # Extract features as a numpy array for efficient clustering
-    features = np.array([s["features"] for s in segments])
-    # Use a reasonable min_samples value (at least 2, or based on feature count)
-    min_samples = max(2, len(features[0]) + 1)
-    clustering = DBSCAN(eps=5, min_samples=min_samples).fit(features)
-    # Use defaultdict for faster cluster assignment
+# def cluster_segments(segments: Iterable):
+#     # Extract features as a numpy array for efficient clustering
+#     features = np.array([s["features"] for s in segments])
+#     # Use a reasonable min_samples value (at least 2, or based on feature count)
+#     min_samples = max(2, len(features[0]) + 1)
+#     clustering = DBSCAN(eps=5, min_samples=min_samples).fit(features)
+#     # Use defaultdict for faster cluster assignment
+#     clusters = defaultdict(list)
+#     for segment, cluster_id in zip(segments, clustering.labels_):
+#         clusters[cluster_id].append(segment)
+#     return dict(clusters)
+def cluster_segments(
+    segments,
+    include_features=None,
+    eps=1.2,
+    min_samples=None,
+    scale=True,
+):
+    """
+    Cluster trajectory segments based on their features.
+
+    Parameters:
+        segments: list of dicts, each with a "features" key containing a feature dict
+        include_features: list of feature names to include (default = all)
+        eps: DBSCAN eps parameter (scale-dependent!)
+        min_samples: DBSCAN min_samples parameter (default = len(features)+1)
+        scale: whether to standardize features before clustering
+
+    Returns:
+        clusters: dict mapping cluster_id -> list of segments
+    """
+
+    # # --- Select features ---
+    # if include_features is None:
+    #     # use all feature keys from first segment
+    #     include_features = list(segments[0]["features"].keys())
+
+    X = np.array([s["features"] for s in segments])
+
+    # --- Normalize ---
+    if scale:
+        X = StandardScaler().fit_transform(X)
+    # --- DBSCAN parameters ---
+    if min_samples is None:
+        min_samples = max(5, X.shape[1] + 1)
+
+    clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(X)
+    
+    # --- Collect results ---
     clusters = defaultdict(list)
     for segment, cluster_id in zip(segments, clustering.labels_):
         clusters[cluster_id].append(segment)
+
     return dict(clusters)
 
 def get_clusters_per_step(trajectory, clusters)->list:
