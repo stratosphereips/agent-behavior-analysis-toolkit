@@ -58,6 +58,17 @@ def process_single_trajectory(args):
     return segs, surprises
 
 def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_policy):
+    """
+    Process comparison between two empirical policies and segment trajectories.
+    Args:
+        checkpoint_id (int): Identifier for the current checkpoint.
+        trajectories (list): List of trajectories to process.
+        metadata (dict): Metadata associated with the trajectories.
+        prev_policy (EmpiricalPolicy): Previous empirical policy.
+        curr_policy (EmpiricalPolicy): Current empirical policy.
+    Returns:
+        tuple: (checkpoint_id, log_data, metadata)
+    """
     print(f"[process_comparison] Start checkpoint comparison {checkpoint_id}")
     log_data = {"static_graph_metrics": empirical_policy_statistics(curr_policy)}
     log_data["Cluster Feature Summary"] = None
