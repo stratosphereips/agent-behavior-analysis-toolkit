@@ -73,7 +73,8 @@ def plot_action_per_step_distribution(
 ) -> plt.Figure:
     """
     Plots a stacked bar chart of the distribution of actions taken at each time step
-    across multiple trajectories.
+    across multiple trajectories. Also accounts for how many trajectories survive
+    to each step.
 
     Parameters:
         trajectories: iterable of trajectories, each trajectory is a list of transitions
@@ -84,11 +85,15 @@ def plot_action_per_step_distribution(
     """
 
     action_to_idx = {}
-    # Count actions per timestep
-    max_len = max(len(trajectory) for trajectory in trajectories)
+    max_len = max([len(trajectory) for trajectory in trajectories])
+
+    # Action counts and trajectory survival counts
     action_counts = np.zeros((max_len, num_actions), dtype=float)
+    traj_counts = np.zeros(max_len, dtype=int)  # number of trajectories that reached step i
+
     for trajectory in trajectories:
         for i, transition in enumerate(trajectory):
+            traj_counts[i] += 1
             if not isinstance(transition.action, int):
                 if transition.action.type not in action_to_idx:
                     action_to_idx[transition.action.type] = len(action_to_idx)
@@ -98,34 +103,48 @@ def plot_action_per_step_distribution(
             action_counts[i, action_idx] += 1
 
     if normalize:
-        action_counts = action_counts / action_counts.sum(axis=1, keepdims=True)
+        # Normalize by number of trajectories that reached each step
+        with np.errstate(invalid="ignore", divide="ignore"):
+            action_counts = np.divide(
+                action_counts,
+                traj_counts[:, None],
+                where=traj_counts[:, None] > 0
+            )
 
     # Plot stacked bars
-    fig, ax = plt.subplots(figsize=(10, 5), dpi=dpi)
+    fig, ax1 = plt.subplots(figsize=(10, 5), dpi=dpi)
     bottom = np.zeros(max_len)
 
     for action_idx in range(num_actions):
         if action_idx not in action_to_idx.values():
             action_name = f"Action {action_idx}"
         else:
-            action_name = list(action_to_idx.keys())[action_idx]
-        ax.bar(
+            # recover action name from mapping
+            action_name = list(action_to_idx.keys())[list(action_to_idx.values()).index(action_idx)]
+        ax1.bar(
             np.arange(max_len),
             action_counts[:, action_idx],
             bottom=bottom,
-            label=action_name
+            label=action_name,
         )
         bottom += action_counts[:, action_idx]
 
-    ax.set_xlabel("Time step")
-    ax.set_ylabel("Proportion" if normalize else "Count")
-    ax.set_title("Action Distribution per Time Step")
-    ax.legend(title="Actions")
+    ax1.set_xlabel("Time step")
+    ax1.set_ylabel("Proportion" if normalize else "Count")
+    ax1.set_title("Action Distribution per Time Step")
+
+    # Plot trajectory survival as a line on a secondary y-axis
+    ax2 = ax1.twinx()
+    ax2.plot(np.arange(max_len), traj_counts, color="black", linestyle="--", label="# trajectories")
+    ax2.set_ylabel("Number of trajectories")
+
+    # Merge legends from both axes
+    handles1, labels1 = ax1.get_legend_handles_labels()
+    handles2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(handles1 + handles2, labels1 + labels2, title="Legend", loc="upper right")
+
     plt.tight_layout()
     return fig
-
-import numpy as np
-import matplotlib.pyplot as plt
 
 def plot_quantile_fan(data, num_quantiles=5, title="Quantile Fan Chart", dpi=600, figsize=(10,6)):
     """
