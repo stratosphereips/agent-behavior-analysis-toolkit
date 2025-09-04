@@ -168,7 +168,7 @@ def compute_js_divergence(state: Any, policy1: EmpiricalPolicy, policy2: Empiric
     kl_q_m = np.sum(q * (np.log(q) - np.log(m)))
     return 0.5 * (kl_p_m + kl_q_m)
 
-def compute_normalized_surprise(state, action, policy_new, policy_old, num_actions, alpha=0.1, epsilon=1e-8):
+def compute_normalized_surprise(state, action, policy_new, policy_old, num_actions, js_divergence_dict, alpha=0.1, epsilon=1e-8):
     # Get smoothed probabilities
     p_new = policy_new.get_action_probability(state, action, alpha)
     p_old = policy_old.get_action_probability(state, action, alpha)
@@ -180,30 +180,32 @@ def compute_normalized_surprise(state, action, policy_new, policy_old, num_actio
     # Log-prob difference
     log_diff = np.log(p_new) - np.log(p_old)
 
-    # JS divergence at state (vectorized)
-    p = np.array([max(policy_new.get_action_probability(state, a, alpha), epsilon) for a in range(num_actions)])
-    q = np.array([max(policy_old.get_action_probability(state, a, alpha), epsilon) for a in range(num_actions)])
-    m = np.maximum(0.5 * (p + q), epsilon)
-    js = 0.5 * (np.sum(p * (np.log(p) - np.log(m))) + np.sum(q * (np.log(q) - np.log(m))))
+    # Use provided JS divergence for this state
+    js = js_divergence_dict.get(state, epsilon)
 
     # Normalize
     return log_diff / max(js, epsilon)
 
-def compute_trajectory_surprises(trajectory:Trajectory, policy:Policy, previous_policy:Policy, epsilon=1e-8)->List[float]:
+def compute_trajectory_surprises(trajectory:Trajectory, policy:Policy, previous_policy:Policy, js_divergence_dict:dict, epsilon=1e-8) -> List[float]:
     """
     Computes the surprise of a trajectory given a policy.
     Args:
         trajectory (Trajectory): A trajectory, which is a list of transitions.
         policy (Policy): A policy that defines the action probabilities.
+        js_divergence_dict (dict): Dictionary mapping state to JS divergence.
     Returns:
         List[float]: A list of surprises for each transition in the trajectory.
     """
     surprises = []
     for transition in trajectory:
-        # action_prob = policy.get_action_probability(transition.state, transition.action)
-        # prev_action_prob = previous_policy.get_action_probability(transition.state, transition.action)
-        # surprise = np.log(action_prob) - np.log(prev_action_prob+epsilon) 
-        surprise = compute_normalized_surprise(transition.state, transition.action, policy, previous_policy, policy.num_actions)
+        surprise = compute_normalized_surprise(
+            transition.state,
+            transition.action,
+            policy,
+            previous_policy,
+            policy.num_actions,
+            js_divergence_dict
+        )
         surprises.append(surprise)
     return surprises
 
@@ -348,3 +350,43 @@ def get_clusters_per_step(trajectory, clusters)->list:
             for step in range(segment["start"], segment["end"]):
                 clusters_per_step[step].append(cluster_id)
     return [int(list(set(clusters_per_step[i]))[0]) for i in range(len(trajectory))]
+
+def js_divergence_per_state(policy_p: EmpiricalPolicy, policy_q: EmpiricalPolicy, alpha: float = 0.1):
+    states = set(policy_p._state_action_map.keys()) | set(policy_q._state_action_map.keys())
+    if not states:
+        return {}, 0.0  # empty dict and mean
+
+    global_actions = set()
+    for amap in policy_p._state_action_map.values():
+        global_actions.update(amap.keys())
+    for amap in policy_q._state_action_map.values():
+        global_actions.update(amap.keys())
+    global_actions = list(global_actions)
+
+    js_per_state = {}
+    for state in states:
+        p_probs = np.array([policy_p.get_action_probability(state, a, alpha) for a in global_actions])
+        q_probs = np.array([policy_q.get_action_probability(state, a, alpha) for a in global_actions])
+        m_probs = 0.5 * (p_probs + q_probs)
+
+        kl_pm = np.sum(p_probs * np.log(p_probs / m_probs))
+        kl_qm = np.sum(q_probs * np.log(q_probs / m_probs))
+        js_per_state[state] = 0.5 * (kl_pm + kl_qm)
+
+    mean_js = float(np.mean(list(js_per_state.values())))
+    return js_per_state, mean_js
+
+    
+
+def policy_comparison(curr_policy:EmpiricalPolicy, prev_policy:EmpiricalPolicy)->dict:
+    """
+    Compare two policies based on their trajectory statistics.
+    """
+    per_state_js_div, mean_js_div = js_divergence_per_state(curr_policy, prev_policy)
+
+    metrics = {
+        "node_overlap": len(set(curr_policy.states) & set(prev_policy.states))/max(len(curr_policy.states), len(prev_policy.states), 1),
+        "edge_overlap": len(set(curr_policy.actions) & set(prev_policy.actions))/max(len(curr_policy.actions), len(prev_policy.actions), 1),
+        "js_divergence": mean_js_div
+    }
+    return metrics, per_state_js_div
