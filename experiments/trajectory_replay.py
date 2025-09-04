@@ -3,7 +3,7 @@ from utils.trajectory_utils import empirical_policy_statistics
 from utils.trajectory_utils import find_trajectory_segments, cluster_segments
 from utils.plotting_utils   import plot_segment_cluster_features
 from utils.plotting_utils   import plot_trajectory_surprise_matrix, plot_action_per_step_distribution
-from utils.plotting_utils   import visualize_clusters, plot_quantile_fan
+from utils.plotting_utils   import visualize_clusters, plot_quantile_fan, plot_cluster_distribution_per_step
 from utils.trajectory_utils import compute_trajectory_surprises,compute_lambda_returns, policy_comparison
 from trajectory import EmpiricalPolicy
 import os
@@ -163,6 +163,11 @@ def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_
         figs["Quantile Fan Plot"] = buf.read()
         plt.close(fig)
 
+        fig = plot_cluster_distribution_per_step(clustering, max_len,)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png")
+        buf.seek(0)
+        figs["Cluster Distribution Plot"] = buf.read()
         log_data["_figs"] = figs
 
     print(f"[process_comparison] Finished checkpoint comparison {checkpoint_id}")
