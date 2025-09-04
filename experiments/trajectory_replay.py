@@ -43,10 +43,16 @@ def create_empirical_policy(trajectories, checkpoint_id):
     return checkpoint_id, empirical_policy
 
 def process_single_trajectory(args):
-    traj_idx, t, curr_policy, prev_policy, checkpoint_id, js_divergence_dict = args
-    #print(f"[process_single_trajectory] Start trajectory {traj_idx} in checkpoint {checkpoint_id}")
+    """
+    Process a single trajectory to compute surprises and segments.
+    Args:
+        args (tuple): Tuple containing (traj_idx, trajectory, curr_policy, prev_policy, checkpoint_id, per_state_normalization)
+    Returns:
+        tuple: (segments, surprises)
+    """
+    traj_idx, t, curr_policy, prev_policy, checkpoint_id, per_state_normalization = args
     rewards = np.array(t.rewards)
-    surprises = np.array(compute_trajectory_surprises(t, curr_policy, prev_policy, js_divergence_dict, epsilon=1e-12))
+    surprises = np.array(compute_trajectory_surprises(t, curr_policy, prev_policy, per_state_normalization, epsilon=1e-12))
     lambda_returns = np.array(compute_lambda_returns(rewards))
     segs = find_trajectory_segments(
         surprises=surprises,
@@ -54,7 +60,6 @@ def process_single_trajectory(args):
         lambda_returns=lambda_returns,
         trajectory_id=f"{checkpoint_id}_{traj_idx}"
     )
-    #print(f"[process_single_trajectory] Done trajectory {traj_idx} in checkpoint {checkpoint_id} ({len(segs)} segments)")
     return segs, surprises
 
 def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_policy):
