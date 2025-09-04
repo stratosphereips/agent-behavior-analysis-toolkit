@@ -168,7 +168,7 @@ def compute_js_divergence(state: Any, policy1: EmpiricalPolicy, policy2: Empiric
     kl_q_m = np.sum(q * (np.log(q) - np.log(m)))
     return 0.5 * (kl_p_m + kl_q_m)
 
-def compute_normalized_surprise(state, action, policy_new, policy_old, num_actions, js_divergence_dict, alpha=0.1, epsilon=1e-8):
+def compute_normalized_surprise(state, action, policy_new, policy_old, per_state_normalization, alpha=0.1, epsilon=1e-8):
     # Get smoothed probabilities
     p_new = policy_new.get_action_probability(state, action, alpha)
     p_old = policy_old.get_action_probability(state, action, alpha)
@@ -181,12 +181,12 @@ def compute_normalized_surprise(state, action, policy_new, policy_old, num_actio
     log_diff = np.log(p_new) - np.log(p_old)
 
     # Use provided JS divergence for this state
-    js = js_divergence_dict.get(state, epsilon)
+    js = per_state_normalization.get(state, epsilon)
 
     # Normalize
     return log_diff / max(js, epsilon)
 
-def compute_trajectory_surprises(trajectory:Trajectory, policy:Policy, previous_policy:Policy, js_divergence_dict:dict, epsilon=1e-8) -> List[float]:
+def compute_trajectory_surprises(trajectory:Trajectory, policy:Policy, previous_policy:Policy, per_state_normalization:dict, epsilon=1e-8) -> List[float]:
     """
     Computes the surprise of a trajectory given a policy.
     Args:
@@ -203,8 +203,7 @@ def compute_trajectory_surprises(trajectory:Trajectory, policy:Policy, previous_
             transition.action,
             policy,
             previous_policy,
-            policy.num_actions,
-            js_divergence_dict
+            per_state_normalization
         )
         surprises.append(surprise)
     return surprises
