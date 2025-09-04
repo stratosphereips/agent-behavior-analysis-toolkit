@@ -10,13 +10,17 @@ from sklearn.base import defaultdict
 from trajectory import Trajectory
 from utils.trajectory_utils import compute_trajectory_surprises, find_trajectory_segments
 
-def plot_trajectory_segments(trajectories:Iterable, policy, previous_policy, filename)->plt.Figure:
-    max_len = max([len(t) for t in trajectories])
-    surprise_matrix = np.full((len(trajectories), max_len), np.nan)
-    for i, trajectory in enumerate(trajectories):
-        surprises = compute_trajectory_surprises(trajectory, policy, previous_policy)
-        for j in range(0, len(surprises)):
-            surprise_matrix[i,j] = surprises[j]
+def plot_trajectory_surprise_matrix(surprise_matrix: np.ndarray) -> plt.Figure:
+    """
+    Plots a heatmap of surprise values across trajectories.
+
+    Parameters:
+        surprise_matrix: 2D numpy array of shape (num_trajectories, max_len)
+                         containing surprise values (np.nan for missing).
+
+    Returns:
+        fig: matplotlib Figure object
+    """
     fig, ax = plt.subplots(figsize=(10, 5))
     norm = mcolors.SymLogNorm(linthresh=10, linscale=1, vmin=-500, vmax=500)
     cmap = plt.cm.seismic
@@ -64,7 +68,9 @@ def plot_segment_cluster_features(clusters:dict)->plt.Figure:
     plt.tight_layout()
     return fig
 
-def plot_action_per_step_distribution(trajectories: Iterable, num_actions: int, normalize=True) -> plt.Figure:
+def plot_action_per_step_distribution(
+    trajectories: Iterable, num_actions: int, normalize=True, dpi=600
+) -> plt.Figure:
     """
     Plots a stacked bar chart of the distribution of actions taken at each time step
     across multiple trajectories.
@@ -74,6 +80,7 @@ def plot_action_per_step_distribution(trajectories: Iterable, num_actions: int, 
                       where transition.action is an int in [0, num_actions-1]
         num_actions: number of discrete actions
         normalize: if True, show proportions instead of counts
+        dpi: figure DPI (default 600)
     """
 
     action_to_idx = {}
@@ -94,7 +101,7 @@ def plot_action_per_step_distribution(trajectories: Iterable, num_actions: int, 
         action_counts = action_counts / action_counts.sum(axis=1, keepdims=True)
 
     # Plot stacked bars
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=(10, 5), dpi=dpi)
     bottom = np.zeros(max_len)
 
     for action_idx in range(num_actions):
@@ -116,6 +123,59 @@ def plot_action_per_step_distribution(trajectories: Iterable, num_actions: int, 
     ax.legend(title="Actions")
     plt.tight_layout()
     return fig
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_quantile_fan(data, num_quantiles=5, title="Quantile Fan Chart", dpi=600, figsize=(10,6)):
+    """
+    Plot quantile fan chart over steps.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Matrix of shape (num_trajectories, max_steps).
+    num_quantiles : int
+        Number of quantiles to compute (e.g. 5 → 0%,25%,50%,75%,100%).
+    title : str
+        Plot title.
+    dpi : int
+        Dots per inch (controls resolution).
+    figsize : tuple
+        Size of the figure in inches (width, height).
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    ax : matplotlib.axes.Axes
+    """
+    num_trajectories, max_steps = data.shape
+    steps = np.arange(max_steps)
+
+    # Define quantiles
+    quantiles = np.linspace(0, 100, num_quantiles)
+    q_values = np.nanpercentile(data, quantiles, axis=0)  # shape: (num_quantiles, max_steps)
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+
+    # Plot median
+    median = q_values[num_quantiles // 2]
+    ax.plot(steps, median, color="black", label="Median (50%)", linewidth=2)
+
+    # Shade bands between symmetric quantiles
+    for i in range(num_quantiles // 2):
+        lower = q_values[i]
+        upper = q_values[-(i+1)]
+        alpha = 0.2 + 0.1 * i  # darker toward median
+        ax.fill_between(steps, lower, upper, alpha=alpha, label=f"{quantiles[i]}–{quantiles[-(i+1)]}%")
+
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Value")
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    return fig, ax
 
 def plot_trajectory_network_colored_nodes_by_cluster(trajectory: Trajectory, segments: dict[int, list[tuple[int, int]]]):
     # G = nx.DiGraph()
@@ -402,6 +462,7 @@ def visualize_clusters(
     max_trajectory_len: int,
     default_feature_name="surprises",
     heatmap_cmap="seismic",
+    dpi=600,  # Added dpi parameter
 ):
     """
     Heatmap of per-step surprise with left strip showing cluster membership.
@@ -429,7 +490,6 @@ def visualize_clusters(
     cmap_with_grey = cmap.copy()
     cmap_with_grey.set_bad(color='lightgrey')
     # cluster strip
-    # cluster strip (one solid color per cluster)
     unique_cids = list(dict.fromkeys(row_cluster))  # preserve cluster order
     cid_to_idx = {c: i for i, c in enumerate(unique_cids)}
     strip = np.array([cid_to_idx[c] for c in row_cluster])[:, None]  # (rows, 1)
@@ -446,7 +506,7 @@ def visualize_clusters(
     norm_surprise = mcolors.SymLogNorm(linthresh=3, linscale=2, vmin=-100, vmax=100)
 
     # ---- plot ----
-    fig = plt.figure(figsize=(12, 6), constrained_layout=True)
+    fig = plt.figure(figsize=(12, 6), constrained_layout=True, dpi=dpi)  # Set dpi here
     gs = fig.add_gridspec(1, 2, width_ratios=[0.035, 0.965])
     ax_strip, ax_heat = fig.add_subplot(gs[0]), fig.add_subplot(gs[1], sharey=None)
 
