@@ -1,18 +1,15 @@
 from utils.trajectory_utils import load_trajectories_from_json
 from utils.trajectory_utils import empirical_policy_statistics
 from utils.trajectory_utils import find_trajectory_segments, cluster_segments
-from utils.plotting_utils   import plot_segment_cluster_features, plot_trajectory_network_colored_nodes_by_cluster
-from utils.plotting_utils   import plot_trajectory_surprise_matrix, plot_action_per_step_distribution, plot_trajectory_heatmap
-from utils.plotting_utils   import plot_trajectory_heatmap, visualize_clusters, plot_quantile_fan
-from utils.trajectory_utils import get_trajectory_action_change
-from utils.trajectory_utils import get_clusters_per_step
+from utils.plotting_utils   import plot_segment_cluster_features
+from utils.plotting_utils   import plot_trajectory_surprise_matrix, plot_action_per_step_distribution
+from utils.plotting_utils   import visualize_clusters, plot_quantile_fan
 from utils.trajectory_utils import compute_trajectory_surprises,compute_lambda_returns, policy_comparison
 from trajectory import EmpiricalPolicy
 import os
 import wandb
 import matplotlib.pyplot as plt
 import numpy as np
-import json
 from PIL import Image
 import io
 import os
@@ -62,7 +59,7 @@ def process_single_trajectory(args):
     )
     return segs, surprises
 
-def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_policy):
+def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_policy, num_actions=None):
     """
     Process comparison between two empirical policies and segment trajectories.
     Args:
@@ -159,7 +156,6 @@ def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_
         figs["Cluster Visualization"] = buf.read()
         plt.close(fig)
 
-        #fig, ax = plot_quantile_fan(np.array([s["features"] for s in segments]), num_quantiles=5)
         fig, ax = plot_quantile_fan(surprises, num_quantiles=9)
         buf = io.BytesIO()
         fig.savefig(buf, format="png")
@@ -190,14 +186,17 @@ class TrajectoryReplay:
         else:
             self._wandb_run = None
 
-    def remap_trajectories(self)->dict:
+    def remap_trajectories(self, trajectories)->dict:
         """
         Re-map custom objects in trajectories to numerical IDs
         """
-        remapped_trajectories = self.original_trajectories
+        remapped_trajectories = trajectories
         return remapped_trajectories
     
     def process_trajectories(self):
+        """
+        Main processing function to load, segment, cluster and analyze trajectories
+        """
         # Load trajectories in parallel using threads
         print("[TrajectoryReplay] Starting parallel loading of checkpoints")
         max_trajectories = self.params.get("max_trajectories", None)
@@ -255,7 +254,7 @@ class TrajectoryReplay:
         if self._wandb_run:
             wandb.config.update(self.trajectory_metadata[first_id])
             self._wandb_run.log(log_data, step=first_id)
-
+        num_actions = max(p.num_actions for p in results_policies.values())
         tasks = []
         for i in range(1, len(sorted_ids)):
             prev_id = sorted_ids[i - 1]
@@ -264,7 +263,7 @@ class TrajectoryReplay:
             metadata = self.trajectory_metadata[curr_id]
             prev_policy = results_policies[prev_id]
             curr_policy = results_policies[curr_id]
-            tasks.append((curr_id, trajectories, metadata, prev_policy, curr_policy))
+            tasks.append((curr_id, trajectories, metadata, prev_policy, curr_policy, num_actions))
 
         print("[TrajectoryReplay] Starting parallel checkpoint comparisons")
         with ProcessPoolExecutor() as executor:
