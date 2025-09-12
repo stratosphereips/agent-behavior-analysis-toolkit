@@ -415,11 +415,11 @@ def policy_comparison(curr_policy:EmpiricalPolicy, prev_policy:EmpiricalPolicy)-
 
     metrics = {
         "node_overlap": len(set(curr_policy.states) & set(prev_policy.states))/max(len(curr_policy.states), len(prev_policy.states), 1),
-        "edge_overlap": len(set(curr_policy.actions) & set(prev_policy.actions))/max(len(curr_policy.actions), len(prev_policy.actions), 1),
+        "edge_overlap": len(set(curr_policy.edges) & set(prev_policy.edges))/max(len(curr_policy.edges), len(prev_policy.edges), 1),
         "js_divergence": mean_js_div,
         "added_nodes": len(set(curr_policy.states) - set(prev_policy.states)),
         "removed_nodes": len(set(prev_policy.states) - set(curr_policy.states)),
-        "added_edges": len(set(curr_policy.actions) - set(prev_policy.actions)),
-        "removed_edges": len(set(prev_policy.actions) - set(curr_policy.actions)),
+        "added_edges": len(set(curr_policy.edges) - set(prev_policy.edges)),
+        "removed_edges": len(set(prev_policy.edges) - set(curr_policy.edges)),
     }
     return metrics, per_state_js_div
