@@ -184,7 +184,7 @@ def plot_quantile_fan(data, num_quantiles=5, title="Surprise distribution per st
 
     # Plot median
     median = q_values[num_quantiles // 2]
-    ax.plot(steps, median, color="black", label="Median (50%)", linewidth=2)
+    ax.plot(steps, median, color="black", label="Median (50%)", linewidth=1.2)
 
     # Shade bands between symmetric quantiles
     for i in range(num_quantiles // 2):
@@ -194,7 +194,7 @@ def plot_quantile_fan(data, num_quantiles=5, title="Surprise distribution per st
         ax.fill_between(steps, lower, upper, alpha=alpha, label=f"{quantiles[i]}–{quantiles[-(i+1)]}%")
 
     ax.set_xlabel("Step")
-    ax.set_ylabel("Value")
+    ax.set_ylabel("Surprise")
     ax.set_title(title)
     ax.legend()
     ax.grid(True, alpha=0.3)
