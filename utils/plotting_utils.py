@@ -37,14 +37,18 @@ def plot_trajectory_surprise_matrix(surprise_matrix: np.ndarray) -> plt.Figure:
 def plot_segment_cluster_features(clusters: dict) -> plt.Figure:
     feature_names = ["λ_ret", "λ_ret_std", "surprise", "surprise_std", 
                      "reward", "reward_std", "length", "pos_start", "pos_end"]
+    feature_names = ["λ_ret", "surprise", "surprise_std", 
+                     "reward", "reward_std", "length", "pos_start", "pos_end", "state_diversity", "action_diversity"]
 
     cluster_data = {}
     for cluster_id, segments in clusters.items():
         avg_features = {}
+        std_features = {}
         for feature_idx, feature in enumerate(feature_names):
             values = [seg["features"][feature_idx] for seg in segments]
             avg_features[feature] = np.mean(values)
-        cluster_data[cluster_id] = avg_features
+            std_features[feature] = np.std(values)
+        cluster_data[cluster_id] = {"avg": avg_features, "std": std_features}
 
     n_clusters = len(cluster_data)
     n_features = len(feature_names)
@@ -55,9 +59,10 @@ def plot_segment_cluster_features(clusters: dict) -> plt.Figure:
     colors = plt.cm.tab20.colors
 
     for i, cluster_id in enumerate(sorted(cluster_data)):
-        values = [cluster_data[cluster_id][f] for f in feature_names]
+        values = [cluster_data[cluster_id]["avg"][f] for f in feature_names]
+        stds = [cluster_data[cluster_id]["std"][f] for f in feature_names]
         offset = x - 0.4 + i * bar_width + bar_width/2
-        ax.bar(offset, values, width=bar_width, color=colors[i % len(colors)], label=f"Cluster {cluster_id}")
+        ax.bar(offset, values, yerr=stds, width=bar_width, color=colors[i % len(colors)], label=f"Cluster {cluster_id}")
 
     ax.set_xticks(x)
     ax.set_xticklabels(feature_names, rotation=45, ha='right')
@@ -494,12 +499,15 @@ def plot_cluster_distribution_per_step(clusters, trajectory_len, normalize=True,
         totals[totals == 0] = 1
         step_counts = step_counts / totals
 
-    # Plot stacked bars
+    # Use tab20 colors for clusters
+    tab20_colors = plt.cm.tab20.colors
+
     fig, ax = plt.subplots(figsize=(12, 5), dpi=dpi)
     bottom = np.zeros(trajectory_len)
 
     for i, cid in enumerate(cluster_ids):
-        ax.bar(np.arange(trajectory_len), step_counts[:, i], bottom=bottom, label=f"Cluster {cid}")
+        color = tab20_colors[i % len(tab20_colors)]
+        ax.bar(np.arange(trajectory_len), step_counts[:, i], bottom=bottom, label=f"Cluster {cid}", color=color)
         bottom += step_counts[:, i]
 
     ax.set_xlabel("Time step")
