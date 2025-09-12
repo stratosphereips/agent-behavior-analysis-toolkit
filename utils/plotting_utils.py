@@ -151,7 +151,7 @@ def plot_action_per_step_distribution(
     plt.tight_layout()
     return fig
 
-def plot_quantile_fan(data, num_quantiles=5, title="Quantile Fan Chart", dpi=600, figsize=(10,6)):
+def plot_quantile_fan(data, num_quantiles=5, title="Surprise distribution per step", dpi=600, figsize=(10,6)):
     """
     Plot quantile fan chart over steps.
 
