@@ -273,7 +273,7 @@ def find_trajectory_segments(
     features = scaler.fit_transform(features)
 
     # KernelCPD setup
-    min_size = max(3, trajectory_len // 20)
+    min_size = max(3, trajectory_len // 20) #????
     algo = rpt.KernelCPD(kernel="rbf", min_size=min_size, params={"gamma": 0.3})
     algo.fit(features)
 
@@ -304,7 +304,7 @@ def get_segment_features(seg_start:int, seg_end:int ,surprises:np.ndarray,reward
     feature_names = ["λ_ret", "λ_ret_std", "surprise", "surprise_std", "reward", "reward_std", "length", "pos_start", "pos_end"]
     features = {}
     features["λ_ret"] = np.mean(elegibility_traces[seg_start:seg_end])
-    features["λ_ret_std"] = np.std(elegibility_traces[seg_start:seg_end])
+    #features["λ_ret_std"] = np.std(elegibility_traces[seg_start:seg_end])
     features["surprise"] = np.mean(surprises[seg_start:seg_end])
     features["surprise_std"] = np.std(surprises[seg_start:seg_end])
     features["reward"] = np.mean(rewards[seg_start:seg_end])
@@ -314,17 +314,6 @@ def get_segment_features(seg_start:int, seg_end:int ,surprises:np.ndarray,reward
     features["pos_end"] = seg_end
     return features
  
-# def cluster_segments(segments: Iterable):
-#     # Extract features as a numpy array for efficient clustering
-#     features = np.array([s["features"] for s in segments])
-#     # Use a reasonable min_samples value (at least 2, or based on feature count)
-#     min_samples = max(2, len(features[0]) + 1)
-#     clustering = DBSCAN(eps=5, min_samples=min_samples).fit(features)
-#     # Use defaultdict for faster cluster assignment
-#     clusters = defaultdict(list)
-#     for segment, cluster_id in zip(segments, clustering.labels_):
-#         clusters[cluster_id].append(segment)
-#     return dict(clusters)
 def cluster_segments(
     segments,
     include_features=None,
@@ -402,7 +391,21 @@ def js_divergence_per_state(policy_p: EmpiricalPolicy, policy_q: EmpiricalPolicy
     mean_js = float(np.mean(list(js_per_state.values())))
     return js_per_state, mean_js
 
-    
+def graph_from_policy(policy:EmpiricalPolicy)->nx.MultiDiGraph:
+    G = nx.MultiDiGraph()
+    for (state, action, next_state), count in policy._edge_count.items():
+        if next_state is None:
+            continue
+        if not G.has_node(state):
+            G.add_node(state)
+        if not G.has_node(next_state):
+            G.add_node(next_state)
+        if G.has_edge(state, next_state):
+            G[state][next_state]['weight'] += count
+            G[state][next_state]['actions'].add(action)
+        else:
+            G.add_edge(state, next_state, weight=count, actions={action})
+    return G
 
 def policy_comparison(curr_policy:EmpiricalPolicy, prev_policy:EmpiricalPolicy)->dict:
     """
@@ -413,6 +416,10 @@ def policy_comparison(curr_policy:EmpiricalPolicy, prev_policy:EmpiricalPolicy)-
     metrics = {
         "node_overlap": len(set(curr_policy.states) & set(prev_policy.states))/max(len(curr_policy.states), len(prev_policy.states), 1),
         "edge_overlap": len(set(curr_policy.actions) & set(prev_policy.actions))/max(len(curr_policy.actions), len(prev_policy.actions), 1),
-        "js_divergence": mean_js_div
+        "js_divergence": mean_js_div,
+        "added_nodes": len(set(curr_policy.states) - set(prev_policy.states)),
+        "removed_nodes": len(set(prev_policy.states) - set(curr_policy.states)),
+        "added_edges": len(set(curr_policy.actions) - set(prev_policy.actions)),
+        "removed_edges": len(set(prev_policy.actions) - set(curr_policy.actions)),
     }
     return metrics, per_state_js_div
