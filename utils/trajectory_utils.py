@@ -258,6 +258,8 @@ def find_trajectory_segments(
     surprises: np.ndarray,
     rewards: np.ndarray,
     lambda_returns: np.ndarray,
+    actions: np.ndarray,
+    states: np.ndarray,
     penalty=5,
     trajectory_id=None,
 ) -> List[dict]:
@@ -287,7 +289,7 @@ def find_trajectory_segments(
             seg = {
                 "start": start,
                 "end": end,
-                "features": tuple(get_segment_features(start, end, surprises, rewards, lambda_returns, trajectory_len).values()),
+                "features": tuple(get_segment_features(start, end, surprises, rewards, lambda_returns, actions, states, trajectory_len).values()),
                 "surprises": surprises[start:end],
             }
             if trajectory_id is not None:
@@ -297,13 +299,13 @@ def find_trajectory_segments(
         pass
     return trajectory_segments
 
-def get_segment_features(seg_start:int, seg_end:int ,surprises:np.ndarray,rewards:np.ndarray, elegibility_traces:np.ndarray, trajectory_len:int):
+def get_segment_features(seg_start:int, seg_end:int ,surprises:np.ndarray,rewards:np.ndarray, lambda_returns:np.ndarray, actions:np.ndarray, states:np.ndarray, trajectory_len:int):
     """
     Computes the features for a segment.
     """
-    feature_names = ["λ_ret", "λ_ret_std", "surprise", "surprise_std", "reward", "reward_std", "length", "pos_start", "pos_end"]
+    feature_names = ["λ_ret", "λ_ret_std", "surprise", "surprise_std", "reward", "reward_std", "length", "pos_start", "pos_end", "action_diversity", "state_diversity"]
     features = {}
-    features["λ_ret"] = np.mean(elegibility_traces[seg_start:seg_end])
+    features["λ_ret"] = np.mean(lambda_returns[seg_start:seg_end])
     #features["λ_ret_std"] = np.std(elegibility_traces[seg_start:seg_end])
     features["surprise"] = np.mean(surprises[seg_start:seg_end])
     features["surprise_std"] = np.std(surprises[seg_start:seg_end])
@@ -312,12 +314,14 @@ def get_segment_features(seg_start:int, seg_end:int ,surprises:np.ndarray,reward
     features["length"] = (seg_end - seg_start)
     features["pos_start"] = seg_start
     features["pos_end"] = seg_end
+    features["action_diversity"] = len(set(actions[seg_start:seg_end])) / len(actions[seg_start:seg_end]) if len(actions[seg_start:seg_end]) > 0 else 0.0
+    features["state_diversity"] = len(set(states[seg_start:seg_end])) / len(states[seg_start:seg_end]) if len(states[seg_start:seg_end]) > 0 else 0.0
     return features
  
 def cluster_segments(
     segments,
     include_features=None,
-    eps=1.2,
+    eps=1.5,
     min_samples=None,
     scale=True,
 ):

@@ -51,10 +51,14 @@ def process_single_trajectory(args):
     rewards = np.array(t.rewards)
     surprises = np.array(compute_trajectory_surprises(t, curr_policy, prev_policy, per_state_normalization, epsilon=1e-12))
     lambda_returns = np.array(compute_lambda_returns(rewards))
+    actions = np.array(t.actions)
+    states = np.array(t.states)
     segs = find_trajectory_segments(
         surprises=surprises,
         rewards=rewards,
         lambda_returns=lambda_returns,
+        actions=actions,
+        states=states,
         trajectory_id=f"{checkpoint_id}_{traj_idx}"
     )
     return segs, surprises

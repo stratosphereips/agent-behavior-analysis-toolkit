@@ -8,7 +8,6 @@ import networkx as nx
 from networkx.drawing.nx_agraph import to_agraph
 from sklearn.base import defaultdict
 from trajectory import Trajectory
-from utils.trajectory_utils import compute_trajectory_surprises, find_trajectory_segments
 
 def plot_trajectory_surprise_matrix(surprise_matrix: np.ndarray) -> plt.Figure:
     """
@@ -37,8 +36,10 @@ def plot_trajectory_surprise_matrix(surprise_matrix: np.ndarray) -> plt.Figure:
 def plot_segment_cluster_features(clusters: dict) -> plt.Figure:
     feature_names = ["λ_ret", "λ_ret_std", "surprise", "surprise_std", 
                      "reward", "reward_std", "length", "pos_start", "pos_end"]
+    #feature_names = ["λ_ret", "surprise", "surprise_std", 
+    #                 "reward", "reward_std", "length", "pos_start", "pos_end"]
     feature_names = ["λ_ret", "surprise", "surprise_std", 
-                     "reward", "reward_std", "length", "pos_start", "pos_end", "state_diversity", "action_diversity"]
+        "reward", "reward_std", "length", "pos_start", "pos_end", "state_diversity", "action_diversity"]
 
     cluster_data = {}
     for cluster_id, segments in clusters.items():
@@ -192,7 +193,8 @@ def plot_quantile_fan(data, num_quantiles=5, title="Surprise distribution per st
         upper = q_values[-(i+1)]
         alpha = 0.2 + 0.1 * i  # darker toward median
         ax.fill_between(steps, lower, upper, alpha=alpha, label=f"{quantiles[i]}–{quantiles[-(i+1)]}%")
-
+    
+    ax.set_yscale("symlog", linthresh=1e-2)
     ax.set_xlabel("Step")
     ax.set_ylabel("Surprise")
     ax.set_title(title)
@@ -487,8 +489,8 @@ def plot_cluster_distribution_per_step(clusters, trajectory_len, normalize=True,
 
     for cid, seg_list in clusters.items():
         for seg in seg_list:
-            start = seg["features"][-2]  # pos_start
-            end = seg["features"][-1]  # pos_end
+            start = seg["features"][-4]  # pos_start
+            end = seg["features"][-3]  # pos_end
             # Increment count for each step the segment spans
             step_counts[start:end, cluster_idx_map[cid]] += 1
 
