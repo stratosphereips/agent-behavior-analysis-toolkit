@@ -291,6 +291,7 @@ def find_trajectory_segments(
                 "end": end,
                 "features": tuple(get_segment_features(start, end, surprises, rewards, lambda_returns, actions, states, trajectory_len).values()),
                 "surprises": surprises[start:end],
+                "return": np.mean(rewards[start:end]),
             }
             if trajectory_id is not None:
                 seg["trajectory_id"] = trajectory_id
