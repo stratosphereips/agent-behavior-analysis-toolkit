@@ -101,9 +101,13 @@ def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_
         for segs, traj_surprises in results:
             segments += segs
             surprises.append(traj_surprises)
-    # Pad surprises to have shape (num_trajectories, max_len) with np.nan
+
     max_len = max(len(s) for s in surprises)
-    surprises = np.array([np.pad(s, (0, max_len - len(s)), 'constant', constant_values=np.nan) for s in surprises])
+    # pre-allocate matrix and fill with np.nan
+    surprise_matrix = np.full((len(surprises), max_len), np.nan)
+    # insert each surprise array into the matrix
+    for i, s in enumerate(surprises):
+        surprise_matrix[i, :len(s)] = s
     print(f"[process_comparison] Segmentation done for checkpoint {checkpoint_id} ({len(segments)} segments)")
 
     if segments:
@@ -136,7 +140,7 @@ def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_
         figs["Cluster Feature Summary"] = buf.read()
         plt.close(fig)
 
-        fig = plot_trajectory_surprise_matrix(surprises)
+        fig = plot_trajectory_surprise_matrix(surprise_matrix)
         buf = io.BytesIO()
         fig.savefig(buf, format="png")
         buf.seek(0)
@@ -160,7 +164,7 @@ def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_
         figs["Cluster Visualization"] = buf.read()
         plt.close(fig)
 
-        fig, ax = plot_quantile_fan(surprises, num_quantiles=9)
+        fig, ax = plot_quantile_fan(surprise_matrix, num_quantiles=9)
         buf = io.BytesIO()
         fig.savefig(buf, format="png")
         buf.seek(0)
@@ -302,6 +306,7 @@ class TrajectoryReplay:
 if __name__ == "__main__":
     trajectory_replay = TrajectoryReplay(sys.argv[1],
     wandb_project="agent-trajectory-analysis",
-    wandb_entity="ondrej-lukas-czech-technical-university-in-prague"
+    wandb_entity="ondrej-lukas-czech-technical-university-in-prague",
+    max_trajectories=1000
     )
     trajectory_replay.process_trajectories()
