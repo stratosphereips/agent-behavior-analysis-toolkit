@@ -2,7 +2,6 @@ from environments.gym_discerete_wrappers import DiscreteMountainCarWrapper
 from environments.gym_wrappers import TrajectoryRecorderWrapper, CustomEnv
 from agents.q_learning import Qlearning
 from agents.sarsa import Sarsa
-from agents.dqn import DQN
 import gymnasium as gym
 import argparse
 import numpy as np
@@ -11,7 +10,7 @@ import wandb
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", default=4242, type=int, help="Random seed.")
-    parser.add_argument("--episodes", default=50000, type=int, help="Number of training episodes")
+    parser.add_argument("--episodes", default=10000, type=int, help="Number of training episodes")
     parser.add_argument("--evaluate_each", default=2000, type=int, help="Periodic evluation frequency")
     parser.add_argument("--evaluate_for", default=500, type=int, help="Periodic evluation length")
     args = parser.parse_args()
@@ -33,8 +32,6 @@ if __name__ == "__main__":
     ) 
     # basic env
     env = gym.make("MountainCar-v0")
-    # add fixed seed
-    env = CustomEnv(env, seed=args.seed)
     # add Trajectory recording layer
     discretized_env = DiscreteMountainCarWrapper(env, bins=20)
     discretized_env = TrajectoryRecorderWrapper(discretized_env)
@@ -44,7 +41,7 @@ if __name__ == "__main__":
     agent = Qlearning(
         discretized_env.observation_space.n,
         discretized_env.action_space.n,
-        alpha=0.1,
+        alpha=0.2,
         gamma=0.95,
         epsilon=1,
         epsilon_min=0.01,
