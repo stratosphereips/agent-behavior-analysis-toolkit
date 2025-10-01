@@ -200,9 +200,10 @@ def plot_quantile_fan(data, num_quantiles=5, title="Surprise distribution per st
         alpha = 0.2 + 0.1 * i  # darker toward median
         ax.fill_between(steps, lower, upper, alpha=alpha, label=f"{quantiles[i]}–{quantiles[-(i+1)]}%")
     
-    ax.set_yscale("symlog", linthresh=1e-2)
+    ax.set_yscale("symlog", linthresh=10)
+    ax.set_ylim(-100, 100)
     ax.set_xlabel("Step")
-    ax.set_ylabel("Surprise")
+    ax.set_ylabel("Surprise (symlog scale)")
     ax.set_title(title)
     ax.legend()
     ax.grid(True, alpha=0.3)
@@ -542,7 +543,7 @@ def visualize_clusters(
     max_trajectory_len: int,
     default_feature_name="surprises",
     heatmap_cmap="seismic",
-    dpi=600,
+    dpi=500,
 ):
     """
     Heatmap of per-step surprise with left strips showing cluster membership and segment return.
@@ -559,6 +560,7 @@ def visualize_clusters(
         def seg_sort_key(s):
             tid = s.get("trajectory_id", 0)
             return (s["start"], tid)
+            #return (tid, s["start"], s["end"])
         for seg in sorted(segments, key=seg_sort_key):
             start, end = seg["start"], seg["end"]
             vals = np.asarray(seg[default_feature_name])
@@ -595,11 +597,10 @@ def visualize_clusters(
     )
     cmap_return = plt.cm.inferno
 
-    norm_surprise = mcolors.SymLogNorm(linthresh=3, linscale=2, vmin=-100, vmax=100)
-
+    norm_surprise = mcolors.SymLogNorm(linthresh=10, linscale=1, vmin=-500, vmax=500)
     # ---- plot ----
-    fig = plt.figure(figsize=(13, 6), constrained_layout=True, dpi=dpi)
-    gs = fig.add_gridspec(1, 3, width_ratios=[0.035, 0.93, 0.035])
+    fig = plt.figure(figsize=(13, 7), constrained_layout=True, dpi=dpi)
+    gs = fig.add_gridspec(1, 3, width_ratios=[0.035, 0.93, 0.035], wspace=0.15)
     ax_strip, ax_heat, ax_return = (
         fig.add_subplot(gs[0]),
         fig.add_subplot(gs[1], sharey=None),
@@ -613,24 +614,29 @@ def visualize_clusters(
     # Heatmap (center)
     im = ax_heat.imshow(np.ma.masked_invalid(heatmap),
                         aspect="auto", cmap=cmap_with_grey, norm=norm_surprise)
-    fig.colorbar(im, ax=ax_heat, pad=0.01).set_label(default_feature_name.capitalize())
+    cbar_surprise = fig.colorbar(im, ax=ax_heat, pad=0.01)
+    cbar_surprise.set_label(default_feature_name.capitalize())
     ax_heat.set(xlabel="Trajectory Step", ylabel="Unique Segments (rows)")
 
     # Return strip (right)
     im_return = ax_return.imshow(strip_return, aspect="auto", cmap=cmap_return, norm=norm_return)
     ax_return.axis("off")
-    cbar_return = fig.colorbar(im_return, ax=ax_return, pad=0.01)
-    cbar_return.set_label("Segment Return")
+    # Make return colorbar the same height as surprise colorbar
+    cbar_return = fig.colorbar(im_return, ax=ax_return, pad=0.15)
+    cbar_return.set_label("Mean Segment Return", labelpad=20)
+    # Match the height of the return colorbar to the surprise colorbar
+    cbar_return.ax.set_position(cbar_surprise.ax.get_position())
 
     # legend below the heatmap
     handles = [mpatches.Patch(color=colors[i], label=f"Cluster {c}") 
                for i, c in enumerate(unique_cids)]
+    ncol = len(handles) if len(handles) <= 10 else 2
     ax_heat.legend(
         handles=handles,
         title="Clusters",
         loc="lower center",
-        bbox_to_anchor=(0.5, -0.22),
-        ncol=min(2, len(handles)),
+        bbox_to_anchor=(0.5, -0.19),
+        ncol=ncol,
         fontsize=10
     )
 
