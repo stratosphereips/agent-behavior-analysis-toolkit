@@ -159,7 +159,7 @@ def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_
         max_len = max(len(t) for t in unique_trajectories)
         fig = visualize_clusters(clustering, max_len)
         buf = io.BytesIO()
-        fig.savefig(buf, format="png")
+        fig.savefig(buf, format="png", bbox_inches="tight")
         buf.seek(0)
         figs["Cluster Visualization"] = buf.read()
         plt.close(fig)
