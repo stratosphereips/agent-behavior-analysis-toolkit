@@ -1,4 +1,3 @@
-
 from cProfile import label
 import numpy as np
 import matplotlib.pyplot as plt
@@ -9,15 +8,18 @@ import networkx as nx
 from networkx.drawing.nx_agraph import to_agraph
 from sklearn.base import defaultdict
 from trajectory import Trajectory
-from utils.trajectory_utils import compute_trajectory_surprises, find_trajectory_segments
 
-def plot_trajectory_segments(trajectories:Iterable, policy, previous_policy, filename)->plt.Figure:
-    max_len = max([len(t) for t in trajectories])
-    surprise_matrix = np.full((len(trajectories), max_len), np.nan)
-    for i, trajectory in enumerate(trajectories):
-        surprises = compute_trajectory_surprises(trajectory, policy, previous_policy)
-        for j in range(0, len(surprises)):
-            surprise_matrix[i,j] = surprises[j]
+def plot_trajectory_surprise_matrix(surprise_matrix: np.ndarray) -> plt.Figure:
+    """
+    Plots a heatmap of surprise values across trajectories.
+
+    Parameters:
+        surprise_matrix: 2D numpy array of shape (num_trajectories, max_len)
+                         containing surprise values (np.nan for missing).
+
+    Returns:
+        fig: matplotlib Figure object
+    """
     fig, ax = plt.subplots(figsize=(10, 5))
     norm = mcolors.SymLogNorm(linthresh=10, linscale=1, vmin=-500, vmax=500)
     cmap = plt.cm.seismic
@@ -31,57 +33,73 @@ def plot_trajectory_segments(trajectories:Iterable, policy, previous_policy, fil
     ax.set_title('Surprise Across Trajectories (SymLogNorm)')
     return fig
 
-def plot_segment_cluster_features(clusters:dict)->plt.Figure:
+def plot_segment_cluster_features(clusters: dict) -> plt.Figure:
+    feature_names = ["λ_ret", "λ_ret_std", "surprise", "surprise_std", 
+                     "reward", "reward_std", "length", "pos_start", "pos_end"]
+    #feature_names = ["λ_ret", "surprise", "surprise_std", 
+    #                 "reward", "reward_std", "length", "pos_start", "pos_end"]
+    feature_names = ["λ_ret", "surprise", "surprise_std", 
+        "reward", "reward_std", "length", "pos_start", "pos_end", "state_diversity", "action_diversity"]
+
     cluster_data = {}
     for cluster_id, segments in clusters.items():
-        feature_sums = {}
-        for segment in segments:
-            for feature, value in segment["features"].items():
-                feature_sums[feature] = feature_sums.get(feature, 0) + value
-        cluster_data[cluster_id] = {}
-        for feature_idx, feature_name in enumerate(sorted(feature_sums)):
-            # average for all segments in the cluster
-            v = feature_sums[feature_name]/len(segments)
-            cluster_data[cluster_id][feature_idx] = v
-    x = np.arange(len(feature_sums))
-    bar_width = 0.2
-    group_spacing = 0.3
-    group_width = len(clusters) * bar_width + group_spacing
-    x = np.arange(len(feature_sums)) * group_width
-    fig, ax = plt.subplots(figsize=(10, 5))
-    colors = plt.cm.tab20.colors  # or any other color palette
-    for i, cluster in enumerate(sorted(cluster_data)):
-        values = list(cluster_data[cluster].values())
-        offset_x = x + i * bar_width
-        ax.bar(offset_x, values, width=bar_width, label=f"Cluster {cluster}", color=colors[i % len(colors)])
-    # Formatting
-    ax.set_xticks(x + bar_width)
-    ax.set_xticklabels(sorted(feature_sums), rotation=45)
-    ax.set_ylabel("Value")
-    ax.set_title("Feature values per cluster")
-    plt.yscale('log') 
-    ax.legend()
+        avg_features = {}
+        std_features = {}
+        for feature_idx, feature in enumerate(feature_names):
+            values = [seg["features"][feature_idx] for seg in segments]
+            avg_features[feature] = np.mean(values)
+            std_features[feature] = np.std(values)
+        cluster_data[cluster_id] = {"avg": avg_features, "std": std_features}
+
+    n_clusters = len(cluster_data)
+    n_features = len(feature_names)
+    bar_width = 0.8 / n_clusters
+    x = np.arange(n_features)
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    colors = plt.cm.tab20.colors
+
+    for i, cluster_id in enumerate(sorted(cluster_data)):
+        values = [cluster_data[cluster_id]["avg"][f] for f in feature_names]
+        stds = [cluster_data[cluster_id]["std"][f] for f in feature_names]
+        offset = x - 0.4 + i * bar_width + bar_width/2
+        ax.bar(offset, values, yerr=stds, width=bar_width, color=colors[i % len(colors)], label=f"Cluster {cluster_id}")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(feature_names, rotation=45, ha='right')
+    ax.set_ylabel("Average Value (symlog scale)")
+    ax.set_title("Average Segment Feature Values per Cluster")
+    ax.set_yscale("symlog", linthresh=1e-2)
+    ax.legend(title="Clusters", bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
     return fig
 
-def plot_action_per_step_distribution(trajectories: Iterable, num_actions: int, normalize=True) -> plt.Figure:
+def plot_action_per_step_distribution(
+    trajectories: Iterable, num_actions: int, normalize=True, dpi=600
+) -> plt.Figure:
     """
     Plots a stacked bar chart of the distribution of actions taken at each time step
-    across multiple trajectories.
+    across multiple trajectories. Also accounts for how many trajectories survive
+    to each step.
 
     Parameters:
         trajectories: iterable of trajectories, each trajectory is a list of transitions
                       where transition.action is an int in [0, num_actions-1]
         num_actions: number of discrete actions
         normalize: if True, show proportions instead of counts
+        dpi: figure DPI (default 600)
     """
 
     action_to_idx = {}
-    # Count actions per timestep
-    max_len = max(len(trajectory) for trajectory in trajectories)
+    max_len = max([len(trajectory) for trajectory in trajectories])
+
+    # Action counts and trajectory survival counts
     action_counts = np.zeros((max_len, num_actions), dtype=float)
+    traj_counts = np.zeros(max_len, dtype=int)  # number of trajectories that reached step i
+
     for trajectory in trajectories:
         for i, transition in enumerate(trajectory):
+            traj_counts[i] += 1
             if not isinstance(transition.action, int):
                 if transition.action.type not in action_to_idx:
                     action_to_idx[transition.action.type] = len(action_to_idx)
@@ -91,31 +109,106 @@ def plot_action_per_step_distribution(trajectories: Iterable, num_actions: int, 
             action_counts[i, action_idx] += 1
 
     if normalize:
-        action_counts = action_counts / action_counts.sum(axis=1, keepdims=True)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            action_counts = np.divide(
+                action_counts,
+                traj_counts[:, None],
+                where=traj_counts[:, None] > 0
+            )
 
     # Plot stacked bars
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax1 = plt.subplots(figsize=(10, 5), dpi=dpi)
     bottom = np.zeros(max_len)
 
     for action_idx in range(num_actions):
         if action_idx not in action_to_idx.values():
             action_name = f"Action {action_idx}"
         else:
-            action_name = list(action_to_idx.keys())[action_idx]
-        ax.bar(
+            action_name = list(action_to_idx.keys())[list(action_to_idx.values()).index(action_idx)]
+        ax1.bar(
             np.arange(max_len),
             action_counts[:, action_idx],
             bottom=bottom,
-            label=action_name
+            label=action_name,
         )
         bottom += action_counts[:, action_idx]
 
-    ax.set_xlabel("Time step")
-    ax.set_ylabel("Proportion" if normalize else "Count")
-    ax.set_title("Action Distribution per Time Step")
-    ax.legend(title="Actions")
+    ax1.set_xlabel("Time step")
+    ax1.set_ylabel("Proportion" if normalize else "Count")
+    ax1.set_title("Action Distribution per Time Step")
+
+    # --- Plot trajectory survival line (only once, normalized to [0,1]) ---
+    traj_counts_norm = traj_counts / np.max(traj_counts) if np.max(traj_counts) > 0 else traj_counts
+    line, = ax1.plot(
+        np.arange(max_len),
+        traj_counts_norm,
+        color="black", linestyle="--", label="# trajectories"
+    )
+
+    # --- Right axis shows counts corresponding to the same line ---
+    ax2 = ax1.twinx()
+    ax2.set_ylabel("Number of trajectories")
+    ax2.set_ylim(0, np.max(traj_counts))  # raw counts on right axis
+
+    # Merge legends (only once)
+    handles1, labels1 = ax1.get_legend_handles_labels()
+    ax1.legend(handles1, labels1, title="Legend", loc="upper right")
+
     plt.tight_layout()
     return fig
+
+
+def plot_quantile_fan(data, num_quantiles=5, title="Surprise distribution per step", dpi=600, figsize=(10,6)):
+    """
+    Plot quantile fan chart over steps.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Matrix of shape (num_trajectories, max_steps).
+    num_quantiles : int
+        Number of quantiles to compute (e.g. 5 → 0%,25%,50%,75%,100%).
+    title : str
+        Plot title.
+    dpi : int
+        Dots per inch (controls resolution).
+    figsize : tuple
+        Size of the figure in inches (width, height).
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    ax : matplotlib.axes.Axes
+    """
+    num_trajectories, max_steps = data.shape
+    steps = np.arange(max_steps)
+
+    # Define quantiles
+    quantiles = np.linspace(0, 100, num_quantiles)
+    q_values = np.nanpercentile(data, quantiles, axis=0)  # shape: (num_quantiles, max_steps)
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+
+    # Plot median
+    median = q_values[num_quantiles // 2]
+    ax.plot(steps, median, color="black", label="Median (50%)", linewidth=1.2)
+
+    # Shade bands between symmetric quantiles
+    for i in range(num_quantiles // 2):
+        lower = q_values[i]
+        upper = q_values[-(i+1)]
+        alpha = 0.2 + 0.1 * i  # darker toward median
+        ax.fill_between(steps, lower, upper, alpha=alpha, label=f"{quantiles[i]}–{quantiles[-(i+1)]}%")
+    
+    ax.set_yscale("symlog", linthresh=10)
+    ax.set_ylim(-100, 100)
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Surprise (symlog scale)")
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    return fig, ax
 
 def plot_trajectory_network_colored_nodes_by_cluster(trajectory: Trajectory, segments: dict[int, list[tuple[int, int]]]):
     # G = nx.DiGraph()
@@ -149,7 +242,7 @@ def plot_trajectory_network_colored_nodes_by_cluster(trajectory: Trajectory, seg
     # node_colors = []
     # for state in G.nodes():
     #     cid = state_to_cluster.get(state, None)
-    #     node_colors.append(cluster_to_color[cid] if cid is not None else "lightgray")
+    #     node_colors.append(cluster_to_color[cid] if cid is not None else "lightgrey")
     
     # plt.figure(figsize=(20, 6))
     # pos = nx.nx_agraph.graphviz_layout(G, prog="dot", args='-Grankdir=LR -Granksep=3 -Gnodesep=2')
@@ -170,7 +263,7 @@ def plot_trajectory_network_colored_nodes_by_cluster(trajectory: Trajectory, seg
     # nx.draw_networkx_labels(G, pos, font_size=8, font_weight="bold")
     # # Legend handles
     # handles = [plt.Line2D([0], [0], marker='o', color='w', label=f'Cluster {cid}', markerfacecolor=cluster_to_color[cid], markersize=5) for cid in cluster_ids]
-    # handles.append(plt.Line2D([0], [0], marker='o', color='w', label='No cluster', markerfacecolor='lightgray', markersize=5))
+    # handles.append(plt.Line2D([0], [0], marker='o', color='w', label='No cluster', markerfacecolor='lightgrey', markersize=5))
     # plt.legend(
     #     handles=handles,
     #     loc='lower center',
@@ -385,16 +478,64 @@ def plot_trajectory_heatmap(surprise, action_change, cluster, gap=1, min_height=
     return fig, ax
 
 
+def plot_cluster_distribution_per_step(clusters, trajectory_len, normalize=True, dpi=600):
+    """
+    Plot a stacked bar chart of the proportion of segments from each cluster at each time step.
+    
+    Parameters:
+        clusters: dict(cluster_id -> list of segments), each segment has 'pos_start' and 'pos_end'
+        trajectory_len: maximum trajectory length (number of steps)
+        normalize: if True, show proportions instead of counts
+        dpi: figure DPI
+    """
+    # Count number of segments per cluster at each step
+    cluster_ids = sorted(clusters.keys())
+    step_counts = np.zeros((trajectory_len, len(cluster_ids)), dtype=float)
+
+    cluster_idx_map = {cid: i for i, cid in enumerate(cluster_ids)}
+
+    for cid, seg_list in clusters.items():
+        for seg in seg_list:
+            start = seg["features"][-4]  # pos_start
+            end = seg["features"][-3]  # pos_end
+            # Increment count for each step the segment spans
+            step_counts[start:end, cluster_idx_map[cid]] += 1
+
+    if normalize:
+        # Normalize per step to get proportions
+        totals = step_counts.sum(axis=1, keepdims=True)
+        # Avoid division by zero
+        totals[totals == 0] = 1
+        step_counts = step_counts / totals
+
+    # Use tab20 colors for clusters
+    tab20_colors = plt.cm.tab20.colors
+
+    fig, ax = plt.subplots(figsize=(12, 5), dpi=dpi)
+    bottom = np.zeros(trajectory_len)
+
+    for i, cid in enumerate(cluster_ids):
+        color = tab20_colors[i % len(tab20_colors)]
+        ax.bar(np.arange(trajectory_len), step_counts[:, i], bottom=bottom, label=f"Cluster {cid}", color=color)
+        bottom += step_counts[:, i]
+
+    ax.set_xlabel("Time step")
+    ax.set_ylabel("Proportion" if normalize else "Count")
+    ax.set_title("Cluster Distribution per Time Step")
+    ax.legend(title="Clusters", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+
+    return fig
 
 def _dedup_segments_by_features(segments):
-    """Keep only one segment per unique feature dict signature."""
+    """Keep only one segment per unique feature tuple signature."""
     seen, uniq = set(), []
     for s in segments:
-        sig = frozenset(s["features"].items())
+        sig = s["features"]  # Use the precomputed tuple
         if sig not in seen:
             seen.add(sig)
             uniq.append(s)
-    return uniq
+    return segments
 
 
 def visualize_clusters(
@@ -402,68 +543,101 @@ def visualize_clusters(
     max_trajectory_len: int,
     default_feature_name="surprises",
     heatmap_cmap="seismic",
+    dpi=500,
 ):
     """
-    Heatmap of per-step surprise with left strip showing cluster membership.
+    Heatmap of per-step surprise with left strips showing cluster membership and segment return.
     - Deduplicate segments by features
-    - Segments ordered by cluster, then by start index
+    - Segments ordered by cluster, then by start index, then by trajectory_id (if present)
     - Surprise values sym-log normalized
+    - Cluster strip (tab20), Return strip (inferno)
     """
-    rows, row_cluster = [], []
+    rows, row_cluster, row_return = [], [], []
 
     # collect rows
     for cid in sorted(clusters):
-        for seg in sorted(_dedup_segments_by_features(clusters[cid]), key=lambda s: s["start"]):
+        segments = _dedup_segments_by_features(clusters[cid])
+        def seg_sort_key(s):
+            tid = s.get("trajectory_id", 0)
+            return (s["start"], tid)
+            #return (tid, s["start"], s["end"])
+        for seg in sorted(segments, key=seg_sort_key):
             start, end = seg["start"], seg["end"]
             vals = np.asarray(seg[default_feature_name])
             row = np.full(max_trajectory_len, np.nan)
             row[start:start + (end - start)] = vals[: end - start]
             rows.append(row)
             row_cluster.append(cid)
+            row_return.append(seg["return"])
 
     if not rows:
         raise ValueError("No segments to plot after deduplication.")
 
     heatmap = np.vstack(rows)
+    # Cluster strip
+    unique_cids = list(dict.fromkeys(row_cluster))  # preserve cluster order
+    cid_to_idx = {c: i for i, c in enumerate(unique_cids)}
+    strip_cluster = np.array([cid_to_idx[c] for c in row_cluster])[:, None]  # (rows, 1)
+
+    # Return strip
+    returns = np.array(row_return)
+    vmin, vmax = np.nanmin(returns), np.nanmax(returns)
+    norm_return = mcolors.Normalize(vmin=vmin, vmax=vmax)
+    strip_return = returns[:, None]  # (rows, 1)
+
+    # Colormaps
     cmap = plt.cm.get_cmap(heatmap_cmap) if isinstance(heatmap_cmap, str) else heatmap_cmap
     cmap_with_grey = cmap.copy()
     cmap_with_grey.set_bad(color='lightgrey')
-    # cluster strip
-    # cluster strip (one solid color per cluster)
-    unique_cids = list(dict.fromkeys(row_cluster))  # preserve cluster order
-    cid_to_idx = {c: i for i, c in enumerate(unique_cids)}
-    strip = np.array([cid_to_idx[c] for c in row_cluster])[:, None]  # (rows, 1)
-
-    # cluster colors (tab20 cycles automatically)
     tab20 = plt.cm.get_cmap("tab20").colors
     colors = [tab20[i % len(tab20)] for i in range(len(unique_cids))]
     cmap_clusters = mcolors.ListedColormap(colors)
     norm_clusters = mcolors.BoundaryNorm(
         np.arange(-0.5, len(unique_cids) + 0.5, 1), cmap_clusters.N
     )
+    cmap_return = plt.cm.inferno
 
-    # sym-log normalization
-    norm_surprise = mcolors.SymLogNorm(linthresh=3, linscale=2, vmin=-100, vmax=100)
-
+    norm_surprise = mcolors.SymLogNorm(linthresh=10, linscale=1, vmin=-500, vmax=500)
     # ---- plot ----
-    fig = plt.figure(figsize=(12, 6), constrained_layout=True)
-    gs = fig.add_gridspec(1, 2, width_ratios=[0.035, 0.965])
-    ax_strip, ax_heat = fig.add_subplot(gs[0]), fig.add_subplot(gs[1], sharey=None)
+    fig = plt.figure(figsize=(13, 7), constrained_layout=True, dpi=dpi)
+    gs = fig.add_gridspec(1, 3, width_ratios=[0.035, 0.93, 0.035], wspace=0.15)
+    ax_strip, ax_heat, ax_return = (
+        fig.add_subplot(gs[0]),
+        fig.add_subplot(gs[1], sharey=None),
+        fig.add_subplot(gs[2], sharey=None)
+    )
 
-    # strip
-    ax_strip.imshow(strip, aspect="auto", cmap=cmap_clusters, norm=norm_clusters)
+    # Cluster strip (left)
+    ax_strip.imshow(strip_cluster, aspect="auto", cmap=cmap_clusters, norm=norm_clusters)
     ax_strip.axis("off")
 
-    # heatmap
+    # Heatmap (center)
     im = ax_heat.imshow(np.ma.masked_invalid(heatmap),
                         aspect="auto", cmap=cmap_with_grey, norm=norm_surprise)
-    fig.colorbar(im, ax=ax_heat, pad=0.01).set_label(default_feature_name.capitalize())
+    cbar_surprise = fig.colorbar(im, ax=ax_heat, pad=0.01)
+    cbar_surprise.set_label(default_feature_name.capitalize())
     ax_heat.set(xlabel="Trajectory Step", ylabel="Unique Segments (rows)")
 
-    # legend
+    # Return strip (right)
+    im_return = ax_return.imshow(strip_return, aspect="auto", cmap=cmap_return, norm=norm_return)
+    ax_return.axis("off")
+    # Make return colorbar the same height as surprise colorbar
+    cbar_return = fig.colorbar(im_return, ax=ax_return, pad=0.15)
+    cbar_return.set_label("Mean Segment Return", labelpad=20)
+    # Match the height of the return colorbar to the surprise colorbar
+    cbar_return.ax.set_position(cbar_surprise.ax.get_position())
+
+    # legend below the heatmap
     handles = [mpatches.Patch(color=colors[i], label=f"Cluster {c}") 
                for i, c in enumerate(unique_cids)]
-    ax_heat.legend(handles=handles, title="Clusters",
-                   loc="upper left", bbox_to_anchor=(1.02, 1.0))
+    ncol = len(handles) if len(handles) <= 10 else 2
+    ax_heat.legend(
+        handles=handles,
+        title="Clusters",
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.19),
+        ncol=ncol,
+        fontsize=10
+    )
 
     return fig

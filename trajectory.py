@@ -146,6 +146,27 @@ class EmpiricalPolicy(Policy):
         self._edge_reward = {}
         self.update_policy(trajectories)
     @property
+    def states(self)->Iterable:
+        """
+        Return a list of unique states in the observed trajectories
+        """
+        return self._state_action_map.keys()
+    @property
+    def actions(self)->Iterable:
+        """
+        Return a list of unique actions in the observed trajectories
+        """
+        actions = set()
+        for action_dict in self._state_action_map.values():
+            actions.update(action_dict.keys())
+        return actions
+    @property
+    def edges(self)->Iterable:
+        """
+        Return a list of unique (state, action, next_state) tuples in the observed trajectories
+        """
+        return self._edge_count.keys()
+    @property
     def num_states(self)->int:
         """
         Return number of unique states in the observed trajectories

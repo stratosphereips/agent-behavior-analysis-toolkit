@@ -3,7 +3,7 @@ import json
 import numpy as np
 import ruptures as rpt
 from typing import Iterable
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, RobustScaler
 from pyclustering.cluster.xmeans import xmeans
 from pyclustering.cluster.center_initializer import kmeans_plusplus_initializer
 from sklearn.cluster import DBSCAN
@@ -14,6 +14,10 @@ import networkx as nx
 import json
 import os
 from utils.aidojo_utils import aidojo_rebuild_trajectory
+import hdbscan
+from ruptures import costs
+from typing import Dict
+from sklearn.neighbors import NearestNeighbors
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -105,6 +109,26 @@ def load_trajectories_from_jsonl(
                 print(f"Error loading trajectory from line {i}: {e}")
     return trajectories, metadata
 
+def calculate_ecdf_auc(returns: np.ndarray) -> float:
+    """
+    Calculate the area under the empirical cumulative distribution function (ECDF)
+    of the given returns.
+    """
+    if returns.size < 2:
+        return 0.0
+
+    sorted_returns = np.sort(returns)
+    n = sorted_returns.size
+
+    # Widths between consecutive sorted returns
+    widths = np.diff(sorted_returns)
+    # Heights of ECDF on each interval [x_i, x_{i+1})
+    heights = np.arange(1, n) / n  
+
+    # Vectorized dot product = sum(heights * widths)
+    auc = np.dot(heights, widths)
+
+    return float(auc)
 
 def compute_kl_divergence(state: Any, policy1:EmpiricalPolicy, policy2:EmpiricalPolicy, num_actions:int, alpha=1.0, epsilon=1e-8) -> float:
     """
@@ -140,67 +164,51 @@ def compute_js_divergence(state: Any, policy1: EmpiricalPolicy, policy2: Empiric
     """
     Compute the Jensen–Shannon (JS) divergence between two empirical policies at a given state.
     JS(P || Q) = 0.5 * KL(P || M) + 0.5 * KL(Q || M), where M = 0.5 * (P + Q)
-
-    Parameters:
-        state: any hashable state representation
-        policy1: empirical policy object with .get_action_probability(state, action, alpha)
-        policy2: another empirical policy object with the same API
-        num_actions: total number of discrete actions
-        alpha: Laplace smoothing constant
-        epsilon: small value to prevent log(0)
-
-    Returns:
-        float: JS divergence value
     """
-    kl_p_m = 0.0
-    kl_q_m = 0.0
+    p = np.array([max(policy1.get_action_probability(state, a, alpha), epsilon) for a in range(num_actions)])
+    q = np.array([max(policy2.get_action_probability(state, a, alpha), epsilon) for a in range(num_actions)])
+    m = np.maximum(0.5 * (p + q), epsilon)
+    kl_p_m = np.sum(p * (np.log(p) - np.log(m)))
+    kl_q_m = np.sum(q * (np.log(q) - np.log(m)))
+    return 0.5 * (kl_p_m + kl_q_m)
 
-    for action in range(num_actions):
-        p = policy1.get_action_probability(state, action, alpha)
-        q = policy2.get_action_probability(state, action, alpha)
-
-        # Clip to avoid log(0)
-        p = max(p, epsilon)
-        q = max(q, epsilon)
-
-        m = 0.5 * (p + q)
-        m = max(m, epsilon)
-
-        kl_p_m += p * (np.log(p) - np.log(m))
-        kl_q_m += q * (np.log(q) - np.log(m))
-
-    js = 0.5 * kl_p_m + 0.5 * kl_q_m
-    return js
-
-def compute_normalized_surprise(state, action, policy_new, policy_old, num_actions, alpha=0.1, epsilon=1e-8):
+def compute_normalized_surprise(state, action, policy_new, policy_old, per_state_normalization, alpha=0.1, epsilon=1e-8):
     # Get smoothed probabilities
-    p_new = max(policy_new.get_action_probability(state, action, alpha), epsilon)
-    p_old = max(policy_old.get_action_probability(state, action, alpha), epsilon)
+    p_new = policy_new.get_action_probability(state, action, alpha)
+    p_old = policy_old.get_action_probability(state, action, alpha)
+
+    # Clip probabilities once
+    p_new = max(p_new, epsilon)
+    p_old = max(p_old, epsilon)
 
     # Log-prob difference
     log_diff = np.log(p_new) - np.log(p_old)
-    # KL divergence at state
-    #kl = compute_kl_divergence(state, policy_new, policy_old, num_actions, alpha, epsilon)
-    js = compute_js_divergence(state, policy_new, policy_old, num_actions, alpha, epsilon)
+
+    # Use provided JS divergence for this state
+    js = per_state_normalization.get(state, epsilon)
 
     # Normalize
     return log_diff / max(js, epsilon)
 
-def compute_trajectory_surprises(trajectory:Trajectory, policy:Policy, previous_policy:Policy, epsilon=1e-8)->List[float]:
+def compute_trajectory_surprises(trajectory:Trajectory, policy:Policy, previous_policy:Policy, per_state_normalization:dict, epsilon=1e-8) -> List[float]:
     """
     Computes the surprise of a trajectory given a policy.
     Args:
         trajectory (Trajectory): A trajectory, which is a list of transitions.
         policy (Policy): A policy that defines the action probabilities.
+        js_divergence_dict (dict): Dictionary mapping state to JS divergence.
     Returns:
         List[float]: A list of surprises for each transition in the trajectory.
     """
     surprises = []
     for transition in trajectory:
-        # action_prob = policy.get_action_probability(transition.state, transition.action)
-        # prev_action_prob = previous_policy.get_action_probability(transition.state, transition.action)
-        # surprise = np.log(action_prob) - np.log(prev_action_prob+epsilon) 
-        surprise = compute_normalized_surprise(transition.state, transition.action, policy, previous_policy, policy.num_actions)
+        surprise = compute_normalized_surprise(
+            transition.state,
+            transition.action,
+            policy,
+            previous_policy,
+            per_state_normalization
+        )
         surprises.append(surprise)
     return surprises
 
@@ -214,201 +222,291 @@ def get_trajectory_action_change(trajectory, policy, previous_policy):
             action_changes.append(1)
     return action_changes
 
-def build_graph(policy:EmpiricalPolicy)->nx.DiGraph:
-    G = nx.DiGraph()
-    for (state, action, next_state), count in policy._edge_count.items():
-        if next_state is not None:
-            G.add_edge(
-                state,
-                next_state,
-                action=action,
-                count=count,
-                reward=policy._edge_reward.get((state, action, next_state), 0)
-            )
-    return G
-
 def empirical_policy_statistics(policy:EmpiricalPolicy, is_win_fn:Optional[Callable[[Trajectory], bool]] = lambda x: len(x) > 0 and x[-1].reward > 0)->dict:
     """
     Computes the statistics for a given Empirical policy.
     Winrate is determined based on a provided function.
     Args:
     Returns:
-
     """
-    policy_graph = build_graph(policy)
     metrics = {}
-    # size of the empirical state space
+    # static metrics
     metrics["unique_nodes"] = policy.num_states
     metrics["unique_actions"] = policy.num_actions
-    metrics["mean_trajectory_lenght"] = np.mean([len(t) for t in policy.trajectories])
+    metrics["mean_trajectory_length"] = np.mean([len(t) for t in policy.trajectories])
     metrics["mean_return"] = np.mean([np.sum(t.rewards) for t in policy.trajectories])
+    metrics["return_ecdf_auc"] = calculate_ecdf_auc(np.array([np.sum(t.rewards) for t in policy.trajectories]))
     metrics["mean_winrate"] = sum([is_win_fn(t) for t in policy.trajectories])/policy.num_trajectories
-    metrics["loops"] = nx.number_of_selfloops(policy_graph)
-    metrics["unique_edges"] = len(policy_graph.edges)
+
+    # Compute self-loops directly from edge counts
+    self_loops = sum(1 for (state, action, next_state) in policy._edge_count if state == next_state and next_state is not None)
+    metrics["loops"] = self_loops
+
+    # Unique edges: count unique (state, next_state) pairs
+    unique_edges = set((state, next_state) for (state, action, next_state) in policy._edge_count if next_state is not None)
+    metrics["unique_edges"] = len(unique_edges)
     return metrics
 
-def compute_lambda_returns(trajectory:Trajectory, gamma=0.99, lam=0.95)->np.ndarray:
+def compute_lambda_returns(rewards: np.ndarray, gamma=0.99, lam=0.95) -> np.ndarray:
     """
-    Compute the lambda returns for a trajectory.
-    Args:
-        trajectory (Iterable): A trajectory, which is a list of transitions.
-        gamma (float): Discount factor.
-        lam (float): Lambda for eligibility traces.
-    Returns:
-        np.ndarray: Lambda returns for the trajectory (np.array).
+    Computes the lambda returns for a trajectory.
     """
-    T = len(trajectory)
+    T = len(rewards)
     λ_ret = np.zeros(T)
-    λ_ret[-1] = trajectory[-1].reward
+    λ_ret[-1] = rewards[-1]
     for t in reversed(range(T - 1)):
-        λ_ret[t] = trajectory[t].reward + gamma * lam * λ_ret[t + 1]
+        λ_ret[t] = rewards[t] + gamma * lam * λ_ret[t + 1]
     return λ_ret
 
-def compute_eligibility_traces_sa(trajectory: Trajectory, gamma=0.99, lam=0.95):
-    e = defaultdict(float)
-    traces = []
+# def find_trajectory_segments(
+#     surprises: np.ndarray,
+#     rewards: np.ndarray,
+#     lambda_returns: np.ndarray,
+#     actions: np.ndarray,
+#     states: np.ndarray,
+#     penalty=5,
+#     trajectory_id=None,
+# ) -> List[dict]:
+#     """
+#     Segment a trajectory using change point detection on standardized features.
+#     """
+#     # Stack features efficiently (avoid .T, use axis=1)
+#     features = np.column_stack((lambda_returns, surprises, rewards))
+#     trajectory_len = features.shape[0]
 
-    for transition in trajectory:
-        s, a = transition.state, transition.action
+#     # Standardize features in-place
+#     scaler = StandardScaler()
+#     features = scaler.fit_transform(features)
 
-        # Decay all traces
-        for key in e:
-            e[key] *= gamma * lam
+#     # KernelCPD setup
+#     min_size = max(3, trajectory_len // 20) #????
+#     algo = rpt.KernelCPD(kernel="rbf", min_size=min_size, params={"gamma": 0.3})
+#     algo.fit(features)
 
-        # Bump trace for current state-action
-        e[(s, a)] += 1.0
+#     trajectory_segments = []
+#     try:
+#         break_points = algo.predict(pen=penalty)
+#         break_points = [0] + break_points
+#         for start, end in zip(break_points[:-1], break_points[1:]):
+#             if start == end:
+#                 continue
+#             seg = {
+#                 "start": start,
+#                 "end": end,
+#                 "features": tuple(get_segment_features(start, end, surprises, rewards, lambda_returns, actions, states, trajectory_len).values()),
+#                 "surprises": surprises[start:end],
+#                 "return": np.mean(rewards[start:end]),
+#             }
+#             if trajectory_id is not None:
+#                 seg["trajectory_id"] = trajectory_id
+#             trajectory_segments.append(seg)
+#     except rpt.exceptions.BadSegmentationParameters:
+#         pass
+#     return trajectory_segments
 
-        # Store a snapshot
-        traces.append(dict(e))  # shallow copy
-    # Prune low values?
-    return traces  # List of dicts: one per timestep
-
-def compute_credit_per_step(trajectory:Trajectory, gamma=0.99, lam=0.95):
+def find_trajectory_segments(
+    surprises: np.ndarray,
+    rewards: np.ndarray,
+    lambda_returns: np.ndarray,
+    actions: np.ndarray,
+    states: np.ndarray,
+    penalty=None,  # Now accepts None or a manually set penalty
+    trajectory_id=None,
+) -> List[Dict]:
     """
-    Compute credit per step for a trajectory.
-    Args:
-        trajectory (Iterable): A trajectory, which is a list of transitions.
-        gamma (float): Discount factor.
-        lam (float): Lambda for eligibility traces.
-    Returns:
-        np.ndarray: Credit per step for the trajectory (np.array).
+    Segment a trajectory using PELT/RBF.
+    
+    If penalty is None (default), it is calculated using a BIC-like heuristic 
+    to statistically determine the optimal number of segments (K).
     """
-    value = compute_lambda_returns(trajectory, gamma, lam)
-    traces = compute_eligibility_traces_sa(trajectory, gamma, lam)
-    credit = defaultdict(float)                   # final attribution per (s,a)
-    for t, e_t in enumerate(traces):              # iterate over timesteps
-        v = value[t]                              # scalar to propagate at step t
-        for (s,a), elig in e_t.items():           # sparse over only active pairs
-            credit[(s,a)] += elig * v 
-  
+    
+    # 1. Feature Preparation (Same as original)
+    # Features: [lambda_returns, surprises, rewards]
+    features = np.column_stack((lambda_returns, surprises, rewards))
+    trajectory_len = features.shape[0]
+    feature_dim = features.shape[1] # 3 dimensions
+    
+    # Standardize features
+    scaler = StandardScaler()
+    features = scaler.fit_transform(features)
 
-
-def find_trajectory_segments(trajectory:Trajectory, policy:Policy, previous_policy:Policy, penalty=5, trajectory_id=None)->List[dict]:
-    """
-    """
-    rewards = np.array(trajectory.rewards)
-    surprises = np.array(compute_trajectory_surprises(trajectory, policy, previous_policy, epsilon=1e-12))
-    lambda_returns = np.array(compute_lambda_returns(trajectory))
-    features = np.stack([lambda_returns, surprises, rewards]).T # should be of shape (len(trajectory), num_features)
-    features = StandardScaler().fit_transform(features) 
-    algo = rpt.KernelCPD(
-        kernel="rbf",
-        min_size=max(3, len(trajectory)//20),                   # adjust: min meaningful segment length
-        params={"gamma": 0.3}           # sensitivity (tune: 0.1, 0.3, 1.0)
-    ).fit(features)
-    trajectory_segments = []
+    # --- Hyperparameters ---
+    min_size = max(3, trajectory_len // 20)
+    gamma_val = 2 # TUNE: Kernel sensitivity
+    
+    # 2. Penalty Selection (Crucial Change)
+    if penalty is None:
+        # Use a simplified, linear penalty factor. 
+        # The factor is chosen based on the dimension of the feature space.
+        # We keep the factor low to encourage splitting.
+        
+        penalty_factor = 1.5*feature_dim 
+        
+        # Use a simpler, non-log penalty. If 6 is too low (over-segments), 
+        penalty = penalty_factor * np.log(trajectory_len)
+        
+        # Check if the trajectory is extremely long; if so, apply log scaling
+        if trajectory_len > 1000:
+            penalty = penalty_factor * np.log(trajectory_len)
+        
+    print(f"No penalty provided. Calculated penalty: {penalty:.2f}")
+    
+    # 3. KernelCPD/PELT Setup (Robust Penalty Search)
     try:
+        # Define the Cost Model (RBF)
+        cost_model = costs.CostRbf(gamma=gamma_val).fit(features) 
+
+        # Use PELT (the optimal algorithm for penalized search)
+        algo = rpt.Pelt(custom_cost=cost_model, min_size=min_size) 
+        algo.fit(features)
+
+        # 4. Predict Breakpoints using the statistically-derived penalty
         break_points = algo.predict(pen=penalty)
-        break_points = [0] + break_points  # prepend 0
-        segments_idx = list(zip(break_points[:-1], break_points[1:]))
-        for (start, end) in segments_idx:
-            if start==end:
-                continue
-            seg = {
-                "start": start,
-                "end": end,
-                "features": get_segment_features(start, end, surprises, rewards, lambda_returns, trajectory),
-                "surprises": surprises[start:end],
-            }
-            if trajectory_id is not None:
-                seg["trajectory_id"] = trajectory_id
-            trajectory_segments.append(seg)
+        
+        # 5. Finalize breakpoints
+        break_points = [0] + break_points
+        
     except rpt.exceptions.BadSegmentationParameters:
-        pass
+        # Fallback: treat as a single segment
+        break_points = [0, trajectory_len]
+
+    # 6. Process Segments (Same as original)
+    trajectory_segments = []
+    for start, end in zip(break_points[:-1], break_points[1:]):
+        if start >= end:
+            continue
+            
+        seg = {
+            "start": start,
+            "end": end,
+            "features": tuple(get_segment_features(start, end, surprises, rewards, lambda_returns, actions, states, trajectory_len).values()),
+            "surprises": surprises[start:end],
+            "return": np.mean(rewards[start:end]),
+        }
+        if trajectory_id is not None:
+            seg["trajectory_id"] = trajectory_id
+        trajectory_segments.append(seg)
+        
     return trajectory_segments
 
-def get_segment_features(seg_start:int, seg_end:int ,surprises:np.ndarray,rewards:np.ndarray, elegibility_traces:np.ndarray, trajectory:Trajectory):
+def get_segment_features(seg_start:int, seg_end:int ,surprises:np.ndarray,rewards:np.ndarray, lambda_returns:np.ndarray, actions:np.ndarray, states:np.ndarray, trajectory_len:int):
     """
     Computes the features for a segment.
     """
+    feature_names = ["λ_ret", "λ_ret_std", "surprise", "surprise_std", "reward", "reward_std", "length", "pos_start", "pos_end", "action_diversity", "state_diversity"]
     features = {}
-    features["et"] = np.mean(elegibility_traces[seg_start:seg_end])
-    features["et_std"] = np.std(elegibility_traces[seg_start:seg_end])
+    features["λ_ret"] = np.mean(lambda_returns[seg_start:seg_end])
+    #features["λ_ret_std"] = np.std(elegibility_traces[seg_start:seg_end])
     features["surprise"] = np.mean(surprises[seg_start:seg_end])
     features["surprise_std"] = np.std(surprises[seg_start:seg_end])
     features["reward"] = np.mean(rewards[seg_start:seg_end])
     features["reward_std"] = np.std(rewards[seg_start:seg_end])
-    features["coverage"] = (seg_end - seg_start)/len(trajectory)
-    features["pos_start"] = seg_start/len(trajectory)
-    features["pos_end"] = seg_end/len(trajectory)
+    features["length"] = (seg_end - seg_start)
+    features["pos_start"] = seg_start
+    features["pos_end"] = seg_end
+    features["action_diversity"] = len(set(actions[seg_start:seg_end])) / len(actions[seg_start:seg_end]) if len(actions[seg_start:seg_end]) > 0 else 0.0
+    features["state_diversity"] = len(set(states[seg_start:seg_end])) / len(states[seg_start:seg_end]) if len(states[seg_start:seg_end]) > 0 else 0.0
     return features
-
-def get_cluster_features(segments:Iterable):
-    features = np.zeros([len(segments), len(segments[0][1].values())]) 
-    for i,s in enumerate(segments):
-        for j,x in enumerate(s[1].values()):
-            features[i][j] = x
-    ret = {}
-    for i, k in enumerate(segments[0][1].keys()):
-        ret[k] = {
-            "mean":np.mean(features[:, i]),
-            "std":np.std(features[:, i]),
-            # "min":np.min(features[:, i]),
-            # "max":np.max(features[:, i]),
-            # "median":np.median(features[:, i]),
-        }
-    return ret
  
-def cluster_segments(segments:Iterable):
-    features = [list(s["features"].values()) for s in segments]
-    clustering = DBSCAN(eps=5, min_samples=len(segments[-1]["features"].values())+1).fit(features)
-    clusters ={}
+def cluster_segments(
+    segments,
+    include_features=None,
+    eps=1.5,
+    min_samples=None,
+    scale=True,
+):
+    """
+    Cluster trajectory segments based on their features.
+
+    Parameters:
+        segments: list of dicts, each with a "features" key containing a feature dict
+        include_features: list of feature names to include (default = all)
+        eps: DBSCAN eps parameter (scale-dependent!)
+        min_samples: DBSCAN min_samples parameter (default = len(features)+1)
+        scale: whether to standardize features before clustering
+
+    Returns:
+        clusters: dict mapping cluster_id -> list of segments
+    """
+
+    # # --- Select features ---
+    # if include_features is None:
+    #     # use all feature keys from first segment
+    #     include_features = list(segments[0]["features"].keys())
+
+    X = np.array([s["features"] for s in segments])
+
+    # --- Normalize ---
+    if scale:
+        X = StandardScaler().fit_transform(X)
+    # --- DBSCAN parameters ---
+    if min_samples is None:
+        min_samples = max(5, X.shape[1] + 1)
+
+    def find_knee_point_heuristic(X_scaled: np.ndarray, k: int = 12) -> float:
+        """
+        Numerically estimates the optimal DBSCAN epsilon (eps) value 
+        by finding the 'knee' in the k-distance graph using a maximum distance heuristic.
+
+        Args:
+            X_scaled: The standardized feature array of segments.
+            k: The MinPts value (the k for k-distance).
+
+        Returns:
+            The distance value at the detected knee point.
+        """
+        N = X_scaled.shape[0]
+        if N <= k:
+            print("Warning: Not enough samples for k-distance calculation. Using default eps=1.0.")
+            return 1.0
+
+        # 1. Calculate k-distances
+        # k-th neighbor distance is at index k-1 in the returned array
+        nn = NearestNeighbors(n_neighbors=k).fit(X_scaled)
+        distances, _ = nn.kneighbors(X_scaled)
+
+        # Extract the k-distance (distance to the k-th nearest neighbor) and sort it
+        k_distance_sorted = np.sort(distances[:, k - 1])
+        
+        # 2. Define the baseline for the heuristic
+        # The baseline is the line connecting the first point (0, y_0) and the last point (N-1, y_N-1)
+        x = np.arange(N)
+        
+        # Line defined by y = m*x + c
+        # (x_0, y_0) is (0, k_distance_sorted[0])
+        # (x_N-1, y_N-1) is (N-1, k_distance_sorted[N-1])
+        
+        # Slope (m)
+        m = (k_distance_sorted[N - 1] - k_distance_sorted[0]) / (N - 1)
+        
+        # Y-intercept (c)
+        c = k_distance_sorted[0]
+        
+        # 3. Calculate the distance from each point to the baseline line (Perpendicular Distance)
+        # The line equation is implicit: Ax + By + C = 0
+        # Here: m*x - 1*y + c = 0. So, A=m, B=-1, C=c.
+        
+        # Perpendicular distance formula: |A*x_i + B*y_i + C| / sqrt(A^2 + B^2)
+        distances_to_line = np.abs(m * x - k_distance_sorted + c) / np.sqrt(m**2 + 1)
+        
+        # 4. Find the index corresponding to the maximum distance
+        knee_index = np.argmax(distances_to_line)
+        
+        # 5. The optimal epsilon is the k-distance value at the knee index
+        optimal_eps = k_distance_sorted[knee_index]
+    
+        return optimal_eps
+
+    estimated_eps = find_knee_point_heuristic(X, k=2*min_samples)
+    print(f"Estimated DBSCAN eps: {estimated_eps:.4f} (using min_samples={min_samples})")
+    clustering = DBSCAN(eps=estimated_eps, min_samples=min_samples).fit(X)
+    
+    # --- Collect results ---
+    clusters = defaultdict(list)
     for segment, cluster_id in zip(segments, clustering.labels_):
-        if cluster_id not in clusters:
-            clusters[cluster_id] = []
         clusters[cluster_id].append(segment)
-    return clusters
 
-# def get_motifs(trajectories, graph, epsilon=1e-12, penalty=2):
-#     """
-#     Computes the motifs in the transition graph.
-#     """
-#     raise DeprecationWarning("get_motifs is deprecated, use find_trajectory_segments instead")
-#     motifs = {}
-#     motfif_candidates = []
-#     for t in trajectories:
-#         rewards = np.array([step.reward for step in t])
-#         lambda_ret = compute_lambda_returns(t)
-#         surprises = np.array(get_trajectory_action_surprises(t, graph, epsilon))
-#         scaler = StandardScaler()
-#         features_scaled = scaler.fit_transform(np.stack([lambda_ret, surprises, rewards], axis=1))
-#         algo = rpt.KernelCPD(kernel="rbf", min_size=1).fit(features_scaled)
-#         bkpts = algo.predict(pen=penalty)
-#         segments = [(0, bkpts[0])] + [(bkpts[i], bkpts[i+1]) for i in range(len(bkpts)-1)]
-#         for start, end in segments:
-#             m = tuple(t[start:end])
-#             motfif_candidates.append((m, get_segment_features(start, end, surprises, rewards, lambda_ret, t)))
-#             if m not in motifs:
-#                 motifs[m] = 0
-#             motifs[m] += 1
-#         # add segment occurence to the motif features
-#         final_candidates = []
-#         for m_candidate, features in motfif_candidates:
-#             features["occurences"] = motifs[m]
-#             final_candidates.append((m_candidate, features))
-#     clusters = cluster_segments(final_candidates)
-#     return motifs, clusters
-
+    return dict(clusters)
 
 def get_clusters_per_step(trajectory, clusters)->list:
     clusters_per_step = defaultdict(list)
@@ -417,3 +515,72 @@ def get_clusters_per_step(trajectory, clusters)->list:
             for step in range(segment["start"], segment["end"]):
                 clusters_per_step[step].append(cluster_id)
     return [int(list(set(clusters_per_step[i]))[0]) for i in range(len(trajectory))]
+
+def js_divergence_per_state(policy_p: EmpiricalPolicy, policy_q: EmpiricalPolicy, alpha: float = 0.1):
+    states = set(policy_p._state_action_map.keys()) | set(policy_q._state_action_map.keys())
+    if not states:
+        return {}, 0.0  # empty dict and mean
+
+    global_actions = set()
+    for amap in policy_p._state_action_map.values():
+        global_actions.update(amap.keys())
+    for amap in policy_q._state_action_map.values():
+        global_actions.update(amap.keys())
+    global_actions = list(global_actions)
+
+    js_per_state = {}
+    for state in states:
+        p_probs = np.array([policy_p.get_action_probability(state, a, alpha) for a in global_actions])
+        q_probs = np.array([policy_q.get_action_probability(state, a, alpha) for a in global_actions])
+        m_probs = 0.5 * (p_probs + q_probs)
+
+        kl_pm = np.sum(p_probs * np.log(p_probs / m_probs))
+        kl_qm = np.sum(q_probs * np.log(q_probs / m_probs))
+        js_per_state[state] = 0.5 * (kl_pm + kl_qm)
+
+    mean_js = float(np.mean(list(js_per_state.values())))
+    return js_per_state, mean_js
+
+def graph_from_policy(policy:EmpiricalPolicy)->nx.MultiDiGraph:
+    G = nx.MultiDiGraph()
+    for (state, action, next_state), count in policy._edge_count.items():
+        if next_state is None:
+            continue
+        if not G.has_node(state):
+            G.add_node(state)
+        if not G.has_node(next_state):
+            G.add_node(next_state)
+        if G.has_edge(state, next_state):
+            G[state][next_state]['weight'] += count
+            G[state][next_state]['actions'].add(action)
+        else:
+            G.add_edge(state, next_state, weight=count, actions={action})
+    return G
+
+def policy_comparison(curr_policy:EmpiricalPolicy, prev_policy:EmpiricalPolicy)->dict:
+    """
+    Compare two policies based on their trajectory statistics.
+    """
+    per_state_js_div, mean_js_div = js_divergence_per_state(curr_policy, prev_policy)
+
+    metrics = {
+        "node_overlap": len(set(curr_policy.states) & set(prev_policy.states))/max(len(curr_policy.states), len(prev_policy.states), 1),
+        "edge_overlap": len(set(curr_policy.edges) & set(prev_policy.edges))/max(len(curr_policy.edges), len(prev_policy.edges), 1),
+        "js_divergence": mean_js_div,
+        "added_nodes": len(set(curr_policy.states) - set(prev_policy.states)),
+        "removed_nodes": len(set(prev_policy.states) - set(curr_policy.states)),
+        "added_edges": len(set(curr_policy.edges) - set(prev_policy.edges)),
+        "removed_edges": len(set(prev_policy.edges) - set(curr_policy.edges)),
+    }
+    return metrics, per_state_js_div
+
+
+def get_trajectory_action_ngrams(trajectory:Trajectory, n:int)->list:
+    """
+    Get n-grams of states and actions from a trajectory.
+    """
+    ngrams = []
+    for i in range(len(trajectory) - n + 1):
+        action_ngram = tuple(transition.action for transition in trajectory[i:i+n])
+        ngrams.append(action_ngram)
+    return ngrams
