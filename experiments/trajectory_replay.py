@@ -1,7 +1,8 @@
-from utils.trajectory_utils import load_trajectories_from_json
+from utils.trajectory_utils import get_trajectory_action_ngrams, load_trajectories_from_json
 from utils.trajectory_utils import empirical_policy_statistics
 from utils.trajectory_utils import find_trajectory_segments, cluster_segments
-from utils.plotting_utils   import plot_segment_cluster_features
+from utils.plotting_utils   import plot_sankey_plotly, plot_segment_cluster_features
+from utils.plotting_utils   import generate_action_bigram_chordplot
 from utils.plotting_utils   import plot_trajectory_surprise_matrix, plot_action_per_step_distribution
 from utils.plotting_utils   import visualize_clusters, plot_quantile_fan, plot_cluster_distribution_per_step
 from utils.trajectory_utils import compute_trajectory_surprises,compute_lambda_returns, policy_comparison
@@ -49,6 +50,7 @@ def process_single_trajectory(args):
     """
     traj_idx, t, curr_policy, prev_policy, checkpoint_id, per_state_normalization = args
     rewards = np.array(t.rewards)
+    # bigrams = get_trajectory_action_ngrams(t, n=2)
     surprises = np.array(compute_trajectory_surprises(t, curr_policy, prev_policy, per_state_normalization, epsilon=1e-12))
     lambda_returns = np.array(compute_lambda_returns(rewards))
     actions = np.array(t.actions)
@@ -93,12 +95,13 @@ def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_
     log_data["policy_comparison_metrics"] = policy_comparison_metrics
     segments = []
     surprises = []
+    ngrams = []
     with ThreadPoolExecutor() as pool:
         results = pool.map(
             process_single_trajectory,
             ((traj_idx, t, curr_policy, prev_policy, checkpoint_id, js_divergence_per_state) for traj_idx, t in enumerate(trajectories))
         )
-        for segs, traj_surprises in results:
+        for segs, traj_surprises, in results:
             segments += segs
             surprises.append(traj_surprises)
 
@@ -109,7 +112,47 @@ def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_
     for i, s in enumerate(surprises):
         surprise_matrix[i, :len(s)] = s
     print(f"[process_comparison] Segmentation done for checkpoint {checkpoint_id} ({len(segments)} segments)")
+    figs = {}
+    action_to_id = {a: i for i, a in enumerate(curr_policy.actions)}
+    num_actions = 6
 
+    # Action distribution plot
+    fig = plot_action_per_step_distribution(trajectories, num_actions, normalize=True)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    buf.seek(0)
+    figs["Action Distribution Plot"] = buf.read()
+    plt.close(fig)
+
+    # surprise heatmap
+    fig = plot_trajectory_surprise_matrix(surprise_matrix)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    buf.seek(0)
+    figs["Segment Surprise Plot"] = buf.read()
+    plt.close(fig)
+    
+    # quantile fan plot
+    fig, ax = plot_quantile_fan(surprise_matrix, num_quantiles=9)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    buf.seek(0)
+    figs["Quantile Fan Plot"] = buf.read()
+    plt.close(fig)
+
+    # if len(ngrams) > 0:
+    #     ngram_matrix = np.zeros((num_actions, num_actions), dtype=int)
+    #     for ngram in ngrams:
+    #         for a1, a2 in ngram:
+    #             ngram_matrix[action_to_id[a1], action_to_id[a2]] += 1
+    #     print(f"[process_comparison] Action bigram matrix computed for checkpoint {checkpoint_id} done.")
+    #     fig = plot_sankey_plotly(ngram_matrix, [str(a) for a in action_to_id.keys()])
+    #     buf = io.BytesIO()
+    #     fig.write_image(buf, format="png")
+    #     buf.seek(0)
+    #     figs["Action Bigram Chord Plot"] = buf.read()
+    
+    
     if segments:
         log_data['segmentation_metrics'].update({
             "segments": len(segments),
@@ -131,28 +174,11 @@ def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_
         })
 
 
-        figs = {}
-
         fig = plot_segment_cluster_features(clustering)
         buf = io.BytesIO()
         fig.savefig(buf, format="png")
         buf.seek(0)
         figs["Cluster Feature Summary"] = buf.read()
-        plt.close(fig)
-
-        fig = plot_trajectory_surprise_matrix(surprise_matrix)
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png")
-        buf.seek(0)
-        figs["Segment Surprise Plot"] = buf.read()
-        plt.close(fig)
-
-        num_actions = 6  # curr_policy.num_actions
-        fig = plot_action_per_step_distribution(trajectories, num_actions, normalize=True)
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png")
-        buf.seek(0)
-        figs["Action Distribution Plot"] = buf.read()
         plt.close(fig)
 
         unique_trajectories = set(trajectories)
@@ -176,7 +202,7 @@ def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_
         fig.savefig(buf, format="png")
         buf.seek(0)
         figs["Cluster Distribution Plot"] = buf.read()
-        log_data["_figs"] = figs
+    log_data["_figs"] = figs
 
     print(f"[process_comparison] Finished checkpoint comparison {checkpoint_id}")
     return checkpoint_id, log_data, metadata
