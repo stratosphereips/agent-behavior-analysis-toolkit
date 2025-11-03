@@ -9,6 +9,7 @@ class AIDojoTrajectoryReplay(TrajectoryReplay):
         super().__init__(trajectory_dir=trajectory_dir, **kwargs)
         self.state_to_id = {}
         self.action_to_id = {}
+        self.action_id_to_action_type = {}
 
     def get_state_id(self, state):
         if state not in self.state_to_id:
