@@ -15,6 +15,10 @@ import json
 import os
 from utils.aidojo_utils import aidojo_rebuild_trajectory
 import hdbscan
+from ruptures import costs
+from typing import Dict
+from sklearn.neighbors import NearestNeighbors
+
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (np.integer,)):
@@ -254,50 +258,135 @@ def compute_lambda_returns(rewards: np.ndarray, gamma=0.99, lam=0.95) -> np.ndar
         λ_ret[t] = rewards[t] + gamma * lam * λ_ret[t + 1]
     return λ_ret
 
+# def find_trajectory_segments(
+#     surprises: np.ndarray,
+#     rewards: np.ndarray,
+#     lambda_returns: np.ndarray,
+#     actions: np.ndarray,
+#     states: np.ndarray,
+#     penalty=5,
+#     trajectory_id=None,
+# ) -> List[dict]:
+#     """
+#     Segment a trajectory using change point detection on standardized features.
+#     """
+#     # Stack features efficiently (avoid .T, use axis=1)
+#     features = np.column_stack((lambda_returns, surprises, rewards))
+#     trajectory_len = features.shape[0]
+
+#     # Standardize features in-place
+#     scaler = StandardScaler()
+#     features = scaler.fit_transform(features)
+
+#     # KernelCPD setup
+#     min_size = max(3, trajectory_len // 20) #????
+#     algo = rpt.KernelCPD(kernel="rbf", min_size=min_size, params={"gamma": 0.3})
+#     algo.fit(features)
+
+#     trajectory_segments = []
+#     try:
+#         break_points = algo.predict(pen=penalty)
+#         break_points = [0] + break_points
+#         for start, end in zip(break_points[:-1], break_points[1:]):
+#             if start == end:
+#                 continue
+#             seg = {
+#                 "start": start,
+#                 "end": end,
+#                 "features": tuple(get_segment_features(start, end, surprises, rewards, lambda_returns, actions, states, trajectory_len).values()),
+#                 "surprises": surprises[start:end],
+#                 "return": np.mean(rewards[start:end]),
+#             }
+#             if trajectory_id is not None:
+#                 seg["trajectory_id"] = trajectory_id
+#             trajectory_segments.append(seg)
+#     except rpt.exceptions.BadSegmentationParameters:
+#         pass
+#     return trajectory_segments
+
 def find_trajectory_segments(
     surprises: np.ndarray,
     rewards: np.ndarray,
     lambda_returns: np.ndarray,
     actions: np.ndarray,
     states: np.ndarray,
-    penalty=5,
+    penalty=None,  # Now accepts None or a manually set penalty
     trajectory_id=None,
-) -> List[dict]:
+) -> List[Dict]:
     """
-    Segment a trajectory using change point detection on standardized features.
+    Segment a trajectory using PELT/RBF.
+    
+    If penalty is None (default), it is calculated using a BIC-like heuristic 
+    to statistically determine the optimal number of segments (K).
     """
-    # Stack features efficiently (avoid .T, use axis=1)
+    
+    # 1. Feature Preparation (Same as original)
+    # Features: [lambda_returns, surprises, rewards]
     features = np.column_stack((lambda_returns, surprises, rewards))
     trajectory_len = features.shape[0]
-
-    # Standardize features in-place
+    feature_dim = features.shape[1] # 3 dimensions
+    
+    # Standardize features
     scaler = StandardScaler()
     features = scaler.fit_transform(features)
 
-    # KernelCPD setup
-    min_size = max(3, trajectory_len // 20) #????
-    algo = rpt.KernelCPD(kernel="rbf", min_size=min_size, params={"gamma": 0.3})
-    algo.fit(features)
-
-    trajectory_segments = []
+    # --- Hyperparameters ---
+    min_size = max(3, trajectory_len // 20)
+    gamma_val = 2 # TUNE: Kernel sensitivity
+    
+    # 2. Penalty Selection (Crucial Change)
+    if penalty is None:
+        # Use a simplified, linear penalty factor. 
+        # The factor is chosen based on the dimension of the feature space.
+        # We keep the factor low to encourage splitting.
+        
+        penalty_factor = 1.5*feature_dim 
+        
+        # Use a simpler, non-log penalty. If 6 is too low (over-segments), 
+        penalty = penalty_factor * np.log(trajectory_len)
+        
+        # Check if the trajectory is extremely long; if so, apply log scaling
+        if trajectory_len > 1000:
+            penalty = penalty_factor * np.log(trajectory_len)
+        
+    print(f"No penalty provided. Calculated penalty: {penalty:.2f}")
+    
+    # 3. KernelCPD/PELT Setup (Robust Penalty Search)
     try:
+        # Define the Cost Model (RBF)
+        cost_model = costs.CostRbf(gamma=gamma_val).fit(features) 
+
+        # Use PELT (the optimal algorithm for penalized search)
+        algo = rpt.Pelt(custom_cost=cost_model, min_size=min_size) 
+        algo.fit(features)
+
+        # 4. Predict Breakpoints using the statistically-derived penalty
         break_points = algo.predict(pen=penalty)
+        
+        # 5. Finalize breakpoints
         break_points = [0] + break_points
-        for start, end in zip(break_points[:-1], break_points[1:]):
-            if start == end:
-                continue
-            seg = {
-                "start": start,
-                "end": end,
-                "features": tuple(get_segment_features(start, end, surprises, rewards, lambda_returns, actions, states, trajectory_len).values()),
-                "surprises": surprises[start:end],
-                "return": np.mean(rewards[start:end]),
-            }
-            if trajectory_id is not None:
-                seg["trajectory_id"] = trajectory_id
-            trajectory_segments.append(seg)
+        
     except rpt.exceptions.BadSegmentationParameters:
-        pass
+        # Fallback: treat as a single segment
+        break_points = [0, trajectory_len]
+
+    # 6. Process Segments (Same as original)
+    trajectory_segments = []
+    for start, end in zip(break_points[:-1], break_points[1:]):
+        if start >= end:
+            continue
+            
+        seg = {
+            "start": start,
+            "end": end,
+            "features": tuple(get_segment_features(start, end, surprises, rewards, lambda_returns, actions, states, trajectory_len).values()),
+            "surprises": surprises[start:end],
+            "return": np.mean(rewards[start:end]),
+        }
+        if trajectory_id is not None:
+            seg["trajectory_id"] = trajectory_id
+        trajectory_segments.append(seg)
+        
     return trajectory_segments
 
 def get_segment_features(seg_start:int, seg_end:int ,surprises:np.ndarray,rewards:np.ndarray, lambda_returns:np.ndarray, actions:np.ndarray, states:np.ndarray, trajectory_len:int):
@@ -354,7 +443,63 @@ def cluster_segments(
     if min_samples is None:
         min_samples = max(5, X.shape[1] + 1)
 
-    clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(X)
+    def find_knee_point_heuristic(X_scaled: np.ndarray, k: int = 12) -> float:
+        """
+        Numerically estimates the optimal DBSCAN epsilon (eps) value 
+        by finding the 'knee' in the k-distance graph using a maximum distance heuristic.
+
+        Args:
+            X_scaled: The standardized feature array of segments.
+            k: The MinPts value (the k for k-distance).
+
+        Returns:
+            The distance value at the detected knee point.
+        """
+        N = X_scaled.shape[0]
+        if N <= k:
+            print("Warning: Not enough samples for k-distance calculation. Using default eps=1.0.")
+            return 1.0
+
+        # 1. Calculate k-distances
+        # k-th neighbor distance is at index k-1 in the returned array
+        nn = NearestNeighbors(n_neighbors=k).fit(X_scaled)
+        distances, _ = nn.kneighbors(X_scaled)
+
+        # Extract the k-distance (distance to the k-th nearest neighbor) and sort it
+        k_distance_sorted = np.sort(distances[:, k - 1])
+        
+        # 2. Define the baseline for the heuristic
+        # The baseline is the line connecting the first point (0, y_0) and the last point (N-1, y_N-1)
+        x = np.arange(N)
+        
+        # Line defined by y = m*x + c
+        # (x_0, y_0) is (0, k_distance_sorted[0])
+        # (x_N-1, y_N-1) is (N-1, k_distance_sorted[N-1])
+        
+        # Slope (m)
+        m = (k_distance_sorted[N - 1] - k_distance_sorted[0]) / (N - 1)
+        
+        # Y-intercept (c)
+        c = k_distance_sorted[0]
+        
+        # 3. Calculate the distance from each point to the baseline line (Perpendicular Distance)
+        # The line equation is implicit: Ax + By + C = 0
+        # Here: m*x - 1*y + c = 0. So, A=m, B=-1, C=c.
+        
+        # Perpendicular distance formula: |A*x_i + B*y_i + C| / sqrt(A^2 + B^2)
+        distances_to_line = np.abs(m * x - k_distance_sorted + c) / np.sqrt(m**2 + 1)
+        
+        # 4. Find the index corresponding to the maximum distance
+        knee_index = np.argmax(distances_to_line)
+        
+        # 5. The optimal epsilon is the k-distance value at the knee index
+        optimal_eps = k_distance_sorted[knee_index]
+    
+        return optimal_eps
+
+    estimated_eps = find_knee_point_heuristic(X, k=2*min_samples)
+    print(f"Estimated DBSCAN eps: {estimated_eps:.4f} (using min_samples={min_samples})")
+    clustering = DBSCAN(eps=estimated_eps, min_samples=min_samples).fit(X)
     
     # --- Collect results ---
     clusters = defaultdict(list)
@@ -428,3 +573,14 @@ def policy_comparison(curr_policy:EmpiricalPolicy, prev_policy:EmpiricalPolicy)-
         "removed_edges": len(set(prev_policy.edges) - set(curr_policy.edges)),
     }
     return metrics, per_state_js_div
+
+
+def get_trajectory_action_ngrams(trajectory:Trajectory, n:int)->list:
+    """
+    Get n-grams of states and actions from a trajectory.
+    """
+    ngrams = []
+    for i in range(len(trajectory) - n + 1):
+        action_ngram = tuple(transition.action for transition in trajectory[i:i+n])
+        ngrams.append(action_ngram)
+    return ngrams
