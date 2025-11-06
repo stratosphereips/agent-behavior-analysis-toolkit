@@ -516,26 +516,40 @@ def get_clusters_per_step(trajectory, clusters)->list:
                 clusters_per_step[step].append(cluster_id)
     return [int(list(set(clusters_per_step[i]))[0]) for i in range(len(trajectory))]
 
-def js_divergence_per_state(policy_p: EmpiricalPolicy, policy_q: EmpiricalPolicy, alpha: float = 0.1):
+def js_divergence_per_state(policy_p: EmpiricalPolicy, policy_q: EmpiricalPolicy, all_actions:set,alpha: float = 0.1, epsilon: float = 1e-12):
+    # 1. Determine the union of states for comparison
     states = set(policy_p._state_action_map.keys()) | set(policy_q._state_action_map.keys())
     if not states:
-        return {}, 0.0  # empty dict and mean
-
-    global_actions = set()
-    for amap in policy_p._state_action_map.values():
-        global_actions.update(amap.keys())
-    for amap in policy_q._state_action_map.values():
-        global_actions.update(amap.keys())
-    global_actions = list(global_actions)
+        return {}, 0.0
 
     js_per_state = {}
+
     for state in states:
-        p_probs = np.array([policy_p.get_action_probability(state, a, alpha) for a in global_actions])
-        q_probs = np.array([policy_q.get_action_probability(state, a, alpha) for a in global_actions])
+        # Get actions observed for the current state in either policy P or Q.
+        # This is the correct local action space for the divergence calculation at state s.
+        p_probs = np.array([policy_p.get_action_probability(state, a, alpha) for a in all_actions])
+        q_probs = np.array([policy_q.get_action_probability(state, a, alpha) for a in all_actions])
+
+        # Calculate the average distribution M(a|s)
         m_probs = 0.5 * (p_probs + q_probs)
 
-        kl_pm = np.sum(p_probs * np.log(p_probs / m_probs))
-        kl_qm = np.sum(q_probs * np.log(q_probs / m_probs))
+        # --- Stable KL Calculation: D_KL(P || M) ---
+        # Only perform the calculation where P is non-zero
+        non_zero_p_indices = p_probs > epsilon
+        
+        kl_pm = np.sum(
+            p_probs[non_zero_p_indices] * np.log(p_probs[non_zero_p_indices] / m_probs[non_zero_p_indices])
+        )
+
+        # --- Stable KL Calculation: D_KL(Q || M) ---
+        # Only perform the calculation where Q is non-zero
+        non_zero_q_indices = q_probs > epsilon
+        
+        kl_qm = np.sum(
+            q_probs[non_zero_q_indices] * np.log(q_probs[non_zero_q_indices] / m_probs[non_zero_q_indices])
+        )
+
+        # --- Final JS Divergence ---
         js_per_state[state] = 0.5 * (kl_pm + kl_qm)
 
     mean_js = float(np.mean(list(js_per_state.values())))
@@ -557,11 +571,11 @@ def graph_from_policy(policy:EmpiricalPolicy)->nx.MultiDiGraph:
             G.add_edge(state, next_state, weight=count, actions={action})
     return G
 
-def policy_comparison(curr_policy:EmpiricalPolicy, prev_policy:EmpiricalPolicy)->dict:
+def policy_comparison(curr_policy:EmpiricalPolicy, prev_policy:EmpiricalPolicy, all_actions:set)->dict:
     """
     Compare two policies based on their trajectory statistics.
     """
-    per_state_js_div, mean_js_div = js_divergence_per_state(curr_policy, prev_policy)
+    per_state_js_div, mean_js_div = js_divergence_per_state(curr_policy, prev_policy, all_actions)
 
     metrics = {
         "node_overlap": len(set(curr_policy.states) & set(prev_policy.states))/max(len(curr_policy.states), len(prev_policy.states), 1),

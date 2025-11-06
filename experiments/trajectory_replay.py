@@ -1,8 +1,7 @@
 from utils.trajectory_utils import get_trajectory_action_ngrams, load_trajectories_from_json
 from utils.trajectory_utils import empirical_policy_statistics
 from utils.trajectory_utils import find_trajectory_segments, cluster_segments
-from utils.plotting_utils   import plot_sankey_plotly, plot_segment_cluster_features
-from utils.plotting_utils   import generate_action_bigram_chordplot
+from utils.plotting_utils   import plot_segment_cluster_features
 from utils.plotting_utils   import plot_trajectory_surprise_matrix, plot_action_per_step_distribution
 from utils.plotting_utils   import visualize_clusters, plot_quantile_fan, plot_cluster_distribution_per_step
 from utils.trajectory_utils import compute_trajectory_surprises,compute_lambda_returns, policy_comparison
@@ -65,7 +64,7 @@ def process_single_trajectory(args):
     )
     return segs, surprises
 
-def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_policy, num_actions=None):
+def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_policy, all_actions:set, num_actions=None):
     """
     Process comparison between two empirical policies and segment trajectories.
     Args:
@@ -91,7 +90,7 @@ def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_
     }
     
     
-    policy_comparison_metrics, js_divergence_per_state = policy_comparison(curr_policy, prev_policy)
+    policy_comparison_metrics, js_divergence_per_state = policy_comparison(curr_policy, prev_policy, all_actions)
     log_data["policy_comparison_metrics"] = policy_comparison_metrics
     segments = []
     surprises = []
@@ -239,6 +238,7 @@ class TrajectoryReplay:
         # Load trajectories in parallel using threads
         print("[TrajectoryReplay] Starting parallel loading of checkpoints")
         max_trajectories = self.params.get("max_trajectories", None)
+        all_actions = set()
         with ThreadPoolExecutor() as executor:
             futures = {
                 executor.submit(load_trajectories, json_file, max_trajectories): checkpoint_id
@@ -250,6 +250,9 @@ class TrajectoryReplay:
                 trajs, metadata = f.result()
                 print(f"[TrajectoryReplay] Loaded {len(trajs)} trajectories from {checkpoint_id}")
                 results_trajectories[checkpoint_id] = (trajs, metadata)
+                for traj in trajs:
+                    all_actions.update(traj.actions)
+        print(f"[TrajectoryReplay] Found {len(all_actions)} unique actions across all checkpoints")
         # Store original trajectories and metadata
         self.original_trajectories = {}
         self.trajectory_metadata = {}
@@ -302,7 +305,7 @@ class TrajectoryReplay:
             metadata = self.trajectory_metadata[curr_id]
             prev_policy = results_policies[prev_id]
             curr_policy = results_policies[curr_id]
-            tasks.append((curr_id, trajectories, metadata, prev_policy, curr_policy, num_actions))
+            tasks.append((curr_id, trajectories, metadata, prev_policy, curr_policy, all_actions,num_actions))
 
         print("[TrajectoryReplay] Starting parallel checkpoint comparisons")
         with ProcessPoolExecutor() as executor:
