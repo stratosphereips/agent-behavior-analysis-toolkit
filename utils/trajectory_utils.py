@@ -4,8 +4,6 @@ import numpy as np
 import ruptures as rpt
 from typing import Iterable
 from sklearn.preprocessing import StandardScaler, RobustScaler
-from pyclustering.cluster.xmeans import xmeans
-from pyclustering.cluster.center_initializer import kmeans_plusplus_initializer
 from sklearn.cluster import DBSCAN
 from collections import defaultdict
 from typing import List, Optional, Callable, Any
@@ -13,8 +11,7 @@ from trajectory import Transition, Trajectory, Policy, EmpiricalPolicy
 import networkx as nx
 import json
 import os
-from utils.aidojo_utils import aidojo_rebuild_trajectory
-import hdbscan
+from utils.aidojo_utils import aidojo_rebuild_trajectory, aidojo_action_type_from_dict, aidojo_state_str_from_dict
 from ruptures import costs
 from typing import Dict
 from sklearn.neighbors import NearestNeighbors
@@ -56,13 +53,18 @@ def store_trajectories_to_json(trajectory_set:Iterable, filename:str, metadata:d
         else:
             json.dump(json_data, f)
 
-def load_trajectories_from_json(filename: str, load_metadata: bool=False, max_trajectories: int=None) -> tuple[Iterable[Trajectory], dict]:
+def load_trajectories_from_json(
+    filename: str,
+    load_metadata: bool=False,
+    max_trajectories: int|None=None,
+    action_encoder:Callable|None=None,
+    state_encoder:Callable|None=None) -> tuple[Iterable[Trajectory], dict]:
     """
     Load a set of trajectories from a JSON file.
     """
     ext = os.path.splitext(filename)[1].lower()
     if ext == ".jsonl":
-        return load_trajectories_from_jsonl(filename, load_metadata, max_trajectories)
+        return load_trajectories_from_jsonl(filename, load_metadata, max_trajectories, action_encoder, state_encoder)
     else:
         with open(filename, 'r') as f:
             json_data = json.load(f)
@@ -76,7 +78,9 @@ def load_trajectories_from_json(filename: str, load_metadata: bool=False, max_tr
 def load_trajectories_from_jsonl(
     filename: str, 
     load_metadata: bool = False, 
-    max_trajectories: int = None,
+    max_trajectories: int | None = None,
+    action_encoder: Callable | None = None,
+    state_encoder: Callable | None = None
 ) -> tuple[Iterable["Trajectory"], dict]:
     """
     Load a set of trajectories from a JSONL file (one JSON object per line).
@@ -104,10 +108,39 @@ def load_trajectories_from_jsonl(
                 states = traj.get("states", None)
                 actions = traj.get("actions", None)
                 rewards = traj.get("rewards", None)
-                trajectories.append(aidojo_rebuild_trajectory(states, actions, rewards))
+                reconstructed_trajectory = rebuild_trajectory_from_components(
+                    states,
+                    actions,
+                    rewards,
+                    action_encoder=action_encoder,
+                    state_encoder=state_encoder
+                )
+                trajectories.append(reconstructed_trajectory)
             except KeyError as e:
                 print(f"Error loading trajectory from line {i}: {e}")
     return trajectories, metadata
+
+def rebuild_trajectory_from_components(
+    states: list,
+    actions: Iterable,
+    rewards: Iterable,
+    action_encoder: Callable | None = None,
+    state_encoder: Callable | None = None
+) -> Trajectory:
+    """
+    Rebuild a Trajectory object from its components.
+    """
+    traj = Trajectory()
+    for s, a, r, s_next in zip(states, actions, rewards, states[1:]):
+        if state_encoder:
+            s = state_encoder(s)
+            s_next = state_encoder(s_next)
+        if action_encoder:
+            a = action_encoder(a)
+        traj.add_transition(s, a, r, s_next)
+    return traj
+
+
 
 def calculate_ecdf_auc(returns: np.ndarray) -> float:
     """
@@ -498,6 +531,7 @@ def cluster_segments(
         return optimal_eps
 
     estimated_eps = find_knee_point_heuristic(X, k=2*min_samples)
+    estimated_eps = max(estimated_eps, 1e-6)  # Ensure eps is not too small
     print(f"Estimated DBSCAN eps: {estimated_eps:.4f} (using min_samples={min_samples})")
     clustering = DBSCAN(eps=estimated_eps, min_samples=min_samples).fit(X)
     
