@@ -58,6 +58,24 @@ def get_transition_probabilities(policy: EmpiricalPolicy):
     return prob_map
 
 
+def compute_tvd(dist1, dist2, action_set):
+    """
+    Calculate the Total Variation Distance (TVD) between two action distributions.
+    Args:
+        dist1 (dict): The first action distribution.
+        dist2 (dict): The second action distribution.
+        action_set (set): The set of all possible actions.
+    Returns:
+        float: The TVD between the two policies in the given state.
+    """
+    tvd = 0.0
+    for action in action_set:
+        p1 = dist1.get(action, 0.0)
+        p2 = dist2.get(action, 0.0)
+        tvd += abs(p1 - p2)
+    tvd *= 0.5
+    return tvd
+
 def compute_future_cost(trans_u, trans_v, global_cost_matrix, nodes2_idx_map):
     """
     Approximates 1-Wasserstein distance between two transition distributions
@@ -116,9 +134,7 @@ def calculate_psm_overlap(policy1: EmpiricalPolicy, policy2: EmpiricalPolicy, gl
     n2_idx = {n: i for i, n in enumerate(nodes2)}
     
     print(f"Aligning {n1_len} states vs {n2_len} states (Actions: {len(global_actions)})...")
-
-    # 2. Pre-compute Distributions (Local Behavior)
-    # Using your corrected 'get_action_distribution' method
+    # 2. Precompute Action Distributions
     # Use small alpha (0.001) to keep signals sharp
     d1_map = {n: policy1.get_action_distribution(n, global_actions, alpha=0.001) for n in nodes1}
     d2_map = {n: policy2.get_action_distribution(n, global_actions, alpha=0.001) for n in nodes2}
@@ -129,9 +145,8 @@ def calculate_psm_overlap(policy1: EmpiricalPolicy, policy2: EmpiricalPolicy, gl
     
     for i, u in enumerate(nodes1):
         for j, v in enumerate(nodes2):
-            # Calculate L1 / TVD
-            dist_sum = sum(abs(d1_map[u][a] - d2_map[v][a]) for a in global_actions)
-            cost_matrix[i, j] = dist_sum * 0.5  # Normalize to [0, 1]
+            # Calculate L1 / TVD between action distributions
+            cost_matrix[i,j] = compute_tvd(d1_map[u], d2_map[v], global_actions)
 
     # 4. Recursive Refinement (The "Lookahead" Step)
     if use_recursion and iterations > 0:
@@ -499,7 +514,6 @@ def _solve_wasserstein_approx(trans_u, trans_v, global_cost_matrix, nodes2_map):
         cost_v_to_u += prob * min_d
         
     return max(cost_u_to_v, cost_v_to_u) 
-
 
 def map_maml_trajectory_paths(base_dir_path: str, filename_pattern) -> dict:
     """
