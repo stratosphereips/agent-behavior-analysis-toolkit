@@ -1,6 +1,6 @@
 from collections import namedtuple
 from dataclasses import dataclass, field
-from typing import List, Any, Iterable, Hashable
+from typing import Callable, List, Any, Iterable, Hashable
 import copy
 import numpy as np
 
@@ -186,6 +186,28 @@ class EmpiricalPolicy(Policy):
         Return the number of trajectories in the policy.
         """
         return len(self.trajectories)
+    @property
+    def mean_return(self) -> float:
+        """
+        Calculate the mean return (total reward) across all trajectories.
+        """
+        if not self.trajectories:
+            return 0.0
+        total_returns = sum(traj.total_reward() for traj in self.trajectories)
+        return total_returns / len(self.trajectories)
+    
+    def get_mean_winrate(self, is_winner:Callable[[Trajectory], bool]|None = None) -> float:
+        """
+        Calculate the mean winrate across all trajectories.
+        A trajectory is considered a win if its total reward is greater than 0.
+        """
+        if not self.trajectories:
+            return 0.0
+        if is_winner is None:
+            is_winner = lambda traj: traj.total_reward() > 0
+        wins = sum(1 for traj in self.trajectories if is_winner(traj))
+        return wins / len(self.trajectories)
+    
     def _convert_to_hashable(self, value:Any)->Hashable:
         """
         Convert a value to a hashable type.
@@ -256,3 +278,62 @@ class EmpiricalPolicy(Policy):
         denominator = total_count + alpha * self.num_actions
 
         return numerator / denominator
+
+    # def get_prob_argmax_action(self, state: Any, alpha=0.1) -> Any:
+    #     """
+    #     Get the action with the highest probability in a given state.
+    #     If the state is unseen, return a random action.
+
+    #     Parameters:
+    #         state: the state
+    #         alpha: smoothing constant (default = 1.0)
+
+    #     Returns:
+    #         Action with the highest probability π(a | s)
+    #     """
+    #     state = self._convert_to_hashable(state)
+    #     if state not in self._state_action_map:
+    #         # Unseen state: return a random action
+    #         return np.random.choice(list(self.actions))
+
+    #     action_probs = {action: self.get_action_probability(state, action, alpha) for action in self._state_action_map[state].keys()}
+    #     return max(action_probs, key=action_probs.get)
+    
+    def get_action_distribution(self, state: Any, all_actions, alpha=0.001) -> dict:
+        """
+        Get the action distribution for a given state.
+        Parameters:
+            state: the state
+            alpha: smoothing constant (default = 1.0)
+            all_actions: iterable of actions to consider 
+        Returns:
+            dict: A dictionary mapping actions to their probabilities.
+        """
+        state = self._convert_to_hashable(state)
+        if state not in self._state_action_map:
+            # Unseen state: return uniform distribution
+            action_distribution = {a:1.0/len(all_actions) for a in all_actions}
+        else:
+            action_distribution = {}
+            # collect total counts
+            raw_counts = self._state_action_map[state]
+            total_observed_count = sum(raw_counts.values())
+            denominator = total_observed_count + (alpha * len(all_actions))
+
+            action_distribution = {}
+            
+            for action in all_actions:
+                count = raw_counts.get(action, 0)
+                # Apply Laplace Smoothing
+                prob = (count + alpha) / denominator
+                action_distribution[action] = prob
+        return action_distribution
+    
+    def has_data(self, state: Any) -> bool:
+        """
+        Check if the policy has data for a given state.
+        """
+        state = self._convert_to_hashable(state)
+        if state not in self._state_action_map:
+            return False
+        return sum(self._state_action_map[state].values()) > 0
