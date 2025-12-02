@@ -237,63 +237,6 @@ def find_psm_mapping(policy1: EmpiricalPolicy, policy2: EmpiricalPolicy, global_
     print(len(row_ind), len(col_ind), len(nodes1), len(nodes2), len(n1_idx), len(n2_idx))
     return cost_matrix_normalized, row_ind, col_ind, nodes1, nodes2, n1_idx, n2_idx, d1_map, d2_map
     
-    # # 2. Apply The Filter
-    # # A cost > 0.25 implies the behavior is significantly different (more than 25% divergence)
-    # MATCH_THRESHOLD = 0.25 
-
-    # for i, j in zip(row_ind, col_ind):
-    #     # Only keep the match if the cost is low enough
-    #     if cost_matrix[i, j] < MATCH_THRESHOLD:
-    #         u = nodes1[i]
-    #         v = nodes2[j]
-    #         mapping[u] = v
-    #     else:
-    #         discarded_count += 1
-    # print(f"Accepted Matches: {len(mapping)}")
-    # print(f"Discarded (Poor) Matches: {discarded_count}")
-    # # 6. Final Reporting
-    # active_transitions = 0
-    # active_overlap_mass = 0.0
-    # real_matches_count = 0
-
-    # for u, v in mapping.items():
-    #     # Skip Double-Ghosts
-    #     if not policy1.has_data(u) and not policy2.has_data(v):
-    #         continue
-
-    #     real_matches_count += 1
-    #     d1 = d1_map[u]
-    #     d2 = d2_map[v]
-        
-    #     for action in global_actions:
-    #         p1 = d1[action]
-    #         p2 = d2[action]
-            
-    #         # Metric A: Mass
-    #         active_overlap_mass += min(p1, p2)
-            
-    #         # Metric B: Edges (Using threshold)
-    #         if p1 > 0.01 and p2 > 0.01:
-    #             active_transitions += 1
-
-    # # Print
-    # print("-" * 30)
-    # print("PSM OVERLAP REPORT")
-    # print("-" * 30)
-    # print(f"Total Mapped Pairs:     {len(mapping)}")
-    # print(f"Meaningful Pairs:       {real_matches_count}")
-    # print(f"Active Shared Edges:    {active_transitions}")
-    # print(f"Total Mass Overlap:     {active_overlap_mass:.4f}")
-    
-    # if real_matches_count > 0:
-    #     avg = active_overlap_mass / real_matches_count
-    #     print(f"Avg Behavior Similarity: {avg:.2%}")
-    # else:
-    #     avg = 0.0
-    #     print("Avg Behavior Similarity: 0.00%")
-        
-    # return mapping, real_matches_count, active_transitions, active_overlap_mass, avg
-
 def find_policy_overlap(policy1: EmpiricalPolicy, policy2: EmpiricalPolicy, global_actions, max_refining_iterations=10, similarity_threshold=0.25):
     """
     Computes the policy overlap between two empirical policies using PSM.
