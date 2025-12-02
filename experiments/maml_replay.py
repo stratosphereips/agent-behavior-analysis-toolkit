@@ -76,48 +76,6 @@ def compute_tvd(dist1, dist2, action_set):
     tvd *= 0.5
     return tvd
 
-# def compute_future_cost(trans_u, trans_v, global_cost_matrix, nodes2_idx_map):
-#     """
-#     Approximates 1-Wasserstein distance between two transition distributions
-#     using a greedy weighted match (Weighted Hausdorff).
-    
-#     Args:
-#         trans_u: list of (next_state_u, prob_u)
-#         trans_v: list of (next_state_v, prob_v)
-#         global_cost_matrix: The current N x M distance matrix
-#         nodes2_idx_map: Map of {state_v: col_index} for fast lookup
-#     """
-#     if not trans_u or not trans_v:
-#         # If one leads nowhere (terminal) and other continues, max penalty
-#         return 1.0 if (trans_u or trans_v) else 0.0
-
-#     # Forward: How far is U's future from V's future?
-#     cost_u_to_v = 0.0
-#     for next_u, prob_u in trans_u:
-#         # Find the "closest" state in V's future
-#         # (We assume the closest match in the other graph is the optimal transport target)
-#         min_dist = 1.0
-        
-#         # We only check states that actually exist in the transition list
-#         for next_v, _ in trans_v:
-#             # Look up distance in the global matrix
-#             # If next_v isn't in nodes2 (e.g., unseen in graph 2), max penalty
-#             if next_v in nodes2_idx_map:
-#                 col_idx = nodes2_idx_map[next_v]
-#                 # We need row_idx for next_u, but trans_u might have states not in nodes1 list
-#                 # This requires that global_cost_matrix covers all nodes. 
-#                 # For this implementation, we assume indices align with the outer loops.
-#                 # To make this robust, we usually pre-map everything to indices.
-#                 # However, for the recursive step, we usually assume the node list is fixed.
-#                 pass 
-                
-#         # Optimization: To allow efficient lookup, we rely on the outer function
-#         # passing index-based transitions or handles to do the lookup.
-#         # See simplified implementation below.
-#         pass
-
-#     return 0.0 # Placeholder, see optimized version in main function
-
 def _refine_cost_matrix_recursively(policy1, policy2, nodes1, nodes2, 
                                     n1_idx, n2_idx, initial_cost_matrix, 
                                     max_iterations=3, gamma=0.9, max_delta=1e-4):
@@ -167,7 +125,7 @@ def _refine_cost_matrix_recursively(policy1, policy2, nodes1, nodes2,
                 future_term = max(cost_u_v, cost_v_u)
                 
                 # Update Equation: Blend Current Estimate with Future Estimate
-                new_val = (1 - gamma) * cost_matrix[i, j] + gamma * future_term
+                new_val = cost_matrix[i, j] + gamma * future_term
 
                 next_cost_matrix[i, j] = new_val
                 max_change = max(max_change, abs(new_val - cost_matrix[i, j]))
@@ -179,7 +137,7 @@ def _refine_cost_matrix_recursively(policy1, policy2, nodes1, nodes2,
         if k % 10 == 0 or k == max_iterations - 1:
             print(f"\tIteration {k}: max delta = {max_change:.6f}")
         if max_change < 1e-4:
-            break  
+            break
     return cost_matrix
 
 def _precompute_transitions(policy: EmpiricalPolicy, node_list, node_to_idx):
@@ -230,8 +188,6 @@ def _precompute_transitions(policy: EmpiricalPolicy, node_list, node_to_idx):
     return cache
 
 
-# --- MAIN METRIC FUNCTION ---
-
 def find_psm_mapping(policy1: EmpiricalPolicy, policy2: EmpiricalPolicy, global_actions,
                           gamma=0.95, iterations=3):
     
@@ -253,7 +209,7 @@ def find_psm_mapping(policy1: EmpiricalPolicy, policy2: EmpiricalPolicy, global_
 
     # 3. Initialize Cost Matrix (Local TVD)
     # Start with max distance (1.0 for TVD)
-    cost_matrix = np.full((max(n1_len, n2_len), max(n1_len, n2_len)), fill_value=1.0)
+    cost_matrix = np.full((max(n1_len, n2_len), max(n1_len, n2_len)), fill_value=100.0)
     
     for i, u in enumerate(nodes1):
         for j, v in enumerate(nodes2):
@@ -271,12 +227,15 @@ def find_psm_mapping(policy1: EmpiricalPolicy, policy2: EmpiricalPolicy, global_
         initial_cost_matrix=cost_matrix,
         max_iterations=iterations
     )
-
+    # Normalize to [0, 1] range for the Threshold Check
+    # The theoretical max is 1 / (1 - gamma)
+    scaling_factor = 1.0 / (1.0 - gamma)
+    cost_matrix_normalized = cost_matrix / scaling_factor
     # 5. Solve the node matching problem
     print("Finding Optimal Node Matching using Hungarian Algorithm...")
-    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    row_ind, col_ind = linear_sum_assignment(cost_matrix_normalized)
     print(len(row_ind), len(col_ind), len(nodes1), len(nodes2), len(n1_idx), len(n2_idx))
-    return cost_matrix, row_ind, col_ind, nodes1, nodes2, n1_idx, n2_idx, d1_map, d2_map
+    return cost_matrix_normalized, row_ind, col_ind, nodes1, nodes2, n1_idx, n2_idx, d1_map, d2_map
     
     # # 2. Apply The Filter
     # # A cost > 0.25 implies the behavior is significantly different (more than 25% divergence)
