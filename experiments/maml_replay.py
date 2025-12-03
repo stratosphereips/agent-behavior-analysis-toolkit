@@ -11,7 +11,7 @@ import argparse
 import os
 import re
 import wandb
-
+from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
 WANDB_PROJECT = "maml-generalization"
 WANDB_ENTITY = "ondrej-lukas-czech-technical-university-in-prague"
 
@@ -27,12 +27,38 @@ def load_trajectories(json_file, max_trajectories=None, load_metadata=True):
         list: List of loaded trajectories.
         dict: Metadata dictionary if load_metadata is True, else {}.
     """
-    #print(f"[load_trajectories] Start loading from {json_file}")
     trajectories, metadata = load_trajectories_from_json(json_file, load_metadata=load_metadata, max_trajectories=max_trajectories, 
                                                          action_encoder=aidojo_action_type_from_dict,
                                                          state_encoder=aidojo_state_str_from_dict)
-    #print(f"[load_trajectories] Finished loading {len(trajectories)} trajectories from {json_file}")
     return trajectories, metadata
+
+def build_empirical_policy(path, max_trajectories):
+    # load the trajectories from file
+    print(f"[Trajectory processing & EP build] {path}")
+    trajectories, _ = load_trajectories(path, max_trajectories=max_trajectories, load_metadata=False)
+    empirical_policy = EmpiricalPolicy(trajectories)
+    return empirical_policy, trajectories
+
+def collect_trajectory_data(data:dict ,max_trajectories):
+    # prepare paths correctly
+    paths = []
+    results = {}
+    for cp in sorted(data.keys()):
+        results[cp] = {}
+        for task_key in sorted(data[cp].keys()):
+            results[cp][task_key] = {}
+            paths.append((cp, task_key, "pre_adapt", data[cp][task_key]["pre_adaptation_path"]))
+            paths.append((cp, task_key, "post_adapt",data[cp][task_key]["post_adaptation_path"]))
+    with ProcessPoolExecutor() as executor:
+        futures = {
+            executor.submit(build_empirical_policy, path, max_trajectories): (cp, task, policy_id, path)
+            for (cp, task, policy_id, path) in paths
+        }
+        for f in as_completed(futures):
+            (cp, task, policy_id, path) = futures[f]
+            empirical_policy, trajectories = f.result()
+            results[cp][task][f"{policy_id}_policy"] = empirical_policy
+    return results
 
 
 def get_transition_probabilities(policy: EmpiricalPolicy):
@@ -56,8 +82,7 @@ def get_transition_probabilities(policy: EmpiricalPolicy):
         # Create list of (next_state, prob)
         prob_map[s] = [(ns, count / total) for ns, count in next_states_dict.items()]
     return prob_map
-
-
+    
 def compute_tvd(dist1, dist2, action_set):
     """
     Calculate the Total Variation Distance (TVD) between two action distributions.
@@ -125,7 +150,7 @@ def _refine_cost_matrix_recursively(policy1, policy2, nodes1, nodes2,
                 future_term = max(cost_u_v, cost_v_u)
                 
                 # Update Equation: Blend Current Estimate with Future Estimate
-                new_val = cost_matrix[i, j] + gamma * future_term
+                new_val = initial_cost_matrix[i, j] + gamma * future_term
 
                 next_cost_matrix[i, j] = new_val
                 max_change = max(max_change, abs(new_val - cost_matrix[i, j]))
@@ -186,7 +211,6 @@ def _precompute_transitions(policy: EmpiricalPolicy, node_list, node_to_idx):
         cache.append(children_list)
         
     return cache
-
 
 def find_psm_mapping(policy1: EmpiricalPolicy, policy2: EmpiricalPolicy, global_actions,
                           gamma=0.95, iterations=3):
@@ -311,7 +335,7 @@ def find_policy_overlap(policy1: EmpiricalPolicy, policy2: EmpiricalPolicy, glob
         "discarded_ghosts": discarded_ghost,
         "total_mass_overlap": total_mass_overlap,
         "shared_edges_count": meaningful_transitions_count,
-        "avg_behavior_similarity": avg_match_similarity, # <--- The most important number
+        "avg_behavior_similarity": avg_match_similarity,
         "coverage": coverage
     }
     
@@ -383,6 +407,69 @@ def map_maml_trajectory_paths(base_dir_path: str, filename_pattern) -> dict:
                 
     return data
 
+def run_pre_post_adaptation_comparison(data:dict, max_iterations_cm_refinement, global_actions, similarity_threshold):
+    # prepare the data structure for results
+    results = {
+        cp:{
+            "pre_adaptation":{
+                "return":[],
+                "unique_epg_nodes":[],
+                "unique_epg_edges":[],
+            },
+            "post_adaptation":{
+                "return":[],
+                "unique_epg_nodes":[],
+                "unique_epg_edges":[],
+            },
+            "checkpoint_stats":{
+                "total_structural_cost": [],
+                "matched_nodes": [],
+                "discarded_bad_cost": [],
+                "discarded_ghosts": [],
+                "total_mass_overlap": [],
+                "shared_edges_count": [],
+                "avg_behavior_similarity": [],
+                "coverage": [],
+                "shared_edges":[],
+                "shared_ndoes":[]
+            }
+        }
+        for cp in data.keys()
+    }
+    print("Starting pre/post adaptation comparison.")
+    for cp in sorted(data.keys()):
+        print(f"[processing cp:{cp}]")
+        for task_key in sorted(data[cp].keys()):
+            # load the policy objects
+            pre_adapt_policy = data[cp][task_key]["pre_adapt_policy"]
+            post_adapt_policy = data[cp][task_key]["post_adapt_policy"]
+            
+            # store stats of pre/post adaptation policies
+            results[cp]["pre_adaptation"]["return"].append(pre_adapt_policy.mean_return)
+            results[cp]["pre_adaptation"]["unique_epg_nodes"].append(pre_adapt_policy.num_states)
+            results[cp]["pre_adaptation"]["unique_epg_edges"].append(len(pre_adapt_policy.edges))
+            results[cp]["post_adaptation"]["return"].append(post_adapt_policy.mean_return)
+            results[cp]["post_adaptation"]["unique_epg_nodes"].append(post_adapt_policy.num_states)
+            results[cp]["post_adaptation"]["unique_epg_edges"].append(len(post_adapt_policy.edges))
+
+            # run the comparison
+            results[cp]["checkpoint_stats"]["shared_nodes"].append(len(set(pre_adapt_policy.states) & set(post_adapt_policy.states)))
+            results[cp]["checkpoint_stats"]["shared_edges"].append(len(set(pre_adapt_policy.edges) & set(post_adapt_policy.edges)))
+            
+            # run the EPG matching
+            task_checkpoint_stats = find_policy_overlap(
+                pre_adapt_policy,
+                post_adapt_policy,
+                global_actions=global_actions,
+                max_refining_iterations= max_iterations_cm_refinement,
+                similarity_threshold=similarity_threshold
+
+            )
+            for k,v in task_checkpoint_stats.items():
+                if k in results[cp]["checkpoint_stats"].keys():
+                    results[cp]["checkpoint_stats"][k].append(v)
+    return results
+
 if __name__ == "__main__":
     # Loading the trajectories for testing
     parser = argparse.ArgumentParser(description="MAML Replay Experiment")
@@ -415,107 +502,114 @@ if __name__ == "__main__":
     data = map_maml_trajectory_paths(args.data_dir, re.compile(args.regex_pattern))
     print(f"Found checkpoints: {list(data.keys())}")
 
-    # load and process trajectories for each checkpoint and task
-    for checkpoint_id in sorted(data.keys()):
-        tasks = data[checkpoint_id]
-        print(f"Processing Checkpoint: {checkpoint_id}")
-        task_policies = {}
-        pre_adapt_stats = {
-            "return":[],
-            "unique_epg_nodes":[],
-            "unique_epg_edges":[],
-        }
-        post_adapt_stats = {
-            "return":[],
-            "unique_epg_nodes":[],
-            "unique_epg_edges":[],
-        }
-        checkpoint_stats = {
-            "total_overlap_mass":[],
-            "total_active_edges":[],
-            "total_mapped_pairs":[],
-            "meaningful_pairs":[],
-            "avg_behavior_similarity":[],
-        }
-        checkpoint_stats = {
-            "total_structural_cost": [],
-            "matched_nodes": [],
-            "discarded_bad_cost": [],
-            "discarded_ghosts": [],
-            "total_mass_overlap": [],
-            "shared_edges_count": [],
-            "avg_behavior_similarity": [], # <--- The most important number
-            "coverage": []
-        }
-        for task_key in sorted(tasks.keys()):
-            paths = tasks[task_key]
-            print(f"  Loading Task: {task_key}")
-            pre_adapt_trajectories, _ = load_trajectories(paths["pre_adaptation_path"], max_trajectories=args.max_trajectories, load_metadata=False)
-            post_adapt_trajectories, _ = load_trajectories(paths["post_adaptation_path"], max_trajectories=args.max_trajectories, load_metadata=False)
+    # collect trajectories and build policies
+    policies = collect_trajectory_data(data, args.max_trajectories)
+    for cp, tasks in policies.items():
+        for t, data in tasks.items():
+            print(cp, t,data)
+    
+
+    # # load and process trajectories for each checkpoint and task
+    # for checkpoint_id in sorted(data.keys()):
+    #     tasks = data[checkpoint_id]
+    #     print(f"Processing Checkpoint: {checkpoint_id}")
+    #     task_policies = {}
+    #     pre_adapt_stats = {
+    #         "return":[],
+    #         "unique_epg_nodes":[],
+    #         "unique_epg_edges":[],
+    #     }
+    #     post_adapt_stats = {
+    #         "return":[],
+    #         "unique_epg_nodes":[],
+    #         "unique_epg_edges":[],
+    #     }
+    #     checkpoint_stats = {
+    #         "total_overlap_mass":[],
+    #         "total_active_edges":[],
+    #         "total_mapped_pairs":[],
+    #         "meaningful_pairs":[],
+    #         "avg_behavior_similarity":[],
+    #     }
+    #     checkpoint_stats = {
+    #         "total_structural_cost": [],
+    #         "matched_nodes": [],
+    #         "discarded_bad_cost": [],
+    #         "discarded_ghosts": [],
+    #         "total_mass_overlap": [],
+    #         "shared_edges_count": [],
+    #         "avg_behavior_similarity": [],
+    #         "coverage": []
+    #     }
+    #     for task_key in sorted(tasks.keys()):
+    #         paths = tasks[task_key]
+    #         print(f"  Loading Task: {task_key}")
+    #         pre_adapt_trajectories, _ = load_trajectories(paths["pre_adaptation_path"], max_trajectories=args.max_trajectories, load_metadata=False)
+    #         post_adapt_trajectories, _ = load_trajectories(paths["post_adaptation_path"], max_trajectories=args.max_trajectories, load_metadata=False)
             
-            pre_adapt_policy = EmpiricalPolicy(pre_adapt_trajectories)
-            post_adapt_policy = EmpiricalPolicy(post_adapt_trajectories)
+    #         pre_adapt_policy = EmpiricalPolicy(pre_adapt_trajectories)
+    #         post_adapt_policy = EmpiricalPolicy(post_adapt_trajectories)
 
-            pre_adapt_stats["return"].append(pre_adapt_policy.mean_return)
-            pre_adapt_stats["unique_epg_nodes"].append(pre_adapt_policy.num_states)
-            pre_adapt_stats["unique_epg_edges"].append(len(pre_adapt_policy.edges))
+    #     #     pre_adapt_stats["return"].append(pre_adapt_policy.mean_return)
+    #     #     pre_adapt_stats["unique_epg_nodes"].append(pre_adapt_policy.num_states)
+    #     #     pre_adapt_stats["unique_epg_edges"].append(len(pre_adapt_policy.edges))
 
-            post_adapt_stats["return"].append(post_adapt_policy.mean_return)
-            post_adapt_stats["unique_epg_nodes"].append(post_adapt_policy.num_states)
-            post_adapt_stats["unique_epg_edges"].append(len(post_adapt_policy.edges))
-            task_policies[task_key] = {
-                "pre_adapt_policy": pre_adapt_policy,
-                "post_adapt_policy": post_adapt_policy
-            }
-            print(f"    Loaded {len(pre_adapt_trajectories)} pre-adapt and {len(post_adapt_trajectories)} post-adapt trajectories.")
+    #     #     post_adapt_stats["return"].append(post_adapt_policy.mean_return)
+    #     #     post_adapt_stats["unique_epg_nodes"].append(post_adapt_policy.num_states)
+    #     #     post_adapt_stats["unique_epg_edges"].append(len(post_adapt_policy.edges))
+    #         task_policies[task_key] = {
+    #             "pre_adapt_policy": pre_adapt_policy,
+    #             "post_adapt_policy": post_adapt_policy
+    #         }
+    #     #     print(f"    Loaded {len(pre_adapt_trajectories)} pre-adapt and {len(post_adapt_trajectories)} post-adapt trajectories.")
         
-        # Now compute PSM overlap for each task
-        for task_key, policies in task_policies.items():
-            print(f"  Calculating PSM Overlap for Task: {task_key}")
-            task_checkpoint_stats = find_policy_overlap(
-                task_policies[task_key]["pre_adapt_policy"],
-                task_policies[task_key]["post_adapt_policy"],
-                global_actions=global_actions,
-                max_refining_iterations= args.max_iterations,
-                similarity_threshold=0.25
+    #     # # Now compute PSM overlap for each task
+    #     # for task_key, policies in task_policies.items():
+    #     #     print(f"  Calculating PSM Overlap for Task: {task_key}")
+    #     #     task_checkpoint_stats = find_policy_overlap(
+    #     #         task_policies[task_key]["pre_adapt_policy"],
+    #     #         task_policies[task_key]["post_adapt_policy"],
+    #     #         global_actions=global_actions,
+    #     #         max_refining_iterations= args.max_iterations,
+    #     #         similarity_threshold=0.05
 
-            )
-            for k,v in task_checkpoint_stats.items():
-                checkpoint_stats[k].append(v)
-
+    #     #     )
+    #     #     for k,v in task_checkpoint_stats.items():
+    #     #         checkpoint_stats[k].append(v)
+    #     inner_loop_comparison_results = 
         
-        if args.record_wandb:
-            checkpoint_int = int(checkpoint_id.lstrip('cp'))
-            metrics_to_log = {}
-            # 2. Process Pre-Adapt Stats
-            for stat_key, values in pre_adapt_stats.items():
-                # Using f-strings with '/' allows W&B to group them automatically in the UI
-                base_key = f"pre_adapt/{stat_key}" 
-                metrics_to_log.update({
-                    f"{base_key}/mean": np.mean(values),
-                    f"{base_key}/std":  np.std(values),
-                    f"{base_key}/min":  np.min(values),
-                    f"{base_key}/max":  np.max(values),
-                })
+    #     if args.record_wandb:
+    #         checkpoint_int = int(checkpoint_id.lstrip('cp'))
+    #         metrics_to_log = {}
+    #         # 2. Process Pre-Adapt Stats
+    #         for stat_key, values in pre_adapt_stats.items():
+    #             # Using f-strings with '/' allows W&B to group them automatically in the UI
+    #             base_key = f"pre_adapt/{stat_key}" 
+    #             metrics_to_log.update({
+    #                 f"{base_key}/mean": np.mean(values),
+    #                 f"{base_key}/std":  np.std(values),
+    #                 f"{base_key}/min":  np.min(values),
+    #                 f"{base_key}/max":  np.max(values),
+    #             })
 
-            # 3. Process Post-Adapt Stats
-            for stat_key, values in post_adapt_stats.items():
-                base_key = f"post_adapt/{stat_key}"
-                metrics_to_log.update({
-                    f"{base_key}/mean": np.mean(values),
-                    f"{base_key}/std":  np.std(values),
-                    f"{base_key}/min":  np.min(values),
-                    f"{base_key}/max":  np.max(values),
-                })
+    #         # 3. Process Post-Adapt Stats
+    #         for stat_key, values in post_adapt_stats.items():
+    #             base_key = f"post_adapt/{stat_key}"
+    #             metrics_to_log.update({
+    #                 f"{base_key}/mean": np.mean(values),
+    #                 f"{base_key}/std":  np.std(values),
+    #                 f"{base_key}/min":  np.min(values),
+    #                 f"{base_key}/max":  np.max(values),
+    #             })
 
-            # 4. Process Checkpoint Stats
-            for stat_key, values in checkpoint_stats.items():
-                base_key = f"checkpoint/{stat_key}"
-                metrics_to_log.update({
-                    f"{base_key}/mean": np.mean(values),
-                    f"{base_key}/std":  np.std(values),
-                    f"{base_key}/min":  np.min(values),
-                    f"{base_key}/max":  np.max(values),
-                })
-            # 4. Log everything once for this specific step
-            wandb.log(metrics_to_log, step=checkpoint_int)
+    #         # 4. Process Checkpoint Stats
+    #         for stat_key, values in checkpoint_stats.items():
+    #             base_key = f"checkpoint/{stat_key}"
+    #             metrics_to_log.update({
+    #                 f"{base_key}/mean": np.mean(values),
+    #                 f"{base_key}/std":  np.std(values),
+    #                 f"{base_key}/min":  np.min(values),
+    #                 f"{base_key}/max":  np.max(values),
+    #             })
+    #         # 4. Log everything once for this specific step
+    #         wandb.log(metrics_to_log, step=checkpoint_int)
