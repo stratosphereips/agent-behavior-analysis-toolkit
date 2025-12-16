@@ -144,6 +144,8 @@ class EmpiricalPolicy(Policy):
         self._state_action_map = {}
         self._edge_count = {}
         self._edge_reward = {}
+        self._state_incoming_reward = {}
+        self._state_incoming_edge_count = {}
         self.update_policy(trajectories)
     @property
     def states(self)->Iterable:
@@ -154,7 +156,7 @@ class EmpiricalPolicy(Policy):
     @property
     def actions(self)->Iterable:
         """
-        Return a list of unique actions in the observed trajectories
+        Return a set of unique actions in the observed trajectories
         """
         actions = set()
         for action_dict in self._state_action_map.values():
@@ -245,11 +247,31 @@ class EmpiricalPolicy(Policy):
         action = self._convert_to_hashable(transition.action)
         if state not in self._state_action_map:
             self._state_action_map[state] = {}
+        if next_state not in self._state_action_map:
+            self._state_action_map[next_state] = {}
         if action not in self._state_action_map[state]:
             self._state_action_map[state][action] = 0
         self._state_action_map[state][action] += 1
         self._edge_count[(state, action, next_state)] = self._edge_count.get((state, action, next_state), 0) + 1
         self._edge_reward[(state, action, next_state)] = self._edge_reward.get((state, action, next_state), 0) + transition.reward
+
+        if next_state not in self._state_incoming_reward:
+            self._state_incoming_reward[next_state] = 0.0
+            self._state_incoming_edge_count[next_state] = 0
+            
+        self._state_incoming_reward[next_state] += transition.reward
+        self._state_incoming_edge_count[next_state] += 1
+    
+    def get_average_value(self, state: Any) -> float:
+        """
+        Returns the average immediate reward received when entering this state.
+        Critical for distinguishing Terminal 'Win' from Terminal 'Loss'.
+        """
+        state = self._convert_to_hashable(state)
+        total_reward = self._state_incoming_reward.get(state, 0)
+        count = self._state_incoming_edge_count.get(state, 0)
+        if count == 0: return 0.0
+        return total_reward / count
 
     def get_action_probability(self, state: Any, action: Any, alpha=0.1) -> float:
         """
@@ -337,3 +359,24 @@ class EmpiricalPolicy(Policy):
         if state not in self._state_action_map:
             return False
         return sum(self._state_action_map[state].values()) > 0
+    
+
+    def get_target_transitions(self, source_node, normalize=True)->List[tuple]:
+        """
+        Get the target transitions for a given source node.
+        Returns a list of tuples (target_node, probability).
+        If normalize is True, probabilities are normalized to sum to 1.
+        """
+        if source_node not in self._state_action_map:
+            return []
+        edge_counts = {}
+        for (src, action, target) in self._edge_count.keys():
+            if src == source_node:
+                edge_counts[target] = edge_counts.get(target, 0) + self._edge_count[(src, action, target)]
+        total_counts = sum(edge_counts.values())
+        if total_counts == 0:
+            return []
+        if normalize:
+            return [(target, count / total_counts) for target, count in edge_counts.items()]
+        else:
+            return [(target, count) for target, count in edge_counts.items()]
