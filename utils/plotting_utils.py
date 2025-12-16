@@ -94,6 +94,7 @@ def plot_action_per_step_distribution(
     max_len = max([len(trajectory) for trajectory in trajectories])
 
     # Action counts and trajectory survival counts
+    num_actions = 6
     action_counts = np.zeros((max_len, num_actions), dtype=float)
     traj_counts = np.zeros(max_len, dtype=int)  # number of trajectories that reached step i
 
@@ -639,5 +640,250 @@ def visualize_clusters(
         ncol=ncol,
         fontsize=10
     )
+
+    return fig
+
+
+import matplotlib.pyplot as plt
+import numpy as np
+import matplotlib.colors as mcolors
+from typing import Iterable
+
+# --- Helper function for the first plot ---
+def plot_action_per_step_distribution_helper(
+    trajectories: Iterable, num_actions: int, ax: plt.Axes, normalize=True
+):
+    """Plots the action distribution onto a given axis, including the trajectory count on a twin axis."""
+    
+    # 1. Data Preparation
+    action_to_idx = {}
+    max_len = max([len(trajectory) for trajectory in trajectories])
+    action_counts = np.zeros((max_len, num_actions), dtype=float)
+    traj_counts = np.zeros(max_len, dtype=int)
+
+    for trajectory in trajectories:
+        for i, transition in enumerate(trajectory):
+            traj_counts[i] += 1
+            
+            # Action index handling (keeping original logic)
+            if not isinstance(transition.action, int):
+                if hasattr(transition.action, 'type'):
+                    if transition.action.type not in action_to_idx:
+                        action_to_idx[transition.action.type] = len(action_to_idx)
+                    action_idx = action_to_idx[transition.action.type]
+                else:
+                    # Fallback if transition.action is not an int and has no .type
+                    action_idx = 0 # Or handle error appropriately
+            else:
+                action_idx = transition.action
+                
+            if 0 <= action_idx < num_actions:
+                action_counts[i, action_idx] += 1
+            else:
+                # Handle actions outside expected range if necessary
+                pass
+
+    if normalize:
+        with np.errstate(invalid="ignore", divide="ignore"):
+            action_counts = np.divide(
+                action_counts,
+                traj_counts[:, None],
+                where=traj_counts[:, None] > 0
+            )
+
+    # 2. Plot Stacked Bars (on the main axis)
+    bottom = np.zeros(max_len)
+    
+    # Determine action names
+    action_names = {}
+    for i in range(num_actions):
+        if i not in action_to_idx.values():
+            action_names[i] = f"Action {i}"
+        else:
+            name = list(action_to_idx.keys())[list(action_to_idx.values()).index(i)]
+            action_names[i] = name
+            
+    for action_idx in range(num_actions):
+        ax.bar(
+            np.arange(max_len),
+            action_counts[:, action_idx],
+            bottom=bottom,
+            label=action_names.get(action_idx, f"Action {action_idx}"),
+            width=1.0 # Use width=1.0 for standard stacked bar chart look
+        )
+        bottom += action_counts[:, action_idx]
+
+    ax.set_ylabel("Proportion" if normalize else "Count")
+    ax.set_title("Action Distribution per Time Step")
+    
+    # 3. Plot trajectory survival line (on the twin axis)
+    ax_twin = ax.twinx()
+    
+    max_traj_count = np.max(traj_counts)
+    if max_traj_count > 0:
+        traj_counts_norm = traj_counts / max_traj_count
+    else:
+        traj_counts_norm = traj_counts # all zeros
+
+    line, = ax_twin.plot(
+        np.arange(max_len),
+        traj_counts_norm,
+        color="black", linestyle="--", label="# trajectories"
+    )
+
+    ax_twin.set_ylabel("Number of trajectories (Right Axis)")
+    ax_twin.set_ylim(0, max_traj_count)
+    
+    # 4. Merge Legends
+    handles1, labels1 = ax.get_legend_handles_labels()
+    # The line handle is on the twin axis
+    ax.legend(handles1 + [line], labels1 + ["# trajectories"], title="Actions", loc="upper right")
+    
+    # Remove x-axis labels/ticks since it's not the bottom plot
+    ax.tick_params(labelbottom=False)
+    ax_twin.tick_params(labelbottom=False)
+    
+    return ax, ax_twin
+
+
+# --- Helper function for the second plot ---
+def plot_cluster_distribution_per_step_helper(clusters: dict, trajectory_len: int, ax: plt.Axes, normalize=True):
+    """Plots the cluster distribution onto a given axis."""
+    
+    # 1. Data Preparation
+    cluster_ids = sorted(clusters.keys())
+    step_counts = np.zeros((trajectory_len, len(cluster_ids)), dtype=float)
+    cluster_idx_map = {cid: i for i, cid in enumerate(cluster_ids)}
+
+    for cid, seg_list in clusters.items():
+        for seg in seg_list:
+            # Assuming 'features' is indexed correctly as per original function
+            if 'features' in seg and len(seg['features']) >= 4:
+                start = int(seg["features"][-4])
+                end = int(seg["features"][-3])
+                # Increment count for each step the segment spans
+                step_counts[start:end, cluster_idx_map[cid]] += 1
+            else:
+                # Handle error or skip segment
+                pass
+
+    if normalize:
+        # Normalize per step to get proportions
+        totals = step_counts.sum(axis=1, keepdims=True)
+        totals[totals == 0] = 1
+        step_counts = step_counts / totals
+
+    # 2. Plot Stacked Bars
+    tab20_colors = plt.cm.tab20.colors
+    bottom = np.zeros(trajectory_len)
+
+    for i, cid in enumerate(cluster_ids):
+        color = tab20_colors[i % len(tab20_colors)]
+        ax.bar(np.arange(trajectory_len), step_counts[:, i], bottom=bottom, label=f"Cluster {cid}", color=color, width=1.0)
+        bottom += step_counts[:, i]
+
+    ax.set_ylabel("Proportion" if normalize else "Count")
+    ax.set_title("Cluster Distribution per Time Step")
+    # Place legend outside to not overlap with the plot
+    ax.legend(title="Clusters", bbox_to_anchor=(1.05, 1), loc='upper left')
+
+    # Remove x-axis labels/ticks since it's not the bottom plot
+    ax.tick_params(labelbottom=False)
+    
+    return ax
+
+
+# --- Helper function for the third plot ---
+def plot_trajectory_surprise_matrix_helper(surprise_matrix: np.ndarray, ax: plt.Axes):
+    """Plots a heatmap of surprise values onto a given axis."""
+    
+    # 1. Setup Heatmap
+    norm = mcolors.SymLogNorm(linthresh=10, linscale=1, vmin=-500, vmax=500)
+    cmap = plt.cm.seismic
+    cmap_with_grey = cmap.copy()
+    cmap_with_grey.set_bad(color='lightgrey')
+    
+    im = ax.imshow(surprise_matrix, cmap=cmap_with_grey, interpolation='none', aspect='auto', norm=norm)
+    
+    # 2. Set Labels and Title
+    ax.set_xlabel('Time Step') # Keep this label only on the bottom plot
+    ax.set_ylabel('Trajectory')
+    ax.set_title('Surprise Across Trajectories (SymLogNorm)')
+    
+    # 3. Add Colorbar
+    # Create an axis for the colorbar next to the main plot
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.1)
+    
+    cbar = plt.colorbar(im, cax=cax)
+    cbar.set_label('Surprise')
+    
+    return ax
+
+
+# =========================================================================
+# === The Main Concatenation Function ===
+# =========================================================================
+
+def plot_combined_trajectory_analysis(
+    trajectories: Iterable, 
+    num_actions: int, 
+    clusters: dict, 
+    trajectory_len: int, 
+    surprise_matrix: np.ndarray,
+    dpi: int = 600,
+    figsize: tuple = (10, 15)
+) -> plt.Figure:
+    """
+    Concatenates three trajectory-analysis plots vertically with a shared, aligned X-axis.
+    
+    Parameters:
+        trajectories: Data for action distribution plot.
+        num_actions: Number of discrete actions.
+        clusters: Data for cluster distribution plot.
+        trajectory_len: Maximum length of trajectories (for cluster plot x-limit).
+        surprise_matrix: 2D array for the surprise heatmap.
+        dpi: Figure DPI.
+        figsize: Figure size (width, height).
+        
+    Returns:
+        The combined matplotlib Figure object.
+    """
+    
+    # 1. Setup the figure and shared axes
+    fig, axes = plt.subplots(
+        nrows=3, ncols=1, 
+        sharex=True, # **This is the critical part for axis alignment**
+        figsize=figsize, 
+        dpi=dpi,
+        # Increase vertical space between plots to accommodate titles/labels
+        gridspec_kw={'hspace': 0.4} 
+    )
+    ax_action, ax_cluster, ax_surprise = axes
+
+    # 2. Plot Action Distribution (Top Plot)
+    plot_action_per_step_distribution_helper(
+        trajectories, num_actions, ax_action, normalize=True
+    )
+
+    # 3. Plot Cluster Distribution (Middle Plot)
+    plot_cluster_distribution_per_step_helper(
+        clusters, trajectory_len, ax_cluster, normalize=True
+    )
+    
+    # 4. Plot Surprise Matrix (Bottom Plot)
+    plot_trajectory_surprise_matrix_helper(
+        surprise_matrix, ax_surprise
+    )
+    
+    # 5. Final Polish
+    # Adjust the X-axis limits for all plots based on the longest data source
+    max_x_len = max(len(trajectory) for trajectory in trajectories)
+    ax_action.set_xlim(0, max_x_len)
+    
+    plt.tight_layout()
+    # Adjust layout to make room for legends/colorbars outside the main column
+    plt.subplots_adjust(right=0.8) 
 
     return fig

@@ -140,8 +140,6 @@ def rebuild_trajectory_from_components(
         traj.add_transition(s, a, r, s_next)
     return traj
 
-
-
 def calculate_ecdf_auc(returns: np.ndarray) -> float:
     """
     Calculate the area under the empirical cumulative distribution function (ECDF)
@@ -612,13 +610,16 @@ def policy_comparison(curr_policy:EmpiricalPolicy, prev_policy:EmpiricalPolicy, 
     per_state_js_div, mean_js_div = js_divergence_per_state(curr_policy, prev_policy, all_actions)
 
     metrics = {
-        "node_overlap": len(set(curr_policy.states) & set(prev_policy.states))/max(len(curr_policy.states), len(prev_policy.states), 1),
-        "edge_overlap": len(set(curr_policy.edges) & set(prev_policy.edges))/max(len(curr_policy.edges), len(prev_policy.edges), 1),
+        "node_overlap": len(set(curr_policy.states) & set(prev_policy.states))/max(len(curr_policy.states | prev_policy.states), 1),
+        "edge_overlap": len(set(curr_policy.edges) & set(prev_policy.edges))/max(len(curr_policy.edges | prev_policy.edges), 1),
         "js_divergence": mean_js_div,
         "added_nodes": len(set(curr_policy.states) - set(prev_policy.states)),
         "removed_nodes": len(set(prev_policy.states) - set(curr_policy.states)),
         "added_edges": len(set(curr_policy.edges) - set(prev_policy.edges)),
         "removed_edges": len(set(prev_policy.edges) - set(curr_policy.edges)),
+        "action_agreeement": sum(1 for state in curr_policy.states if 
+                                np.argmax([curr_policy.get_action_probability(state, a) for a in all_actions]) == 
+                                np.argmax([prev_policy.get_action_probability(state, a) for a in all_actions]))/max(curr_policy.num_states, 1),
     }
     return metrics, per_state_js_div
 
@@ -632,3 +633,15 @@ def get_trajectory_action_ngrams(trajectory:Trajectory, n:int)->list:
         action_ngram = tuple(transition.action for transition in trajectory[i:i+n])
         ngrams.append(action_ngram)
     return ngrams
+
+
+def get_steps_for_state(trajectories:Iterable, state:any)->list:
+    """
+    Get the list of step indices where the given state occurs in the trajectory.
+    """
+    steps = []
+    for trajectory in trajectories:
+        for i, transition in enumerate(trajectory.transitions):
+            if transition.state == state:
+                steps.append(i)
+    return steps
