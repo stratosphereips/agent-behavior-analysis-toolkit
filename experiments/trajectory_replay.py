@@ -5,6 +5,7 @@ from utils.plotting_utils   import plot_segment_cluster_features
 from utils.plotting_utils   import plot_trajectory_surprise_matrix, plot_action_per_step_distribution
 from utils.plotting_utils   import visualize_clusters, plot_quantile_fan, plot_cluster_distribution_per_step
 from utils.trajectory_utils import compute_trajectory_surprises,compute_lambda_returns, policy_comparison
+from utils.plotting_utils   import plot_combined_trajectory_analysis
 from trajectory import EmpiricalPolicy
 import os
 import wandb
@@ -90,30 +91,30 @@ def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_
     }
     
     
-    policy_comparison_metrics, js_divergence_per_state = policy_comparison(curr_policy, prev_policy, all_actions)
-    log_data["policy_comparison_metrics"] = policy_comparison_metrics
-    segments = []
-    surprises = []
-    ngrams = []
-    with ThreadPoolExecutor() as pool:
-        results = pool.map(
-            process_single_trajectory,
-            ((traj_idx, t, curr_policy, prev_policy, checkpoint_id, js_divergence_per_state) for traj_idx, t in enumerate(trajectories))
-        )
-        for segs, traj_surprises, in results:
-            segments += segs
-            surprises.append(traj_surprises)
+    # policy_comparison_metrics, js_divergence_per_state = policy_comparison(curr_policy, prev_policy, all_actions)
+    # log_data["policy_comparison_metrics"] = policy_comparison_metrics
+    # segments = []
+    # surprises = []
+    # ngrams = []
+    # with ThreadPoolExecutor() as pool:
+    #     results = pool.map(
+    #         process_single_trajectory,
+    #         ((traj_idx, t, curr_policy, prev_policy, checkpoint_id, js_divergence_per_state) for traj_idx, t in enumerate(trajectories))
+    #     )
+    #     for segs, traj_surprises, in results:
+    #         segments += segs
+    #         surprises.append(traj_surprises)
 
-    max_len = max(len(s) for s in surprises)
-    # pre-allocate matrix and fill with np.nan
-    surprise_matrix = np.full((len(surprises), max_len), np.nan)
-    # insert each surprise array into the matrix
-    for i, s in enumerate(surprises):
-        surprise_matrix[i, :len(s)] = s
-    print(f"[process_comparison] Segmentation done for checkpoint {checkpoint_id} ({len(segments)} segments)")
+    # max_len = max(len(s) for s in surprises)
+    # # pre-allocate matrix and fill with np.nan
+    # surprise_matrix = np.full((len(surprises), max_len), np.nan)
+    # # insert each surprise array into the matrix
+    # for i, s in enumerate(surprises):
+    #     surprise_matrix[i, :len(s)] = s
+    # print(f"[process_comparison] Segmentation done for checkpoint {checkpoint_id} ({len(segments)} segments)")
     figs = {}
-    action_to_id = {a: i for i, a in enumerate(curr_policy.actions)}
-    num_actions = 6
+    # action_to_id = {a: i for i, a in enumerate(curr_policy.actions)}
+    num_actions = len(all_actions) if num_actions is None else num_actions
 
     # Action distribution plot
     fig = plot_action_per_step_distribution(trajectories, num_actions, normalize=True)
@@ -123,84 +124,98 @@ def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_
     figs["Action Distribution Plot"] = buf.read()
     plt.close(fig)
 
-    # surprise heatmap
-    fig = plot_trajectory_surprise_matrix(surprise_matrix)
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png")
-    buf.seek(0)
-    figs["Segment Surprise Plot"] = buf.read()
-    plt.close(fig)
+    # # surprise heatmap
+    # fig = plot_trajectory_surprise_matrix(surprise_matrix)
+    # buf = io.BytesIO()
+    # fig.savefig(buf, format="png")
+    # buf.seek(0)
+    # figs["Segment Surprise Plot"] = buf.read()
+    # plt.close(fig)
     
-    # quantile fan plot
-    fig, ax = plot_quantile_fan(surprise_matrix, num_quantiles=9)
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png")
-    buf.seek(0)
-    figs["Quantile Fan Plot"] = buf.read()
-    plt.close(fig)
+    # # quantile fan plot
+    # fig, ax = plot_quantile_fan(surprise_matrix, num_quantiles=9)
+    # buf = io.BytesIO()
+    # fig.savefig(buf, format="png")
+    # buf.seek(0)
+    # figs["Quantile Fan Plot"] = buf.read()
+    # plt.close(fig)
 
-    # if len(ngrams) > 0:
-    #     ngram_matrix = np.zeros((num_actions, num_actions), dtype=int)
-    #     for ngram in ngrams:
-    #         for a1, a2 in ngram:
-    #             ngram_matrix[action_to_id[a1], action_to_id[a2]] += 1
-    #     print(f"[process_comparison] Action bigram matrix computed for checkpoint {checkpoint_id} done.")
-    #     fig = plot_sankey_plotly(ngram_matrix, [str(a) for a in action_to_id.keys()])
+    # # if len(ngrams) > 0:
+    # #     ngram_matrix = np.zeros((num_actions, num_actions), dtype=int)
+    # #     for ngram in ngrams:
+    # #         for a1, a2 in ngram:
+    # #             ngram_matrix[action_to_id[a1], action_to_id[a2]] += 1
+    # #     print(f"[process_comparison] Action bigram matrix computed for checkpoint {checkpoint_id} done.")
+    # #     fig = plot_sankey_plotly(ngram_matrix, [str(a) for a in action_to_id.keys()])
+    # #     buf = io.BytesIO()
+    # #     fig.write_image(buf, format="png")
+    # #     buf.seek(0)
+    # #     figs["Action Bigram Chord Plot"] = buf.read()
+    
+    
+    # if segments:
+    #     log_data['segmentation_metrics'].update({
+    #         "segments": len(segments),
+    #         "unique_segments": len({s["features"] for s in segments})
+    #     })
+
+    #     clustering = cluster_segments(segments)
+    #     print(f"[process_comparison] Clustering done for checkpoint {checkpoint_id} ({len(clustering)} clusters)")
+    #     segments_per_cluster = [len(segs) for segs in clustering.values()]
+    #     unique_segments_per_cluster = [
+    #         len({seg["features"] for seg in segs})
+    #         for segs in clustering.values()
+    #     ]
+
+    #     log_data['segmentation_metrics'].update({
+    #         "clusters": len(clustering),
+    #         "mean_segment_in_cluster": np.mean(segments_per_cluster) if segments_per_cluster else 0.0,
+    #         "mean_unique_segment_in_cluster": np.mean(unique_segments_per_cluster) if unique_segments_per_cluster else 0.0
+    #     })
+
+
+    #     fig = plot_segment_cluster_features(clustering)
     #     buf = io.BytesIO()
-    #     fig.write_image(buf, format="png")
+    #     fig.savefig(buf, format="png")
     #     buf.seek(0)
-    #     figs["Action Bigram Chord Plot"] = buf.read()
-    
-    
-    if segments:
-        log_data['segmentation_metrics'].update({
-            "segments": len(segments),
-            "unique_segments": len({s["features"] for s in segments})
-        })
+    #     figs["Cluster Feature Summary"] = buf.read()
+    #     plt.close(fig)
 
-        clustering = cluster_segments(segments)
-        print(f"[process_comparison] Clustering done for checkpoint {checkpoint_id} ({len(clustering)} clusters)")
-        segments_per_cluster = [len(segs) for segs in clustering.values()]
-        unique_segments_per_cluster = [
-            len({seg["features"] for seg in segs})
-            for segs in clustering.values()
-        ]
+    #     unique_trajectories = set(trajectories)
+    #     max_len = max(len(t) for t in unique_trajectories)
+    #     fig = visualize_clusters(clustering, max_len)
+    #     buf = io.BytesIO()
+    #     fig.savefig(buf, format="png", bbox_inches="tight")
+    #     buf.seek(0)
+    #     figs["Cluster Visualization"] = buf.read()
+    #     plt.close(fig)
 
-        log_data['segmentation_metrics'].update({
-            "clusters": len(clustering),
-            "mean_segment_in_cluster": np.mean(segments_per_cluster) if segments_per_cluster else 0.0,
-            "mean_unique_segment_in_cluster": np.mean(unique_segments_per_cluster) if unique_segments_per_cluster else 0.0
-        })
+    #     fig, ax = plot_quantile_fan(surprise_matrix, num_quantiles=9)
+    #     buf = io.BytesIO()
+    #     fig.savefig(buf, format="png")
+    #     buf.seek(0)
+    #     figs["Quantile Fan Plot"] = buf.read()
+    #     plt.close(fig)
 
+    #     fig = plot_cluster_distribution_per_step(clustering, max_len,)
+    #     buf = io.BytesIO()
+    #     fig.savefig(buf, format="png")
+    #     buf.seek(0)
+    #     figs["Cluster Distribution Plot"] = buf.read()
 
-        fig = plot_segment_cluster_features(clustering)
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png")
-        buf.seek(0)
-        figs["Cluster Feature Summary"] = buf.read()
-        plt.close(fig)
-
-        unique_trajectories = set(trajectories)
-        max_len = max(len(t) for t in unique_trajectories)
-        fig = visualize_clusters(clustering, max_len)
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png", bbox_inches="tight")
-        buf.seek(0)
-        figs["Cluster Visualization"] = buf.read()
-        plt.close(fig)
-
-        fig, ax = plot_quantile_fan(surprise_matrix, num_quantiles=9)
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png")
-        buf.seek(0)
-        figs["Quantile Fan Plot"] = buf.read()
-        plt.close(fig)
-
-        fig = plot_cluster_distribution_per_step(clustering, max_len,)
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png")
-        buf.seek(0)
-        figs["Cluster Distribution Plot"] = buf.read()
+    #     plt.close(fig)
+            # fig = plot_combined_trajectory_analysis(
+            #     trajectories,
+            #     num_actions,
+            #     clusters=clustering,
+            #     trajectory_len=max_len,
+            #     surprise_matrix=surprise_matrix
+            # )
+            # buf = io.BytesIO()
+            # fig.savefig(buf, format="png", bbox_inches="tight")
+            # buf.seek(0)
+            # figs["Combined Trajectory Analysis"] = buf.read()
+            # plt.close(fig)
     log_data["_figs"] = figs
 
     print(f"[process_comparison] Finished checkpoint comparison {checkpoint_id}")

@@ -17,9 +17,9 @@ class AIDojoTrajectoryReplay(TrajectoryReplay):
         return self.state_to_id[state]
 
     def get_action_id(self, action):
-        if action not in self.action_to_id:
-            self.action_to_id[action] = len(self.action_to_id)
-        return self.action_to_id[action]
+        if action.type not in self.action_to_id:
+            self.action_to_id[action.type] = len(self.action_to_id)
+        return self.action_to_id[action.type]
 
     def remap_trajectories(self, trajectories:dict)-> dict:
         """
