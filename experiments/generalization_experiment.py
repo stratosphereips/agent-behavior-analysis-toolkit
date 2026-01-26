@@ -16,12 +16,13 @@ def collect_src_file_paths(datadir, suffix=".jsonl"):
                 data[file] = os.path.join(root, file)
     return data
 
-def collect_trajectory_data(data:dict, max_trajectories)->dict:
+def collect_trajectory_data(data:dict, max_trajectories, action_space=None)->dict:
     """
     Collects trajectory data and builds empirical policies in parallel.
     Args:
         data (dict): Nested dictionary with structure {checkpoint: {task_key: {pre_adaptation_path, post_adaptation_path}}}
         max_trajectories (int): Maximum number of trajectories to load per policy.
+        action_space (Iterable): Optional explicit action space.
     Returns:
         dict: Nested dictionary with empirical policies added {checkpoint: {task_key: {pre_adapt_policy, post_adapt_policy}}}
     """
@@ -33,7 +34,7 @@ def collect_trajectory_data(data:dict, max_trajectories)->dict:
         paths.append((cp, data[cp]))
     with ProcessPoolExecutor() as executor:
         futures = {
-            executor.submit(build_empirical_policy_from_file, path, max_trajectories): (cp,path)
+            executor.submit(build_empirical_policy_from_file, path, max_trajectories, action_space): (cp,path)
             for (cp, path) in paths
         }
         for f in as_completed(futures):
@@ -59,7 +60,7 @@ if __name__ == "__main__":
         ActionType.ExfiltrateData
     ]
     data = collect_src_file_paths(args.data_dir, suffix=".jsonl")
-    policies = collect_trajectory_data(data, args.max_trajectories)
+    policies = collect_trajectory_data(data, args.max_trajectories, action_space=global_actions)
     
     print("Collected policies:")
     # Iterate through checkpoints and print policy statistics
