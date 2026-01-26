@@ -5,7 +5,13 @@ import copy
 import numpy as np
 
 # Transition class to represent a single transition in the trajectory
-Transition = namedtuple("Transition", ["state", "action", "reward", "next_state"])
+# Transition class to represent a single transition in the trajectory
+@dataclass(frozen=True, slots=True)
+class Transition:
+    state: Any
+    action: Any
+    reward: float
+    next_state: Any
 
 @dataclass
 class Trajectory:
@@ -138,7 +144,7 @@ class EmpiricalPolicy(Policy):
     Class representing an empirical policy based on a set of trajectories.
     The policy is defined by the most frequent action taken in each state.
     """
-    def __init__(self, trajectories: Iterable[Trajectory]):
+    def __init__(self, trajectories: Iterable[Trajectory], action_space: Iterable = None):
         # Store the trajectories and build the policy from them
         self.trajectories = []
         self._state_action_map = {}
@@ -146,6 +152,7 @@ class EmpiricalPolicy(Policy):
         self._edge_reward = {}
         self._state_incoming_reward = {}
         self._state_incoming_edge_count = {}
+        self._action_space = set(action_space) if action_space is not None else None
         self.update_policy(trajectories)
     @property
     def states(self)->Iterable:
@@ -178,6 +185,8 @@ class EmpiricalPolicy(Policy):
     
     @property
     def num_actions(self)->int:
+        if self._action_space is not None:
+            return len(self._action_space)
         actions = set()
         for action_dict in self._state_action_map.values():
             actions.update(action_dict.keys())
@@ -293,7 +302,7 @@ class EmpiricalPolicy(Policy):
             return 1.0 / self.num_actions
 
         action_counts = self._state_action_map[state]
-        total_count = sum(action_counts.get(a, 0) for a in range(self.num_actions))
+        total_count = sum(action_counts.values())
 
         # Apply Laplace smoothing
         numerator = action_counts.get(action, 0) + alpha

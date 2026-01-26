@@ -672,27 +672,29 @@ def load_trajectories(json_file, max_trajectories=None, load_metadata=True):
                                                          state_encoder=aidojo_state_str_from_dict)
     return trajectories, metadata
 
-def build_empirical_policy_from_list(trajectories:list, max_trajectories)-> tuple[EmpiricalPolicy, list]:
+def build_empirical_policy_from_list(trajectories:list, max_trajectories, action_space=None)-> tuple[EmpiricalPolicy, list]:
     """
     Builds an empirical policy from a list of trajectories.
     Args:
         trajectories (list): List of Trajectory objects.
         max_trajectories (int): Maximum number of trajectories to load.
+        action_space (Iterable): Optional explicit action space.
     Returns:
         EmpiricalPolicy: The constructed empirical policy.
         list: List of loaded trajectories.
     """
     if max_trajectories:
         trajectories = trajectories[:max_trajectories]
-    empirical_policy = EmpiricalPolicy(trajectories)
+    empirical_policy = EmpiricalPolicy(trajectories, action_space=action_space)
     return empirical_policy, trajectories
 
-def build_empirical_policy_from_file(path, max_trajectories:int)-> tuple[EmpiricalPolicy, list[Trajectory]]:
+def build_empirical_policy_from_file(path, max_trajectories:int, action_space=None)-> tuple[EmpiricalPolicy, list[Trajectory]]:
     """
     Builds an empirical policy from trajectory data stored in a JSON file.
     Args:
         path (str): Path to the JSON file containing trajectory data.
         max_trajectories (int): Maximum number of trajectories to load.
+        action_space (Iterable): Optional explicit action space.
     Returns:
         dict: Dictionary with empirical policies {pre_adapt_policy, post_adapt_policy}
         dict: Dictionary with loaded trajectories {pre_adapt_trajectories, post_adapt_trajectories}
@@ -700,7 +702,7 @@ def build_empirical_policy_from_file(path, max_trajectories:int)-> tuple[Empiric
     # load the trajectories from file
     print(f"[Trajectory processing & EP build] {path}")
     trajectories, _ = load_trajectories(path, max_trajectories=max_trajectories, load_metadata=False)
-    empirical_policy = EmpiricalPolicy(trajectories)
+    empirical_policy = EmpiricalPolicy(trajectories, action_space=action_space)
     return empirical_policy, trajectories
 
 ### Trajectory Distance Metrics ###
