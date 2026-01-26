@@ -1,7 +1,6 @@
 import pytest
 import os
 import json
-import sys
 from utils.recorder import TrajectoryRecorder
 from utils.trajectory_utils import load_trajectories_from_jsonl
 
