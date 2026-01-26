@@ -1,7 +1,6 @@
-#from AIDojoCoordinator.utils.trajectory_analysis import read_json
 import numpy as np
 import os 
-#import AIDojoCoordinator.utils.utils as utils
+#import netsecgame.utils.utils as utils
 import argparse
 import matplotlib.pyplot as plt
 import pickle

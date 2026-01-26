@@ -1,7 +1,7 @@
 import argparse
 import os
 import json
-from AIDojoCoordinator.game_components import ActionType
+from netsecgame import ActionType
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from trajectory import EmpiricalPolicy
 from utils.plotting_utils import plot_action_per_step_distribution

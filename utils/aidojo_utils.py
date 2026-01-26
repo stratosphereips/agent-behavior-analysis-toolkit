@@ -1,5 +1,5 @@
-from AIDojoCoordinator.game_components import GameState, Action,ActionType
-from AIDojoCoordinator.utils.utils import state_as_ordered_string
+from netsecgame.game_components import GameState, Action,ActionType
+from netsecgame.utils.utils import state_as_ordered_string
 from trajectory import Trajectory
 import json
 from typing import Any, Dict, Iterable

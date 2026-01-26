@@ -3,7 +3,7 @@ from utils.trajectory_utils import load_trajectories_from_json
 from trajectory import EmpiricalPolicy
 from utils.aidojo_utils import aidojo_state_str_from_dict, aidojo_action_type_from_dict
 from utils.trajectory_utils import policy_comparison, get_steps_for_state
-from AIDojoCoordinator.game_components import ActionType, GameState, IP, Network, Service, Data
+from netsecgame import ActionType, GameState, IP, Network, Service, Data
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import jensenshannon
