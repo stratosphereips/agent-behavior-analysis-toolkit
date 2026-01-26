@@ -884,8 +884,8 @@ def find_psm_mapping(policy1: EmpiricalPolicy, policy2: EmpiricalPolicy, global_
             elif is_terminal_1 or is_terminal_2:
                 cost_matrix[i, j] = 1.0
             else:
-                #cost_matrix[i, j] = compute_tvd(d1_map[u], d2_map[v], global_actions)
-                cost_matrix[i, j] = compute_js_distance(d1_map[u], d2_map[v], global_actions)
+                cost_matrix[i, j] = compute_tvd(d1_map[u], d2_map[v], global_actions)
+                #cost_matrix[i, j] = compute_js_distance(d1_map[u], d2_map[v], global_actions)
 
     # 4. Convert empirical policies to transition matrices
     def policy_to_matrix(policy, nodes, node_to_idx):

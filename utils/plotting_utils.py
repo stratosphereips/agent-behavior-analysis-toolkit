@@ -75,7 +75,7 @@ def plot_segment_cluster_features(clusters: dict) -> plt.Figure:
     return fig
 
 def plot_action_per_step_distribution(
-    trajectories: Iterable, num_actions: int, normalize=True, dpi=600
+    trajectories: Iterable, global_actions: list, normalize=True, dpi=600, title="Action Distribution per Time Step"
 ) -> plt.Figure:
     """
     Plots a stacked bar chart of the distribution of actions taken at each time step
@@ -94,17 +94,15 @@ def plot_action_per_step_distribution(
     max_len = max([len(trajectory) for trajectory in trajectories])
 
     # Action counts and trajectory survival counts
-    num_actions = 6
+    num_actions = len(global_actions)
     action_counts = np.zeros((max_len, num_actions), dtype=float)
     traj_counts = np.zeros(max_len, dtype=int)  # number of trajectories that reached step i
-
+    action_to_idx = {action: idx for idx, action in enumerate(global_actions)}
     for trajectory in trajectories:
         for i, transition in enumerate(trajectory):
             traj_counts[i] += 1
             if not isinstance(transition.action, int):
-                if transition.action.type not in action_to_idx:
-                    action_to_idx[transition.action.type] = len(action_to_idx)
-                action_idx = action_to_idx[transition.action.type]
+                action_idx = action_to_idx[transition.action]
             else:
                 action_idx = transition.action
             action_counts[i, action_idx] += 1
@@ -117,26 +115,38 @@ def plot_action_per_step_distribution(
                 where=traj_counts[:, None] > 0
             )
 
-    # Plot stacked bars
+    # Plot stacked bar chart
     fig, ax1 = plt.subplots(figsize=(10, 5), dpi=dpi)
     bottom = np.zeros(max_len)
-
-    for action_idx in range(num_actions):
-        if action_idx not in action_to_idx.values():
-            action_name = f"Action {action_idx}"
-        else:
-            action_name = list(action_to_idx.keys())[list(action_to_idx.values()).index(action_idx)]
-        ax1.bar(
-            np.arange(max_len),
-            action_counts[:, action_idx],
-            bottom=bottom,
-            label=action_name,
-        )
-        bottom += action_counts[:, action_idx]
+    for action in global_actions:
+         action_idx = action_to_idx[action]
+         if action_idx not in action_to_idx.values():
+             action_name = f"Action {action_idx}"
+         else:
+             action_name = action
+         ax1.bar(
+             np.arange(max_len),
+             action_counts[:, action_idx],
+             bottom=bottom,
+             label=action_name,
+         )
+         bottom += action_counts[:, action_idx]
+    # for action_idx in range(num_actions):
+    #     if action_idx not in action_to_idx.values():
+    #         action_name = f"Action {action_idx}"
+    #     else:
+    #         action_name = list(action_to_idx.keys())[list(action_to_idx.values()).index(action_idx)]
+    #     ax1.bar(
+    #         np.arange(max_len),
+    #         action_counts[:, action_idx],
+    #         bottom=bottom,
+    #         label=action_name,
+    #     )
+    #     bottom += action_counts[:, action_idx]
 
     ax1.set_xlabel("Time step")
     ax1.set_ylabel("Proportion" if normalize else "Count")
-    ax1.set_title("Action Distribution per Time Step")
+    ax1.set_title(title)
 
     # --- Plot trajectory survival line (only once, normalized to [0,1]) ---
     traj_counts_norm = traj_counts / np.max(traj_counts) if np.max(traj_counts) > 0 else traj_counts
