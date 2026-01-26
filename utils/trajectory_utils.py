@@ -15,6 +15,9 @@ from utils.aidojo_utils import aidojo_rebuild_trajectory, aidojo_action_type_fro
 from ruptures import costs
 from typing import Dict
 from sklearn.neighbors import NearestNeighbors
+from scipy.spatial.distance import jensenshannon
+import collections
+from scipy.optimize import linear_sum_assignment
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -58,7 +61,7 @@ def load_trajectories_from_json(
     load_metadata: bool=False,
     max_trajectories: int|None=None,
     action_encoder:Callable|None=None,
-    state_encoder:Callable|None=None) -> tuple[Iterable[Trajectory], dict]:
+    state_encoder:Callable|None=None) -> tuple[List[Trajectory], dict]:
     """
     Load a set of trajectories from a JSON file.
     """
@@ -81,7 +84,7 @@ def load_trajectories_from_jsonl(
     max_trajectories: int | None = None,
     action_encoder: Callable | None = None,
     state_encoder: Callable | None = None
-) -> tuple[Iterable["Trajectory"], dict]:
+) -> tuple[List["Trajectory"], dict]:
     """
     Load a set of trajectories from a JSONL file (one JSON object per line).
     Each line corresponds to a trajectory object.
@@ -645,3 +648,278 @@ def get_steps_for_state(trajectories:Iterable, state:any)->list:
             if transition.state == state:
                 steps.append(i)
     return steps
+
+
+
+
+#### NEW from experiments/generalization_experiment.py ####
+
+### Emprical Policy Builders ###
+
+def load_trajectories(json_file, max_trajectories=None, load_metadata=True):
+    """
+    Load trajectories from a JSON file.
+    Args:
+        json_file (str): Path to the JSON file.
+        max_trajectories (int, optional): Maximum number of trajectories to load. If None, load all.
+        load_metadata (bool): Whether to load metadata from the JSON file.
+    Returns:
+        list: List of loaded trajectories.
+        dict: Metadata dictionary if load_metadata is True, else {}.
+    """
+    trajectories, metadata = load_trajectories_from_json(json_file, load_metadata=load_metadata, max_trajectories=max_trajectories, 
+                                                         action_encoder=aidojo_action_type_from_dict,
+                                                         state_encoder=aidojo_state_str_from_dict)
+    return trajectories, metadata
+
+def build_empirical_policy_from_list(trajectories:list, max_trajectories)-> tuple[EmpiricalPolicy, list]:
+    """
+    Builds an empirical policy from a list of trajectories.
+    Args:
+        trajectories (list): List of Trajectory objects.
+        max_trajectories (int): Maximum number of trajectories to load.
+    Returns:
+        EmpiricalPolicy: The constructed empirical policy.
+        list: List of loaded trajectories.
+    """
+    if max_trajectories:
+        trajectories = trajectories[:max_trajectories]
+    empirical_policy = EmpiricalPolicy(trajectories)
+    return empirical_policy, trajectories
+
+def build_empirical_policy_from_file(path, max_trajectories:int)-> tuple[EmpiricalPolicy, list[Trajectory]]:
+    """
+    Builds an empirical policy from trajectory data stored in a JSON file.
+    Args:
+        path (str): Path to the JSON file containing trajectory data.
+        max_trajectories (int): Maximum number of trajectories to load.
+    Returns:
+        dict: Dictionary with empirical policies {pre_adapt_policy, post_adapt_policy}
+        dict: Dictionary with loaded trajectories {pre_adapt_trajectories, post_adapt_trajectories}
+    """
+    # load the trajectories from file
+    print(f"[Trajectory processing & EP build] {path}")
+    trajectories, _ = load_trajectories(path, max_trajectories=max_trajectories, load_metadata=False)
+    empirical_policy = EmpiricalPolicy(trajectories)
+    return empirical_policy, trajectories
+
+### Trajectory Distance Metrics ###
+
+def get_transition_probabilities(policy: EmpiricalPolicy):
+    """
+    Extracts P(next_state | state) for the entire graph based on empirical counts.
+    Args:
+        policy (EmpiricalPolicy): The empirical policy containing edge counts.
+    Returns: dict[state] -> list of (next_state, probability)
+    """
+    transitions = collections.defaultdict(lambda: collections.defaultdict(int))
+    state_totals = collections.defaultdict(int)
+
+    # Aggregate counts from the edge_count map
+    # structure: (state, action, next_state) -> count
+    for (s, a, next_s), count in policy._edge_count.items():
+        transitions[s][next_s] += count
+        state_totals[s] += count
+
+    # Normalize to probabilities
+    prob_map = {}
+    for s, next_states_dict in transitions.items():
+        total = state_totals[s]
+        # Create list of (next_state, prob)
+        prob_map[s] = [(ns, count / total) for ns, count in next_states_dict.items()]
+    return prob_map
+
+def compute_tvd(dist1, dist2, action_set):
+    """
+    Calculate the Total Variation Distance (TVD) between two action distributions.
+    Args:
+        dist1 (dict): The first action distribution.
+        dist2 (dict): The second action distribution.
+        action_set (set): The set of all possible actions.
+    Returns:
+        float: The TVD between the two policies in the given state.
+    """
+
+    tvd = 0.0
+    for action in action_set:
+        p1 = dist1.get(action, 0.0)
+        p2 = dist2.get(action, 0.0)
+        tvd += abs(p1 - p2)
+    tvd *= 0.5
+    return tvd
+
+def compute_js_distance(dist1, dist2, action_set):
+    """
+    Computes Jensen-Shannon DISTANCE (sqrt(JSD)) for Policy Alignment.
+    """
+    # 1. Ensure consistent order of actions (Critical!)
+    # Convert dicts to arrays, filling missing actions with 0.0
+    actions = sorted(list(action_set), key=lambda x: str(x))  # Sort by string representation for consistency
+    p1 = np.array([dist1.get(a, 0.0) for a in actions])
+    p2 = np.array([dist2.get(a, 0.0) for a in actions])
+
+    # 2. Compute Metric (Returns sqrt(JSD))
+    # 'base=2' ensures the range is [0, 1]
+    return jensenshannon(p1, p2, base=2)
+
+### Bisimulation Metric Variants ###
+def bisimulation_metric_relaxed(cost, T1, T2, gamma=0.95, eps=1e-7, max_iter=200, SAFE_MAX=1e8, verbose=False):
+    """
+    Optimized Relaxed (Hausdorff) Bisimulation Metric using vectorized NumPy operations.
+    Explicitly penalizes structural mismatches (one terminal, one non-terminal).
+    Args:
+        cost: (N1 x N2) Initial cost matrix (e.g., reward difference or TVD).
+        T1: (N1 x N1) Transition matrix for Policy 1.
+        T2: (N2 x N2) Transition matrix for Policy 2.
+        gamma: Discount factor.
+        eps: Convergence threshold.
+        max_iter: Maximum iterations.
+        SAFE_MAX: Large constant to represent "infinite" distance.
+        verbose: Whether to print iteration logs.
+    """
+    # prepare variables
+    N1, N2 = cost.shape
+    d = cost.astype(np.float64).copy()
+
+    has_child1 = np.any(T1 > 0, axis=1)
+    has_child2 = np.any(T2 > 0, axis=1)
+
+    # Masks
+    # both have children
+    active_mask = has_child1[:, None] & has_child2[None, :]
+    # one is terminal, one is not
+    mismatch_mask = has_child1[:, None] ^ has_child2[None, :]
+    # both are terminal
+    terminal_mask = ~has_child1[:, None] & ~has_child2[None, :]
+
+    # Precompute children indices
+    children1 = [np.where(T1[u] > 0)[0] for u in range(N1)]
+    children2 = [np.where(T2[v] > 0)[0] for v in range(N2)]
+
+    for it in range(max_iter):
+        d_prev = d.copy()
+
+        # --- Vectorized Hausdorff update ---
+        # Upddate: d(u, v) = c(u, v) + gamma * max( E_u[min_v d], E_v[min_u d] )
+        # Forward direction (min over children of v)
+        M1 = np.full((N1, N2), SAFE_MAX, dtype=np.float64)
+        for v, kids_v in enumerate(children2):
+            if len(kids_v) > 0:
+                # Broadcasting: take min across the children's axis
+                M1[:, v] = np.min(d[:, kids_v], axis=1)
+        future_uv = T1 @ M1
+
+        # Backward direction (min over children of u)
+        M2 = np.full((N1, N2), SAFE_MAX, dtype=np.float64)
+        for u, kids_u in enumerate(children1):
+            if len(kids_u) > 0:
+                M2[u, :] = np.min(d[kids_u, :], axis=0)
+        future_vu = M2 @ T2.T
+
+        discrepancy = np.maximum(future_uv, future_vu)
+
+        # --- Apply updates ---
+        d[active_mask] = cost[active_mask] + gamma * discrepancy[active_mask]
+        d[mismatch_mask] = SAFE_MAX
+        d[terminal_mask] = cost[terminal_mask]
+
+        # Convergence check
+        delta = np.max(np.abs(d - d_prev))
+        if verbose:
+            print(f"[Relaxed Optimized] iter {it}: delta={delta:.6e}")
+        if delta < eps:
+            break
+    return d
+
+### Empirical Policy Similarity ###
+def find_psm_mapping(policy1: EmpiricalPolicy, policy2: EmpiricalPolicy, global_actions,
+                     gamma=0.95, iterations=3, normalize_cost_matrix=False, REWARD_SCALE=100.0):
+    """
+    Find cost of matching states between two empirical policies using the policy similarity metric (PSM)[https://arxiv.org/pdf/2101.05265].
+    Args:
+        policy1 (EmpiricalPolicy): The first empirical policy.
+        policy2 (EmpiricalPolicy): The second empirical policy.
+        global_actions (set): The set of all possible actions (common across policies).
+        gamma (float): Discount factor for bisimulation metric.
+        iterations (int): Number of iterations for bisimulation refinement.
+        normalize_cost_matrix (bool): Whether to normalize the final cost matrix.
+        REWARD_SCALE (float): Scaling factor for reward differences.
+    Returns:
+        cost_matrix (np.ndarray): The final cost matrix between states of the two policies.
+        row_ind (np.ndarray): Row indices of the optimal matching.
+        col_ind (np.ndarray): Column indices of the optimal matching.
+        nodes1 (list): List of states in policy1.
+        nodes2 (list): List of states in policy2.
+        n1_idx (dict): Mapping from state to index in policy1.
+        n2_idx (dict): Mapping from state to index in policy2.
+        d1_map (dict): Action distribution map for policy1 states.
+        d2_map (dict): Action distribution map for policy2 states.
+    """
+    # Get nodes from both policies
+    nodes1 = list(policy1.states)
+    nodes2 = list(policy2.states)
+    n1_len = len(nodes1)
+    n2_len = len(nodes2)
+    n1_idx = {n: i for i, n in enumerate(nodes1)}
+    n2_idx = {n: i for i, n in enumerate(nodes2)}
+  
+    # Pre-compute action distributions for all states in both policies with smoothing (alpha=0.001)
+    d1_map = {n: policy1.get_action_distribution(n, global_actions, alpha=0.001) for n in nodes1}
+    d2_map = {n: policy2.get_action_distribution(n, global_actions, alpha=0.001) for n in nodes2}
+
+    # 3. Initialize local cost matrix
+    # Each entry cost_matrix[i,j] represents the cost of matching state nodes1[i] with nodes2[j]
+    # Initialize with reward differences and terminal state handling
+    # for terminal states, use average value difference; for non-terminal, use policy distribution distance (js distance)
+    cost_matrix = np.zeros((n1_len, n2_len), dtype=np.float64)
+    for i, u in enumerate(nodes1):
+        for j, v in enumerate(nodes2):
+            is_terminal_1 = len(policy1._state_action_map.get(u, {})) == 0
+            is_terminal_2 = len(policy2._state_action_map.get(v, {})) == 0
+
+            if is_terminal_1 and is_terminal_2:
+                r1 = policy1.get_average_value(u)
+                r2 = policy2.get_average_value(v)
+                cost_matrix[i, j] = np.tanh(abs(r1 - r2) / REWARD_SCALE)
+            elif is_terminal_1 or is_terminal_2:
+                cost_matrix[i, j] = 1.0
+            else:
+                cost_matrix[i, j] = compute_tvd(d1_map[u], d2_map[v], global_actions)
+                #cost_matrix[i, j] = compute_js_distance(d1_map[u], d2_map[v], global_actions)
+
+    # 4. Convert empirical policies to transition matrices
+    def policy_to_matrix(policy, nodes, node_to_idx):
+        n = len(nodes)
+        T = np.zeros((n, n), dtype=np.float64)
+        for i, u in enumerate(nodes):
+            transitions = policy.get_target_transitions(u, normalize=True)
+            for child, prob in transitions:
+                c_idx = node_to_idx[child] if child in node_to_idx else child
+                T[i, c_idx] = prob
+        return T
+
+    T1 = policy_to_matrix(policy1, nodes1, n1_idx)
+    T2 = policy_to_matrix(policy2, nodes2, n2_idx)
+
+
+    cost_matrix = bisimulation_metric_relaxed(
+        cost=cost_matrix,
+        T1=T1,
+        T2=T2,
+        gamma=gamma,
+        eps=1e-7,
+        max_iter=iterations,
+        verbose=True
+    )
+    
+    # Normalize (optional)
+    if normalize_cost_matrix:
+        scaling_factor = 1.0 / (1.0 - gamma)
+        cost_matrix = cost_matrix / scaling_factor
+
+    # 6. Hungarian Algorithm for optimal node matching
+    print("Finding Optimal Node Matching using Hungarian Algorithm...")
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    print(f"Matched {len(row_ind)} states.")
+
+    return cost_matrix, row_ind, col_ind, nodes1, nodes2, n1_idx, n2_idx, d1_map, d2_map    

@@ -321,7 +321,7 @@ class EmpiricalPolicy(Policy):
     #     action_probs = {action: self.get_action_probability(state, action, alpha) for action in self._state_action_map[state].keys()}
     #     return max(action_probs, key=action_probs.get)
     
-    def get_action_distribution(self, state: Any, all_actions, alpha=0.001) -> dict:
+    def get_action_distribution(self, state: Any, all_actions, alpha=0.001) -> dict[Any, float]:
         """
         Get the action distribution for a given state.
         Parameters:
