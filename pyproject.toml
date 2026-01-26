@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent_trajectory_analysis"
+version = "0.1.0"
+description = "Toolkit for analyzing agent trajectories in RL environments"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Ondrej Lukas", email = "ondrej.lukas@aic.fel.cvut.cz"}
+]
+dependencies = [
+    "numpy",
+    "matplotlib",
+    "pandas",
+    "scipy",
+    "scikit-learn",
+    "tensorflow",
+    "gymnasium",
+    "networkx",
+    "ruptures",
+    "wandb",
+    "jsonlines>=4.0.0",
+    "netsecgame",  # Assuming this is available in the user's index or enviroment
+    "pillow",      # For PIL import
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
+exclude = ["tests", "experiments"]
