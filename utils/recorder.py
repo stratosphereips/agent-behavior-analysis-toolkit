@@ -15,6 +15,8 @@ class CustomJSONEncoder(json.JSONEncoder):
             return float(obj)
         elif isinstance(obj, np.ndarray):
             return obj.tolist()
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
         return super().default(obj)
 
 class TrajectoryRecorder:
@@ -77,7 +79,7 @@ class TrajectoryRecorder:
             save (bool): If True, saves the trajectory to file.
         """
         if self.current_trajectory is None:
-            return # warning?
+            return Warning("Called end_trajectory before start_trajectory")
 
         if save and self.auto_flush:
             self._save_trajectory()
