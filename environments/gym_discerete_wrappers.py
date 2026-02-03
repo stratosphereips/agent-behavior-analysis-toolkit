@@ -7,12 +7,19 @@ class DiscreteCartPoleWrapper(DiscretizationWrapper):
     Wrapper for Gym Cartpole enviroment which converts the continous observation space to discrete state.
     """
     def __init__(self, env, bins=8):
-        super().__init__(env, [
-            np.linspace(-2.4, 2.4, num=bins + 1)[1:-1], # cart position
-            np.linspace(-3, 3, num=bins + 1)[1:-1],     # cart velocity
-            np.linspace(-0.2, 0.2, num=bins + 1)[1:-1], # pole angle
-            np.linspace(-2, 2, num=bins + 1)[1:-1],     # pole angle velocity
-        ])
+        if isinstance(bins, list):
+            assert len(bins) == 4, "bins must be a list of 4 integers"
+            b = bins
+        else:
+            b = [bins] * 4
+            
+        bin_edges = [
+            np.linspace(-2.4, 2.4, num=b[0] + 1)[1:-1], # cart position
+            np.linspace(-3, 3, num=b[1] + 1)[1:-1],     # cart velocity
+            np.linspace(-0.2, 0.2, num=b[2] + 1)[1:-1], # pole angle
+            np.linspace(-2, 2, num=b[3] + 1)[1:-1],     # pole angle velocity
+        ]
+        super().__init__(env, bin_edges)
 
 class DiscreteMountainCarWrapper(DiscretizationWrapper):
     def __init__(self, env, bins=None, tiles=None):
