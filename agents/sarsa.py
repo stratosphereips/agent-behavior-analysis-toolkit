@@ -1,130 +1,153 @@
 import numpy as np
 from .base_agent import Agent
-import math
 
-def epsilon_greedy(Q, state, epsilon, action_space):
-    """Select an action using the epsilon-greedy strategy."""
-    if np.random.rand() < epsilon:
-        return np.random.choice(action_space)
-    return np.argmax(Q[state])
-
-def exponential_epsilon_decay(episode, initial_epsilon, min_epsilon, decay_rate):
-    """Calculates epsilon using exponential decay based on episode number."""
-    return max(min_epsilon, initial_epsilon * math.exp(-decay_rate * episode))
-
-class Sarsa(Agent):
-
-    def __init__(self,obs_space_size, acion_space_size, alpha=0.1, gamma=0.99, epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.995, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.Q = np.zeros((obs_space_size, acion_space_size))
-            self.alpha = alpha
-            self.gamma = gamma
-            self.epsilon = epsilon
-            self.epsilon_min = epsilon_min
-            self.epsilon_decay = epsilon_decay
-            self.action_space_size = acion_space_size
-    
-    def step(self, state, training=False):
-        if training:
-            return epsilon_greedy(self.Q, state, self.epsilon, self.action_space_size)
+class SarsaAgent(Agent):
+    def _initialize_agent(self):
+        env = self.params["env"]
+        
+        # Check for discrete observation space
+        if hasattr(env.observation_space, 'n'):
+             self.obs_dim = env.observation_space.n
+             self.is_discrete_obs = True
         else:
-            return epsilon_greedy(self.Q, state, 0,self.action_space_size)
+             # Just take the first dimension if shape is present, 
+             # though tabular SARSA won't work well without discretization.
+             self.obs_dim = env.observation_space.shape[0]
+             self.is_discrete_obs = False
+
+        if not self.is_discrete_obs:
+            raise NotImplementedError("Tabular Sarsa only supports discrete observation spaces.")
+
+        # Check for discrete action space
+        if hasattr(env.action_space, 'n'):
+            self.act_dim = env.action_space.n
+        else:
+            raise NotImplementedError("Sarsa currently only supports discrete action spaces.")
+
+        # Hyperparameters
+        self.alpha = self.params.get("alpha", 0.1)
+        self.gamma = self.params.get("gamma", 0.99)
+        self.epsilon = self.params.get("epsilon", 1.0)
+        self.epsilon_min = self.params.get("epsilon_min", 0.01)
+        self.epsilon_decay = self.params.get("epsilon_decay", 0.995)
+        
+        # Initialize Q-table
+        self.Q = np.zeros((self.obs_dim, self.act_dim))
+
+    def step(self, state, training=False):
+        # Handle state extraction
+        state_idx = self._get_state_idx(state)
+
+        if training:
+            if np.random.rand() < self.epsilon:
+                return np.random.randint(self.act_dim)
+        
+        # Greedy action (argmax)
+        # Random tie-breaking for better exploration behavior in initial stages
+        qs = self.Q[state_idx]
+        max_q = np.max(qs)
+        actions_with_max_q = np.where(qs == max_q)[0]
+        return int(np.random.choice(actions_with_max_q))
+
+    def _get_state_idx(self, state):
+        if isinstance(state, np.ndarray):
+            if state.size == 1:
+                return int(state.item())
+            if state.ndim > 0:
+                 return int(state[0])
+        return int(state)
 
     def train_policy(self, env, num_episodes, evaluate_each=None, evaluate_for=None):
-        eval_results = []  # Store evaluation results
-        for episode in range(1, num_episodes + 1):
+        total_steps = 0
+        rewards_history = []
+        
+        for ep in range(num_episodes):
             state, _ = env.reset()
-            action = epsilon_greedy(self.Q, state, self.epsilon, self.action_space_size)
+            state_idx = self._get_state_idx(state)
+            
+            # Select action a
+            action = self.step(state_idx, training=True)
+            
             done = False
-
+            ep_reward = 0
+            
             while not done:
                 next_state, reward, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
+                next_state_idx = self._get_state_idx(next_state)
                 
-                next_action = epsilon_greedy(self.Q, next_state, self.epsilon, env.action_space.n) if not done else None
-                
-                # SARSA update rule
+                # Select action a'
                 if not done:
-                    self.Q[state, action] += self.alpha * (reward + self.gamma * self.Q[next_state, next_action] - self.Q[state, action])
+                    next_action = self.step(next_state_idx, training=True)
+                    # SARSA update
+                    target = reward + self.gamma * self.Q[next_state_idx, next_action]
+                    self.Q[state_idx, action] += self.alpha * (target - self.Q[state_idx, action])
+                    
+                    state_idx = next_state_idx
+                    action = next_action
                 else:
-                    self.Q[state, action] += self.alpha * (reward - self.Q[state, action])  # Terminal update
-
-                state, action = next_state, next_action  # Move to the next step
+                    # Terminal update
+                    self.Q[state_idx, action] += self.alpha * (reward - self.Q[state_idx, action])
+                
+                ep_reward += reward
+                total_steps += 1
             
-            # Decay epsilon (gradually reduce exploration)
-            self.epsilon = exponential_epsilon_decay(episode, 1.0, self.epsilon_min, self.epsilon_decay)
-
-            # Periodic evaluation
-            if evaluate_each:
-                if episode % evaluate_each == 0:
-                    returns,_ = self.evaluate_policy(env, evaluate_for)
-                    mean_ret =  np.mean(returns)
-                    eval_results.append((episode, mean_ret))
-                    print(f"Episode {episode}: Mean return = {mean_ret:.2f}")
-        return eval_results
-
-
-
-
-# def evaluate_policy(env, Q, num_episodes=2000, trajectory_graph=None):
-#     """Evaluate the learned policy."""
-#     success = 0
-#     returns = []
-#     trajectories = []
-#     for _ in range(num_episodes):
-#         state, _ = env.reset()
-#         done = False
-#         ret = 0
-#         t = []
-#         while not done:
-#             if np.all(Q[state] == 0):  # If untrained, pick a random action
-#                 action = np.random.choice(env.action_space.n)
-#             else:
-#                 action = np.argmax(Q[state])
-#             next_state, reward, terminated, truncated, _ = env.step(action)
-#             t.append((state, action, reward, next_state))
-#             done = terminated or truncated
+            # Epsilon decay
+            if self.epsilon > self.epsilon_min:
+                self.epsilon *= self.epsilon_decay
+                
+            rewards_history.append(ep_reward)
             
-#             ret += reward
-#             if done and reward > 0:
-#                 success += 1
-#             state = next_state
-#         trajectories.append(t)
-#         returns.append(ret)
-#     print(f"Mean return:{np.mean(returns)} +- {np.std(returns)}")
-#     if trajectory_graph:
-#         trajectory_graph.add_checkpoint(trajectories)
-#     return success / num_episodes
+            # Logging
+            if (ep+1) % 10 == 0:
+                 print(f"Episode {ep+1}/{num_episodes}, Steps: {total_steps}, Reward: {ep_reward:.2f}, Epsilon: {self.epsilon:.3f}")
 
-# # def sarsa(env, num_episodes=1000, alpha=0.1, gamma=0.99, epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.995, eval_each=500):
-#     """SARSA algorithm with periodic evaluation."""
-#     Q = np.zeros((env.observation_space.n, env.action_space.n))  # Initialize Q-table
-#     eval_results = []  # Store evaluation results
-#     for episode in range(1, num_episodes + 1):
-#         state, _ = env.reset()
-#         action = epsilon_greedy(Q, state, epsilon, env.action_space.n)
-#         done = False
+            # Evaluation
+            if evaluate_each and (ep + 1) % evaluate_each == 0:
+                 print(f"Evaluation after episode {ep+1}...")
+                 eval_returns = []
+                 recorder = None
+                 
+                 if self.store_trajectories:
+                    if not hasattr(self, "log_path_args"):
+                         # Attempt to construct log path args from params['args'] if available
+                         args = self.params.get("args", {})
+                         self.log_path_args = "_".join(f"{k}={v}" for k, v in sorted(args.items()))
+                    
+                    foldername = f"trajectories/sarsa_{self.log_path_args}"
+                    import os
+                    os.makedirs(foldername, exist_ok=True)
+                    log_path = os.path.join(foldername, f"cp_{ep+1}.jsonl")
+                    print(f"Recording evaluation trajectories to {log_path}")
+                    from utils.recorder import TrajectoryRecorder
+                    recorder = TrajectoryRecorder(
+                        log_path=log_path,
+                        state_encoder=self.trajectory_json_encoder,
+                        action_encoder=self.trajectory_json_encoder
+                    )
 
-#         while not done:
-#             next_state, reward, terminated, truncated, _ = env.step(action)
-#             done = terminated or truncated
-            
-#             next_action = epsilon_greedy(Q, next_state, epsilon, env.action_space.n) if not done else None
-            
-#             # SARSA update rule
-#             if not done:
-#                 Q[state, action] += alpha * (reward + gamma * Q[next_state, next_action] - Q[state, action])
-#             else:
-#                 Q[state, action] += alpha * (reward - Q[state, action])  # Terminal update
+                 for _ in range(evaluate_for):
+                     s, _ = env.reset()
+                     if recorder:
+                         recorder.start_trajectory(metadata={"agent": "sarsa", "checkpoint": ep+1})
+                     
+                     d = False
+                     ret = 0
+                     while not d:
+                         a = self.step(s, training=False)
+                         ns, r, term, trunc, _ = env.step(a)
+                         
+                         if recorder:
+                             recorder.add_transition(s, a, r, ns)
+                             
+                         s = ns
+                         ret += r
+                         d = term or trunc
+                     
+                     if recorder:
+                         recorder.end_trajectory()
+                     eval_returns.append(ret)
+                 
+                 print(f"Evaluation mean return = {np.mean(eval_returns):.2f}")
 
-#             state, action = next_state, next_action  # Move to the next step
-#         # Decay epsilon (gradually reduce exploration)
-#         epsilon = max(epsilon_min, epsilon * epsilon_decay)
-
-#         # Periodic evaluation
-#         if episode % eval_each == 0:
-#             success_rate = evaluate_policy(env, Q)
-#             eval_results.append((episode, success_rate))
-#             print(f"Episode {episode}: Success rate = {success_rate:.2f}")
-
-#     return Q, eval_results  # Return learned Q-values and evaluation results
+        return rewards_history
