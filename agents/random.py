@@ -53,7 +53,7 @@ class RandomAgent(Agent):
                     
                     foldername = f"trajectories/random_{self.log_path_args}"
                     os.makedirs(foldername, exist_ok=True)
-                    log_path = os.path.join(foldername, f"cp_{ep+1}.jsonl")
+                    log_path = os.path.join(foldername, f"cp_{ep+1:04d}.jsonl")
                     print(f"Recording evaluation trajectories to {log_path}")
                     from utils.recorder import TrajectoryRecorder
                     recorder = TrajectoryRecorder(

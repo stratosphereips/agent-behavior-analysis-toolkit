@@ -233,7 +233,7 @@ class PPOAgent(Agent):
                     foldername = f"trajectories/ppo_{self.log_path_args}"
                     import os
                     os.makedirs(foldername, exist_ok=True)
-                    log_path = os.path.join(foldername, f"cp_{episodes_completed}.jsonl")
+                    log_path = os.path.join(foldername, f"cp_{episodes_completed:04d}.jsonl")
                     print(f"Recording evaluation trajectories to {log_path}")
                     from utils.recorder import TrajectoryRecorder
                     recorder = TrajectoryRecorder(
