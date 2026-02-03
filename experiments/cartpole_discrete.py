@@ -3,6 +3,8 @@ from agents.random import RandomAgent
 from agents.ppo import PPOAgent
 from agents.dqn import DQNAgent
 from agents.sarsa import SarsaAgent
+from agents.q_learning import QLearningAgent
+
 import gymnasium as gym
 import argparse
 import numpy as np
@@ -14,7 +16,16 @@ if __name__ == "__main__":
     parser.add_argument("--episodes", default=1000, type=int, help="Number of training episodes")
     parser.add_argument("--evaluate_each", default=500, type=int, help="Periodic evluation frequency")
     parser.add_argument("--evaluate_for", default=500, type=int, help="Periodic evluation length")
-    parser.add_argument("--model", default="random", type=str, choices=["random", "ppo", "dqn", "sarsa"], help="Agent model type")
+    parser.add_argument("--model", default="random", type=str, choices=["random", "ppo", "dqn", "sarsa", "q_learning"], help="Agent model type")
+    
+    # Hyperparameters (Optional overrides)
+    parser.add_argument("--alpha", type=float, help="Learning rate (tabular)")
+    parser.add_argument("--lr", type=float, help="Learning rate (NN)")
+    parser.add_argument("--gamma", type=float, help="Discount factor")
+    parser.add_argument("--epsilon", type=float, help="Epsilon (exploration)")
+    parser.add_argument("--epsilon_min", type=float, help="Minimum epsilon")
+    parser.add_argument("--epsilon_decay", type=float, help="Epsilon decay rate/factor")
+    
     args = parser.parse_args()
 
     custom_win_fn = lambda trajectory: len(trajectory) > 450
@@ -47,8 +58,16 @@ if __name__ == "__main__":
             "gamma": 0.99,
             "epsilon": 1.0,
             "epsilon_min": 0.01,
-            "epsilon_decay": 0.9995 # Tabular often needs slower decay
+            "epsilon_decay": 0.9995 
         },
+        "q_learning": {
+             "alpha": 0.1,
+             "gamma": 0.99,
+             "epsilon": 1.0,
+             "epsilon_min": 0.01,
+             "epsilon_decay": 0.9995 # Tabular often needs slower decay
+        },
+
         "random": {}
     }
 
@@ -61,10 +80,8 @@ if __name__ == "__main__":
         "model": args.model,
     })
     
-    # Override with any CLI arguments that were explicitly set (if we had specific CLI args for them)
-    # But currently args only has global params. We'll just update with all args for now
-    # to keep 'episodes', 'seed', etc. available in the config
-    experiment_config.update(vars(args))
+    # Override with any CLI arguments that were explicitly set (not None)
+    experiment_config.update({k: v for k, v in vars(args).items() if v is not None})
     print(experiment_config)
     
     # basic env
@@ -80,6 +97,9 @@ if __name__ == "__main__":
         agent = DQNAgent(env=discretized_env, store_trajectories=True, args=experiment_config)
     elif args.model == "sarsa":
         agent = SarsaAgent(env=discretized_env, store_trajectories=True, args=experiment_config)
+    elif args.model == "q_learning":
+        agent = QLearningAgent(env=discretized_env, store_trajectories=True, args=experiment_config)
+
         
     eval_results = agent.train_policy(discretized_env, num_episodes=experiment_config["episodes"], evaluate_each=experiment_config["evaluate_each"], evaluate_for=experiment_config["evaluate_for"])
     print(eval_results)
