@@ -1,7 +1,10 @@
 import numpy as np
-from typing import Iterable, Dict
+from typing import Iterable, Dict, Any, List
 import scipy.special
+from scipy.spatial.distance import jensenshannon
+from scipy.stats import entropy
 from trajectory import EmpiricalPolicy, Trajectory, Transition
+import networkx as nx
 
 def laplace_smoothing(counts: np.ndarray, alpha: float) -> np.ndarray:
     """
@@ -28,29 +31,6 @@ def state_kl_divergence(counts1: Dict, counts2: Dict, global_keys: Iterable, alp
     kl_div_per_key = scipy.special.kl_div(p_probs, q_probs)
     return np.sum(kl_div_per_key)
 
-# def state_js_divergence(counts1: Dict, counts2: Dict, global_keys: Iterable, alpha=1.0) -> float:
-#     """
-#     Compute the JS divergence between two distributions of key frequencies.
-#     Args:
-#         counts1: counts for the first distribution
-#         counts2: counts for the second distribution
-#         global_keys: global key space
-#         alpha: smoothing parameter
-#     Returns:
-#         js_div: JS divergence between the two distributions
-#     """
-#     vec_1 = np.array([counts1.get(key, 0) for key in global_keys])
-#     vec_2 = np.array([counts2.get(key, 0) for key in global_keys])
-    
-#     p = laplace_smoothing(vec_1, alpha)
-#     q = laplace_smoothing(vec_2, alpha)
-#     m = 0.5 * (p + q)
-    
-#     kl_pm = np.sum(scipy.special.kl_div(p, m))
-#     kl_qm = np.sum(scipy.special.kl_div(q, m))
-    
-#     return 0.5 * kl_pm + 0.5 * kl_qm
-
 def topological_shift(current_state_visitation: Dict, previous_state_visitation: Dict, noise_value: float=0.0) -> float:
     """
     Compute the topological shift between two policies represented as JS divergence between their state visitation distributions.
@@ -67,34 +47,6 @@ def topological_shift(current_state_visitation: Dict, previous_state_visitation:
     js_div = state_js_divergence(current_state_visitation, previous_state_visitation, all_states)
     topo_shift = max(0, js_div-noise_value)    
     return topo_shift
-
-# def strategic_shift(current_policy: EmpiricalPolicy, previous_policy: EmpiricalPolicy, global_actions: Iterable, noise_value: float=0.0) -> float:
-#     """
-#     Compute the strategic shift between two policies represented as weighted KL divergence
-#     between their action distributions in shared states. The noise_value is subtracted from the weighted KL divergence
-#     to account for noise in the action distributions.
-#     Args:
-#         current_policy: current policy
-#         previous_policy: previous policy
-#         global_actions: global action space
-#         noise_value: noise value to subtract from the weighted KL divergence
-#     Returns:
-#         strategic_shift: strategic shift between the two policies
-#     """
-#     shared_states = set(current_policy._state_visitation_count.keys()).intersection(set(previous_policy._state_visitation_count.keys()))
-#     weighted_kl_div = 0
-#     total_state_visitation = sum(current_policy._state_visitation_count.values())
-#     state_visitation_prob = {state: current_policy._state_visitation_count[state]/total_state_visitation for state in shared_states}
-#     for state in shared_states:
-#         # compute the KL divergence between the two policies at the current state
-#         state_kl_div = state_kl_divergence(current_policy._state_action_map[state], previous_policy._state_action_map[state], global_actions)
-#         # weight the KL divergence by the state visitation frequency
-#         weighted_kl_div += state_kl_div * state_visitation_prob[state]
-#     strategic_shift = max(0, weighted_kl_div-noise_value)
-#     return strategic_shift
-
-
-from scipy.spatial.distance import jensenshannon
 
 def state_js_divergence(counts1: Dict, counts2: Dict, global_keys: Iterable, alpha=1.0) -> float:
     """
@@ -164,3 +116,97 @@ def strategic_shift(current_policy, previous_policy, global_actions, noise_value
     
     # 4. Apply Noise Threshold
     return max(0.0, raw_strat_shift - noise_value)
+
+def traversal_depth(trajectories: List[Trajectory]) -> float:
+    """
+    Computes the traversal depth of a policy given a set of trajectories.
+    Args:
+        trajectories: List of trajectories
+    Returns:
+        traversal_depth: Traversal depth of the policy
+    """
+    if len(trajectories) == 0:
+        return 0.0
+    
+    # compute state visitation distribution of the trajectories
+    graph = nx.DiGraph()
+    start_nodes = set()
+    for trajectory in trajectories:
+        start_nodes.add(trajectory.states[0])
+        for transition in trajectory.transitions:
+            graph.add_edge(transition.state, transition.next_state, weight=1.0)
+    root_id = "VIRTUAL_ROOT"
+    graph.add_node(root_id)
+    for start_node in start_nodes:
+        graph.add_edge(root_id, start_node, weight=0)
+    try:
+        lengths = nx.single_source_dijkstra_path_length(graph, root_id, weight='weight')
+        # Exclude the root (dist=0)
+        depths = [d for n, d in lengths.items() if n != root_id]
+        
+        # Return max depth
+        return max(depths) if depths else 0.0
+
+    except nx.NetworkXNoPath:
+        return 0.0 
+    
+def compute_entropy_metrics(state_counts, action_counts, action_space_size):
+    """
+    Computes Spatial Focus (H_S) and Strategic Confidence (H_pi) from count dictionaries.
+
+    Args:
+        state_counts: Dict {state_id: count}
+        action_counts: Dict {state_id: {action_id: count}}
+        action_space_size: Int (Total number of possible actions, e.g., 2 or 4)
+
+    Returns:
+        H_S (float): Spatial Entropy (Spread)
+        H_pi (float): Weighted Action Entropy (Uncertainty)
+    """
+    total_visits = sum(state_counts.values())
+    if total_visits == 0:
+        return 0.0, 0.0
+
+    # --- Metric 1: Spatial Focus (H_S) ---
+    # P(s) = count(s) / total_steps
+    p_s_values = np.array(list(state_counts.values())) / total_visits
+    h_s_bits = entropy(p_s_values, base=2)
+    exploration_volume = 2 ** h_s_bits
+    # --- Metric 2: Strategic Confidence (H_pi) ---
+    weighted_h_pi = 0.0
+
+    for state, count in state_counts.items():
+        p_s = count / total_visits
+        
+        # Get action counts for this specific state (default to empty if missing)
+        s_actions = action_counts.get(state, {})
+        
+        # Build vector [count_a0, count_a1, ...]
+        # We assume action_ids are integers 0..N-1
+        counts_vec = np.zeros(action_space_size)
+        for act_id, act_count in s_actions.items():
+            if 0 <= act_id < action_space_size:
+                counts_vec[act_id] = act_count
+        
+        # Laplace Smoothing (Alpha=1)
+        # Prevents "0 probability" errors for unvisited actions
+        counts_vec += 1.0 
+        
+        # Normalize to get Policy distribution \pi(a|s)
+        pi_s = counts_vec / np.sum(counts_vec)
+        
+        # Calculate entropy of the policy at this state
+        h_pi_s = entropy(pi_s, base=2)
+        
+        # Add to weighted sum
+        weighted_h_pi += p_s * h_pi_s
+    
+    # Normalize H_pi to [0, 1]
+    max_entropy = np.log2(action_space_size)
+    if max_entropy == 0:
+        strategic_confidence = 1.0
+    else:
+        normalized_h_pi = weighted_h_pi / max_entropy
+        strategic_confidence = 1.0 - normalized_h_pi
+
+    return exploration_volume, strategic_confidence
