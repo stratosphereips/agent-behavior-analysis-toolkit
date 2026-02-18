@@ -9,6 +9,8 @@ import gymnasium as gym
 import argparse
 import numpy as np
 import wandb
+import random
+import tensorflow as tf
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -30,7 +32,9 @@ if __name__ == "__main__":
 
     custom_win_fn = lambda trajectory: len(trajectory) > 450
     # Fix random seed
+    random.seed(args.seed)
     np.random.seed(args.seed)
+    tf.random.set_seed(args.seed)
     # Agent-specific configurations
     AGENT_CONFIGS = {
         "ppo": {
@@ -86,6 +90,8 @@ if __name__ == "__main__":
     
     # basic env
     env = gym.make("CartPole-v1")
+    env.action_space.seed(args.seed)
+    env.reset(seed=args.seed)
     # Add Discretization Layer
     discretized_env = DiscreteCartPoleWrapper(env, bins=[1, 4, 6, 4])
     

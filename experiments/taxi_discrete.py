@@ -2,6 +2,7 @@ import gymnasium as gym
 import argparse
 import numpy as np
 import os
+import random
 
 # Configure Tensorflow to use memory growth to allow multiple concurrent runs
 # This must be done before any TF operations (and ideally before heavy imports if they init TF)
@@ -31,7 +32,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Fix random seed
+    # Fix random seed
+    random.seed(args.seed)
     np.random.seed(args.seed)
+    tf.random.set_seed(args.seed)
     experiment_config = {
         "env": "Taxi-v3",
         "model": args.model,
@@ -52,7 +56,10 @@ if __name__ == "__main__":
     print(experiment_config)
     
     # basic env
+    # basic env
     env = gym.make("Taxi-v3")
+    env.action_space.seed(args.seed)
+    env.reset(seed=args.seed)
     
     # Instantiate agent
     if args.model == "random":

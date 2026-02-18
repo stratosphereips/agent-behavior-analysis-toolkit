@@ -2,6 +2,7 @@ import gymnasium as gym
 import argparse
 import numpy as np
 import os
+import random
 
 # Configure Tensorflow to use memory growth to allow multiple concurrent runs
 import tensorflow as tf
@@ -32,7 +33,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Fix random seed
+    random.seed(args.seed)
     np.random.seed(args.seed)
+    tf.random.set_seed(args.seed)
     experiment_config = {
         "env": "FrozenLake-v1-8x8-slippery", # Custom name for logging
         "model": args.model,
@@ -40,7 +43,7 @@ if __name__ == "__main__":
         "alpha": args.alpha, # Q-learning/Sarsa alpha
         "epsilon": 1.0,
         "epsilon_min": args.min_epsilon,
-        "epsilon_decay": args.epsilon_decay,``
+        "epsilon_decay": args.epsilon_decay,
         # Hyperparams for PPO/DQN
         "lr": 3e-4, 
         "clip_ratio": 0.2,
@@ -54,7 +57,15 @@ if __name__ == "__main__":
     
     # basic env
     # FrozenLake-hard usually implies 8x8 map and slippery
+
+    # FrozenLake-hard usually implies 8x8 map and slippery
     env = gym.make("FrozenLake-v1", desc=None, map_name="8x8", is_slippery=True)
+    env.action_space.seed(args.seed)
+    # Resetting with seed ensures the environment's RNG is initialized. 
+    # Subsequent resets during training (done by agent) will use this RNG state 
+    # but produce different initial states if the env is stochastic or has random starts.
+    # Note: FrozenLake v1 8x8 is always the same map start, but transitions are stochastic.
+    env.reset(seed=args.seed)
     
     # Instantiate agent
     if args.model == "random":

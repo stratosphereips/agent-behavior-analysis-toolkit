@@ -2,6 +2,7 @@ import gymnasium as gym
 import argparse
 import numpy as np
 import os
+import random
 import minigrid # Register MiniGrid envs
 from environments.gym_discerete_wrappers import DiscreteMiniGridWrapper
 
@@ -31,7 +32,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Fix random seed
+    # Fix random seed
+    random.seed(args.seed)
     np.random.seed(args.seed)
+    tf.random.set_seed(args.seed)
     experiment_config = {
         "env": "MiniGrid-FourRooms-v0",
         "model": args.model,
@@ -54,6 +58,8 @@ if __name__ == "__main__":
     # Create env and wrap it
     env = gym.make("MiniGrid-FourRooms-v0")
     env = DiscreteMiniGridWrapper(env)
+    env.action_space.seed(args.seed)
+    env.reset(seed=args.seed)
     
     print(f"Observation Space: {env.observation_space}")
     print(f"Action Space: {env.action_space}")

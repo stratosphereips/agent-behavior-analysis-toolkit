@@ -7,6 +7,8 @@ import gymnasium as gym
 import argparse
 import numpy as np
 import wandb
+import random
+import tensorflow as tf
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -16,7 +18,9 @@ if __name__ == "__main__":
     parser.add_argument("--evaluate_for", default=500, type=int, help="Periodic evluation length")
     args = parser.parse_args()
     # Fix random seed
+    random.seed(args.seed)
     np.random.seed(args.seed)
+    tf.random.set_seed(args.seed)
     experiment_config = {
         "env": "Blackjack-v1",
         "model": "Q-learning",
@@ -35,6 +39,8 @@ if __name__ == "__main__":
     env = gym.make('Blackjack-v1', natural=False, sab=False)
     # add fixed seed
     env = CustomEnv(env, seed=args.seed)
+    env.action_space.seed(args.seed)
+    env.reset(seed=args.seed)
     discretized_env = DiscreteBlackJackWrapper(env)
     # add Trajectory recording layer
     discretized_env = TrajectoryRecorderWrapper(discretized_env)
