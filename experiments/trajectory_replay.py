@@ -65,7 +65,7 @@ def process_single_trajectory(args):
     )
     return segs, surprises
 
-def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_policy, all_actions:set, num_actions=None):
+def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_policy, all_actions:set, num_actions:int=None):
     """
     Process comparison between two empirical policies and segment trajectories.
     Args:
@@ -139,6 +139,32 @@ def process_comparison(checkpoint_id, trajectories, metadata, prev_policy, curr_
     # buf.seek(0)
     # figs["Quantile Fan Plot"] = buf.read()
     # plt.close(fig)
+
+    # -----------------------------
+    # NEW: Normalized Surprise Plot
+    # -----------------------------
+    # We want to plot the mean and std dev of the "normalized surprise" across all trajectories in this checkpoint.
+    # We first need to compute it.
+    
+    # 1. Compute per-state JS-divergence (normalization factor)
+    js_div_per_state, mean_js = js_divergence_per_state(curr_policy, prev_policy, all_actions)
+    
+    # 2. Compute surprises for all trajectories
+    all_surprises = []
+    for t in trajectories:
+        # compute_trajectory_surprises returns a list of surprises for each step
+        surprises = compute_trajectory_surprises(t, curr_policy, prev_policy, js_div_per_state)
+        all_surprises.extend(surprises)
+    
+    if all_surprises:
+        mean_surprise = np.mean(all_surprises)
+        std_surprise = np.std(all_surprises)
+        log_data["mean_action_surprise"] = mean_surprise
+        log_data["std_action_surprise"] = std_surprise
+        print(f"[process_comparison] Checkpoint {checkpoint_id}: Mean Surprise = {mean_surprise:.4f}, Std = {std_surprise:.4f}")
+    else:
+        log_data["mean_action_surprise"] = 0.0
+        log_data["std_action_surprise"] = 0.0
 
     # # if len(ngrams) > 0:
     # #     ngram_matrix = np.zeros((num_actions, num_actions), dtype=int)
@@ -227,6 +253,7 @@ class TrajectoryReplay:
     """
 
     def __init__(self, trajectory_dir, **kwargs):
+        self.trajectory_dir = trajectory_dir
         self.trajectories = []
         self.json_files = sorted([os.path.join(trajectory_dir, f) for f in os.listdir(trajectory_dir) if f.endswith(".json") or f.endswith(".jsonl")])
         print(f"Found {len(self.json_files)} JSON files in {trajectory_dir}")
@@ -345,6 +372,66 @@ class TrajectoryReplay:
                 if self._wandb_run:
                     wandb.config.update(metadata)
                     self._wandb_run.log(log_data, step=checkpoint_id)
+
+        # -----------------------------
+        # NEW: Plot Mean Action Surprise across Checkpoints
+        # -----------------------------
+        surprises_mean = []
+        surprises_std = []
+        checkpoint_ids = []
+
+        # Sort again to ensure order
+        sorted_results = sorted(results_list, key=lambda x: x[0])
+        
+        for checkpoint_id, log_data, _ in sorted_results:
+             if "mean_action_surprise" in log_data:
+                 surprises_mean.append(log_data["mean_action_surprise"])
+                 surprises_std.append(log_data["std_action_surprise"])
+                 
+                 # Try to extract integer from checkpoint string for better plotting
+                 try:
+                     # Assumes format like "cp_12345" or just "12345"
+                     if "_" in str(checkpoint_id):
+                        cid_int = int(str(checkpoint_id).split("_")[-1])
+                     else:
+                        cid_int = int(str(checkpoint_id))
+                     checkpoint_ids.append(cid_int)
+                 except ValueError:
+                     checkpoint_ids.append(checkpoint_id)
+
+        if checkpoint_ids:
+            plt.figure(figsize=(12, 6))
+            
+            # Sort by checkpoint ID integer if possible
+            if all(isinstance(c, int) for c in checkpoint_ids):
+                sorted_indices = np.argsort(checkpoint_ids)
+                x_vals = np.array(checkpoint_ids)[sorted_indices]
+                y_mean = np.array(surprises_mean)[sorted_indices]
+                y_std = np.array(surprises_std)[sorted_indices]
+            else:
+                x_vals = checkpoint_ids
+                y_mean = surprises_mean
+                y_std = surprises_std
+
+            plt.plot(x_vals, y_mean, label='Mean Normalized Surprise', marker='o', color='blue')
+            plt.fill_between(x_vals, 
+                             np.array(y_mean) - np.array(y_std), 
+                             np.array(y_mean) + np.array(y_std), 
+                             color='blue', alpha=0.2, label='Std Dev')
+            
+            plt.xlabel('Checkpoint')
+            plt.ylabel('Normalized Surprise (log-ratio / JS)')
+            plt.title('Mean Action Surprise across Checkpoints')
+            plt.legend()
+            plt.grid(True, linestyle='--', alpha=0.7)
+            
+            plot_filename = 'mean_action_surprise_summary.png'
+            plot_path = os.path.join(self.trajectory_dir, plot_filename)
+            plt.savefig(plot_path)
+            print(f"[TrajectoryReplay] Saved summary plot to {plot_path}")
+            
+            if self._wandb_run:
+                self._wandb_run.log({"mean_action_surprise_summary": wandb.Image(plot_path)})
 
 
 if __name__ == "__main__":
