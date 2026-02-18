@@ -70,7 +70,14 @@ class PPOAgent(Agent):
 
     def step(self, state, training=False):
         # Expect state to be (obs_dim,) or (1, obs_dim)
-        state_tensor = tf.convert_to_tensor(state.reshape(1, -1), dtype=tf.float32)
+        if not isinstance(state, np.ndarray):
+            state = np.array([state])
+            
+        if self.is_discrete_obs:
+             state_tensor = tf.convert_to_tensor(state.reshape(1, 1), dtype=tf.int32)
+        else:
+             state_tensor = tf.convert_to_tensor(state.reshape(1, -1), dtype=tf.float32)
+
         logits = self.actor(state_tensor)
         
         if training:
@@ -81,7 +88,14 @@ class PPOAgent(Agent):
         return int(action.numpy())
 
     def get_action_and_val(self, state):
-        state_tensor = tf.convert_to_tensor(state.reshape(1, -1), dtype=tf.float32)
+        if not isinstance(state, np.ndarray):
+            state = np.array([state])
+            
+        if self.is_discrete_obs:
+             state_tensor = tf.convert_to_tensor(state.reshape(1, 1), dtype=tf.int32)
+        else:
+             state_tensor = tf.convert_to_tensor(state.reshape(1, -1), dtype=tf.float32)
+
         logits = self.actor(state_tensor)
         value = self.critic(state_tensor)
         
@@ -185,7 +199,18 @@ class PPOAgent(Agent):
             if len(b_obs) >= steps_per_epoch:
                 # Finish path with bootstrap value if not done
                 if not done:
-                    last_val = self.critic(tf.convert_to_tensor(state.reshape(1, -1), dtype=tf.float32)).numpy()[0, 0]
+                    # Handle bootstrap value get
+                    if not isinstance(state, np.ndarray):
+                        s_val = np.array([state])
+                    else:
+                        s_val = state
+                    
+                    if self.is_discrete_obs:
+                        val_input = tf.convert_to_tensor(s_val.reshape(1, 1), dtype=tf.int32)
+                    else:
+                        val_input = tf.convert_to_tensor(s_val.reshape(1, -1), dtype=tf.float32)
+
+                    last_val = self.critic(val_input).numpy()[0, 0]
                 else:
                     last_val = 0
                 
@@ -193,7 +218,11 @@ class PPOAgent(Agent):
                 b_advs, b_rets = self.compute_gae(b_rews, b_vals, b_dones, last_val)
                 
                 # Prepare data
-                obs_arr = np.array(b_obs, dtype=np.float32)
+                if self.is_discrete_obs:
+                    obs_arr = np.array(b_obs, dtype=np.int32).reshape(-1, 1)
+                else:
+                    obs_arr = np.array(b_obs, dtype=np.float32)
+
                 act_arr = np.array(b_acts, dtype=np.float32)
                 logprob_arr = np.array(b_logprobs, dtype=np.float32)
                 ret_arr = np.array(b_rets, dtype=np.float32)
@@ -233,7 +262,7 @@ class PPOAgent(Agent):
                     foldername = f"trajectories/ppo_{self.log_path_args}"
                     import os
                     os.makedirs(foldername, exist_ok=True)
-                    log_path = os.path.join(foldername, f"cp_{episodes_completed:04d}.jsonl")
+                    log_path = os.path.join(foldername, f"cp_{episodes_completed:05d}.jsonl")
                     print(f"Recording evaluation trajectories to {log_path}")
                     from utils.recorder import TrajectoryRecorder
                     recorder = TrajectoryRecorder(

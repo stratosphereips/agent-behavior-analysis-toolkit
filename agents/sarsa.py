@@ -117,7 +117,7 @@ class SarsaAgent(Agent):
                     foldername = f"trajectories/sarsa_{self.log_path_args}"
                     import os
                     os.makedirs(foldername, exist_ok=True)
-                    log_path = os.path.join(foldername, f"cp_{ep+1}.jsonl")
+                    log_path = os.path.join(foldername, f"cp_{ep+1:05d}.jsonl")
                     print(f"Recording evaluation trajectories to {log_path}")
                     from utils.recorder import TrajectoryRecorder
                     recorder = TrajectoryRecorder(

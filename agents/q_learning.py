@@ -11,16 +11,10 @@ class QLearningAgent(Agent):
              self.obs_dim = env.observation_space.n
              self.is_discrete_obs = True
         else:
-             # Q-learning is tabular, requires discrete observation space (or discretization)
-             # If it's not discrete, this implementation might fail or require external discretization
-             self.obs_dim = env.observation_space.shape[0] 
+             # Just take the first dimension if shape is present, 
+             # though tabular Q-Learning won't work well without discretization.
+             self.obs_dim = env.observation_space.shape[0]
              self.is_discrete_obs = False
-             # We can raise a warning or error if strict tabular is intended, 
-             # but the experiment script applies a wrapper. 
-             # However, the wrapper makes it discrete.
-             # If self.obs_dim is shape[0], tabular Q-table creation will fail or need hashing.
-             # The existing code assumed inputs were provided directly.
-             pass
 
         if not self.is_discrete_obs:
             raise NotImplementedError("Tabular Q-Learning requires a discrete observation space.")
@@ -29,7 +23,7 @@ class QLearningAgent(Agent):
         if hasattr(env.action_space, 'n'):
             self.act_dim = env.action_space.n
         else:
-            raise NotImplementedError("Q-Learning requires a discrete action space.")
+            raise NotImplementedError("Q-Learning currently only supports discrete action spaces.")
 
         # Hyperparameters
         self.alpha = self.params.get("alpha", 0.1)
@@ -41,106 +35,83 @@ class QLearningAgent(Agent):
         # Initialize Q-table
         self.Q = np.zeros((self.obs_dim, self.act_dim))
 
-    def epsilon_greedy(self, state, epsilon):
-        """Select an action using the epsilon-greedy strategy."""
-        if np.random.rand() < epsilon:
-            return np.random.randint(self.act_dim)
-        return np.argmax(self.Q[state])
-
     def step(self, state, training=False):
-        # State comes in. If it's a wrapper env, state might be an int.
-        # If it's standard gym cartpole, state is array. 
-        # But we enforce discrete obs for this agent.
-        
-        # In the experiment script, DiscreteCartPoleWrapper returns an int state.
-        # So we can use it directly as index.
-        
+        # Handle state extraction
+        state_idx = self._get_state_idx(state)
+
         if training:
-            return self.epsilon_greedy(state, self.epsilon)
-        else:
-            return self.epsilon_greedy(state, 0.0)
+            if np.random.rand() < self.epsilon:
+                return np.random.randint(self.act_dim)
+        
+        # Greedy action (argmax)
+        # Random tie-breaking for better exploration behavior in initial stages
+        qs = self.Q[state_idx]
+        max_q = np.max(qs)
+        actions_with_max_q = np.where(qs == max_q)[0]
+        return int(np.random.choice(actions_with_max_q))
+
+    def _get_state_idx(self, state):
+        if isinstance(state, np.ndarray):
+            if state.size == 1:
+                return int(state.item())
+            if state.ndim > 0:
+                 return int(state[0])
+        return int(state)
 
     def train_policy(self, env, num_episodes, evaluate_each=None, evaluate_for=None):
+        total_steps = 0
         rewards_history = []
         
-        for episode in range(1, num_episodes + 1):
+        for ep in range(num_episodes):
             state, _ = env.reset()
+            state_idx = self._get_state_idx(state)
+            
             done = False
             ep_reward = 0
             
             while not done:
-                action = self.step(state, training=True)
+                action = self.step(state_idx, training=True)
                 next_state, reward, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
+                next_state_idx = self._get_state_idx(next_state)
                 
                 # Q-learning update
                 # Q(s,a) <- Q(s,a) + alpha * (r + gamma * max(Q(s', a')) - Q(s,a))
+                best_next_action_val = np.max(self.Q[next_state_idx])
                 
-                best_next_action_val = np.max(self.Q[next_state])
                 target = reward + self.gamma * best_next_action_val * (not done)
-                self.Q[state, action] += self.alpha * (target - self.Q[state, action])
+                self.Q[state_idx, action] += self.alpha * (target - self.Q[state_idx, action])
                 
-                state = next_state
+                state_idx = next_state_idx
                 ep_reward += reward
+                total_steps += 1
             
-            rewards_history.append(ep_reward)
-
-            # Decay epsilon
-            # Exponential decay: max(min, init * exp(-rate * episode))
-            # Or use the multiplicative decay from params if provided differently?
-            # The previous code used: max(min, init * exp(-rate * episode))
-            # Let's stick to the multiplier pattern used in DQN/PPO if possible or keep this one.
-            # DQN used: self.epsilon *= self.epsilon_decay
-            # Let's use the explicit decay formula from previous file if strict adherence is needed,
-            # or the multiplicative standard.
-            # Previous file: return max(min_epsilon, initial_epsilon * math.exp(-decay_rate * episode))
-            # Let's use simple multiplicative for consistency with others if okay, 
-            # BUT the user said "adapt q-learning in the same way".
-            # I will use multiplicative to be consistent with my DQN implementation.
-            
+            # Epsilon decay (multiplicative to be consistent with DQN/Sarsa in this codebase)
             if self.epsilon > self.epsilon_min:
-                 # Check if decay is rate (like 0.0001) or factor (like 0.999)
-                 # previous q_learning default was 0.995 (factor).
-                 # cartpole script uses epsilon_decay=0.0001 (rate?) for RandomAgent?
-                 # Actually looking at cartpole_discrete.py:
-                 # "epsilon_decay": 0.0001
-                 # And PPO params: "epsilon_decay": 0.0001
-                 # Wait, PPO doesn't use epsilon greedy.
-                 # DQN uses multiplicative.
-                 # Let's assume the param passed is a multiplicative factor close to 1, or a small rate?
-                 # If it is 0.0001, multiplicative would zero it out instantly.
-                 # So 0.0001 suggests a linear decay or exponential rate `exp(-decay * t)`.
-                 # Let's look at `experiments/cartpole_discrete.py` again.
-                 
-                 pass
+                self.epsilon *= self.epsilon_decay
+                
+            rewards_history.append(ep_reward)
             
-            # Re-checking the parameter passed in cartpole_discrete.py:
-            # "epsilon_decay": 0.0001
-            # If I use multiplicative: epsilon *= (1 - 0.0001) ?
-            # Or is it the `decay_rate` for `exp`?
-            # The previous Q-learning file used `math.exp(-decay_rate * episode)`.
-            # So 0.0001 makes sense as a rate.
-            # I will preserve the rate-based decay logic but clean it up.
-            
-            initial_epsilon = self.params.get("epsilon", 1.0)
-            decay_rate = self.params.get("epsilon_decay", 0.0001)
-            self.epsilon = max(self.epsilon_min, initial_epsilon * math.exp(-decay_rate * episode))
+            # Logging
+            if (ep+1) % 10 == 0:
+                 print(f"Episode {ep+1}/{num_episodes}, Steps: {total_steps}, Reward: {ep_reward:.2f}, Epsilon: {self.epsilon:.3f}")
 
             # Evaluation
-            if evaluate_each and episode % evaluate_each == 0:
-                 print(f"Evaluation after episode {episode}...")
+            if evaluate_each and (ep + 1) % evaluate_each == 0:
+                 print(f"Evaluation after episode {ep+1}...")
                  eval_returns = []
                  recorder = None
                  
                  if self.store_trajectories:
                     if not hasattr(self, "log_path_args"):
+                         # Attempt to construct log path args from params['args'] if available
                          args = self.params.get("args", {})
                          self.log_path_args = "_".join(f"{k}={v}" for k, v in sorted(args.items()))
                     
                     foldername = f"trajectories/q_learning_{self.log_path_args}"
                     import os
                     os.makedirs(foldername, exist_ok=True)
-                    log_path = os.path.join(foldername, f"cp_{episode}.jsonl")
+                    log_path = os.path.join(foldername, f"cp_{ep+1:05d}.jsonl")
                     print(f"Recording evaluation trajectories to {log_path}")
                     from utils.recorder import TrajectoryRecorder
                     recorder = TrajectoryRecorder(
@@ -152,7 +123,7 @@ class QLearningAgent(Agent):
                  for _ in range(evaluate_for):
                      s, _ = env.reset()
                      if recorder:
-                         recorder.start_trajectory(metadata={"agent": "q_learning", "checkpoint": episode})
+                         recorder.start_trajectory(metadata={"agent": "q_learning", "checkpoint": ep+1})
                      
                      d = False
                      ret = 0
@@ -171,6 +142,6 @@ class QLearningAgent(Agent):
                          recorder.end_trajectory()
                      eval_returns.append(ret)
                  
-                 print(f"Episode {episode}: Mean return = {np.mean(eval_returns):.2f}")
+                 print(f"Evaluation mean return = {np.mean(eval_returns):.2f}")
 
         return rewards_history

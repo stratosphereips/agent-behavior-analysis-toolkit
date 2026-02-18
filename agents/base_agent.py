@@ -67,7 +67,7 @@ class Agent:
                 foldername = f"{foldername}/{nested_foldername}"
                 if not os.path.exists(foldername):
                     os.makedirs(foldername)
-                filename = f"cp_{self._checkpoint_id:02d}.json"
+                filename = f"cp_{self._checkpoint_id:05d}.json"
                 print(f"Storing trajectories to {foldername}/{filename}")
                 store_trajectories_to_json(trajectories, f"{foldername}/{filename}", metadata=metadata, encoder=self.trajectory_json_encoder)
         if self.wandb_run is not None:
