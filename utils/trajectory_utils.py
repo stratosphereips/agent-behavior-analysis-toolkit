@@ -18,6 +18,7 @@ from sklearn.neighbors import NearestNeighbors
 from scipy.spatial.distance import jensenshannon
 import collections
 from scipy.optimize import linear_sum_assignment
+import random
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -206,7 +207,13 @@ def compute_js_divergence(state: Any, policy1: EmpiricalPolicy, policy2: Empiric
     kl_q_m = np.sum(q * (np.log(q) - np.log(m)))
     return 0.5 * (kl_p_m + kl_q_m)
 
-def compute_normalized_surprise(state, action, policy_new, policy_old, per_state_normalization, alpha=0.1, epsilon=1e-8):
+def compute_normalized_surprise(state, action, policy_new:Policy, policy_old:Policy, per_state_normalization:dict, alpha=0.1, epsilon=1e-8):
+    """
+    Computes the surprise of an action given a policy change, normalized by the JS divergence of the state's policy change.
+    
+    Surprise(s, a) = (log(P_new(a|s)) - log(P_old(a|s))) / JS(P_new(.|s) || P_old(.|s))
+    
+    """
     # Get smoothed probabilities
     p_new = policy_new.get_action_probability(state, action, alpha)
     p_old = policy_old.get_action_probability(state, action, alpha)
@@ -216,12 +223,22 @@ def compute_normalized_surprise(state, action, policy_new, policy_old, per_state
     p_old = max(p_old, epsilon)
 
     # Log-prob difference
+    #(log(P_new) - log(P_old)) = log(P_new / P_old)
+    # If P_new > P_old, this is positive (we are surprised by how much more likely it is now)
+    # If P_new < P_old, this is negative (we are surprised by how much less likely it is now)
+    
+    # Wait, "Surprise" usually means -log(P). 
+    # Here we are looking for "Surprise relative to previous model".
+    # If the model thinks an action is probable, and previous thought it was rare => High Positive Shift?
+    
+    # Let's stick to the log-ratio for now as a "Shift" metric.
     log_diff = np.log(p_new) - np.log(p_old)
 
     # Use provided JS divergence for this state
     js = per_state_normalization.get(state, epsilon)
 
     # Normalize
+    # We add epsilon to JS to avoid division by zero if policies are identical
     return log_diff / max(js, epsilon)
 
 def compute_trajectory_surprises(trajectory:Trajectory, policy:Policy, previous_policy:Policy, per_state_normalization:dict, epsilon=1e-8) -> List[float]:
@@ -705,6 +722,46 @@ def build_empirical_policy_from_file(path, max_trajectories:int, action_space=No
     empirical_policy = EmpiricalPolicy(trajectories, action_space=action_space)
     return empirical_policy, trajectories
 
+def split_trajectories_into_policies(trajectories: Iterable[Trajectory], action_space=None, test_ratio: float = 0.5) -> tuple[EmpiricalPolicy, EmpiricalPolicy]:
+    """
+    Randomly splits a list of trajectories and generates two EmpiricalPolicies.
+
+    Args:
+        trajectories (Iterable[Trajectory]): The list of trajectories to split.
+        action_space (Iterable, optional): Explicit action space for the policies.
+        test_ratio (float, optional): The ratio of trajectories to include in the second policy (test set). 
+                                      Defaults to 0.5 (even split). Should be between 0.0 and 1.0.
+
+    Returns:
+        tuple[EmpiricalPolicy, EmpiricalPolicy]: Two empirical policies created from the split (train, test).
+    """
+    # Convert to list if it's not already, to allow shuffling
+    traj_list = list(trajectories)
+    # Ensure that we have enough trajectories to split
+    if len(traj_list) < 2:
+        raise ValueError("Not enough trajectories to split.")
+    # Ensure that the test ratio is valid
+    if not (0.0 <= test_ratio <= 1.0):
+        raise ValueError("test_ratio must be between 0.0 and 1.0.")
+
+    # Shuffle in place
+    random.shuffle(traj_list)
+    
+    # Calculate split index
+    total_count = len(traj_list)
+    test_count = int(total_count * test_ratio)
+    split_idx = total_count - test_count
+    
+    # Split
+    train_trajectories = traj_list[:split_idx]
+    test_trajectories = traj_list[split_idx:]
+    
+    # Create policies
+    train_policy = EmpiricalPolicy(train_trajectories, action_space=action_space)
+    test_policy = EmpiricalPolicy(test_trajectories, action_space=action_space)
+    
+    return train_policy, test_policy
+
 ### Trajectory Distance Metrics ###
 
 def get_transition_probabilities(policy: EmpiricalPolicy):
@@ -925,3 +982,4 @@ def find_psm_mapping(policy1: EmpiricalPolicy, policy2: EmpiricalPolicy, global_
     print(f"Matched {len(row_ind)} states.")
 
     return cost_matrix, row_ind, col_ind, nodes1, nodes2, n1_idx, n2_idx, d1_map, d2_map    
+
