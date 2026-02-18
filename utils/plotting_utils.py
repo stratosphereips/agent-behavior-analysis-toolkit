@@ -94,17 +94,36 @@ def plot_action_per_step_distribution(
     max_len = max([len(trajectory) for trajectory in trajectories])
 
     # Action counts and trajectory survival counts
-    num_actions = len(global_actions)
+    # Action counts and trajectory survival counts
+    if isinstance(global_actions, int):
+        num_actions = global_actions
+        global_actions_list = list(range(num_actions))
+    else:
+        num_actions = len(global_actions)
+        global_actions_list = global_actions
+        
     action_counts = np.zeros((max_len, num_actions), dtype=float)
     traj_counts = np.zeros(max_len, dtype=int)  # number of trajectories that reached step i
-    action_to_idx = {action: idx for idx, action in enumerate(global_actions)}
+    action_to_idx = {action: idx for idx, action in enumerate(global_actions_list)}
+    
     for trajectory in trajectories:
         for i, transition in enumerate(trajectory):
             traj_counts[i] += 1
             if not isinstance(transition.action, int):
-                action_idx = action_to_idx[transition.action]
+                # If action is not int, try to find it in map
+                if transition.action in action_to_idx:
+                    action_idx = action_to_idx[transition.action]
+                else:
+                    # Fallback or error? Let's skip or warn. 
+                    # For now, if we can't map it, we might crash.
+                    continue 
             else:
-                action_idx = transition.action
+                # If action is int, checks range
+                if 0 <= transition.action < num_actions:
+                    action_idx = transition.action
+                else:
+                     continue
+
             action_counts[i, action_idx] += 1
 
     if normalize:
@@ -118,7 +137,7 @@ def plot_action_per_step_distribution(
     # Plot stacked bar chart
     fig, ax1 = plt.subplots(figsize=(10, 5), dpi=dpi)
     bottom = np.zeros(max_len)
-    for action in global_actions:
+    for action in global_actions_list:
          action_idx = action_to_idx[action]
          if action_idx not in action_to_idx.values():
              action_name = f"Action {action_idx}"
@@ -897,3 +916,194 @@ def plot_combined_trajectory_analysis(
     plt.subplots_adjust(right=0.8) 
 
     return fig
+
+
+
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+def plot_behavioral_ontogeny(checkpoint_labels, metrics, every_nth=1):
+    """
+    Generates the 3-Row Behavioral Ontogeny Dashboard.
+    
+    Args:
+        checkpoint_labels (list): Strings or Ints for the X-axis (e.g. ['100', '200'...])
+        metrics (dict): Dictionary containing the keys defined in your setup.
+        every_nth (int): Plot only ever Nth checkpoint (subsampling).
+    """
+    
+    # 1. Setup Data & Canvas
+    # Convert labels to integers for plotting if possible, else use range
+    try:
+        x_full = np.array([int(lbl) for lbl in checkpoint_labels])
+    except ValueError:
+        x_full = np.arange(len(checkpoint_labels))
+        
+    # --- SUBSAMPLING LOGIC ---
+    # We must handle the fact that some metrics (shifts) might be Length N-1.
+    # To simplify, we first pad everything to Length N, then subsample.
+    
+    def ensure_length_n(data, n):
+        arr = np.array(data)
+        if len(arr) == n - 1:
+            return np.concatenate(([0], arr))
+        return arr
+
+    # Prepare FULL LENGTH arrays first
+    n_full = len(x_full)
+    
+    # keys that are explicitly N length in typical usage
+    # We'll just grab everything as arrays first.
+    
+    # Subsample indices
+    indices = np.arange(0, n_full, every_nth)
+    x = x_full[indices]
+        
+    has_surprise = 'surprise_mean' in metrics and len(metrics['surprise_mean']) > 0
+    nrows = 4 if has_surprise else 3
+    figsize = (12, 18) if has_surprise else (12, 14)
+        
+    fig, axes = plt.subplots(nrows, 1, figsize=figsize, sharex=True)
+    if has_surprise:
+        ax_perf, ax_state, ax_dyn, ax_surp = axes
+    else:
+        ax_perf, ax_state, ax_dyn = axes
+    
+    # Grid settings for professional look
+    grid_style = {'color': 'gray', 'linestyle': '--', 'linewidth': 0.5, 'alpha': 0.4}
+
+    # =========================================================================
+    # ROW 1: PERFORMANCE (Reward)
+    # Goal: "Is the agent winning?"
+    # =========================================================================
+    
+    r_mean = np.array(metrics['reward'])[indices]
+    r_std = np.array(metrics['reward_std'])[indices]
+    
+    # Plot Mean
+    ax_perf.plot(x, r_mean, color='black', linewidth=2.5, marker='o', label='Mean Reward')
+    
+    # Plot Standard Deviation Shading
+    ax_perf.fill_between(x, r_mean - r_std, r_mean + r_std, color='gray', alpha=0.25, label='Std Dev')
+    
+    ax_perf.set_title("A. Performance (External Evaluation)", loc='left', fontweight='bold', fontsize=12)
+    ax_perf.set_ylabel("Reward")
+    ax_perf.grid(**grid_style)
+    ax_perf.legend(loc="upper left", frameon=True)
+
+    # =========================================================================
+    # ROW 2: BEHAVIORAL STATE (Volume, Depth, Confidence)
+    # Goal: "How is the agent behaving?" (Structure & Stability)
+    # =========================================================================
+    
+    # --- LEFT AXIS: Strategic Confidence (0.0 - 1.0) ---
+    conf = np.array(metrics['empirical_policy_certainty'])[indices]
+    conf_noise = np.array(metrics['empirical_policy_certainty_noise'])[indices]
+    
+    # Clip error bars to [0, 1]
+    c_lower = np.clip(conf - conf_noise, 0, 1)
+    c_upper = np.clip(conf + conf_noise, 0, 1)
+    
+    ax_state.plot(x, conf, color='tab:blue', linewidth=2, marker='s', label='Policy Certainty ($C_{\pi}$)')
+    ax_state.fill_between(x, c_lower, c_upper, color='tab:blue', alpha=0.2)
+    
+    ax_state.set_ylabel("Policy Certainty ($C_{\pi}$)", color='tab:blue', fontweight='bold')
+    ax_state.tick_params(axis='y', labelcolor='tab:blue')
+    ax_state.set_ylim(-0.05, 1.05) # Slight buffer
+    ax_state.set_title("B. Behavioral Structure", loc='left', fontweight='bold', fontsize=12)
+    ax_state.grid(**grid_style)
+
+    # --- RIGHT AXIS: Magnitude Metrics (Log Scale) ---
+    ax_state2 = ax_state.twinx()
+    ax_state2.set_yscale('log')
+    
+    # 1. Exploration Volume (Red)
+    vol = np.array(metrics['effective_state_coverage'])[indices]
+    vol_noise = np.array(metrics['effective_state_coverage_noise'])[indices]
+    
+    # Safety: Ensure lower bound is at least 1 (log(0) crash prevention)
+    v_lower = np.maximum(vol - vol_noise, 1.0)
+    v_upper = vol + vol_noise
+    
+    ax_state2.plot(x, vol, color='tab:red', linestyle='--', linewidth=2, marker='^', label='Effective State Coverage')
+    ax_state2.fill_between(x, v_lower, v_upper, color='tab:red', alpha=0.15)
+    
+    # 2. Traversal Depth (Green)
+    # Logic: Plot Reliable Min as line. Shade up to Max (Min + Noise).
+    depth_min = np.array(metrics['robust_traversal_depth'])[indices]
+    depth_noise = np.array(metrics['robust_traversal_depth_noise'])[indices]
+    depth_max = depth_min + depth_noise
+    
+    ax_state2.plot(x, depth_min, color='tab:green', linestyle=':', linewidth=2.5, marker='D', label='Robust Traversal Depth')
+    ax_state2.fill_between(x, depth_min, depth_max, color='tab:green', alpha=0.2) # The "Luck Gap"
+
+    ax_state2.set_ylabel("Coverage / Depth (Log Scale)", color='black', fontweight='bold')
+    
+    # Combined Legend for Row 2 (Tricky with twin axes)
+    lines_L, labels_L = ax_state.get_legend_handles_labels()
+    lines_R, labels_R = ax_state2.get_legend_handles_labels()
+    ax_state.legend(lines_L + lines_R, labels_L + labels_R, loc='best', frameon=True, ncol=2)
+
+
+    # =========================================================================
+    # ROW 3: DYNAMICS (Shifts)
+    # Goal: "Is the agent changing?" (Derivatives)
+    # =========================================================================
+    
+    # Helper to align Deltas (Length N-1) with Checkpoints (Length N)
+    # Then subsample
+    
+    topo_full = ensure_length_n(metrics['topological_shift'], n_full)
+    strat_full = ensure_length_n(metrics['strategic_shift'], n_full)
+    
+    topo = topo_full[indices]
+    strat = strat_full[indices]
+    
+    # Plot De-noised Signals
+    ax_dyn.plot(x, topo, color='purple', linewidth=2, marker='v', label='Topological Shift ($\Delta_{Topo}$)')
+    ax_dyn.fill_between(x, 0, topo, color='purple', alpha=0.1) # Highlight events
+    
+    ax_dyn.plot(x, strat, color='orange', linewidth=2, marker='x', label='Strategic Shift ($\Delta_{Strat}$)')
+    ax_dyn.fill_between(x, 0, strat, color='orange', alpha=0.1) # Highlight events
+    
+    ax_dyn.set_title("C. Policy Dynamics", loc='left', fontweight='bold', fontsize=12)
+    ax_dyn.set_ylabel("Shift Magnitude (JSD)")
+    ax_dyn.set_xlabel("Training Checkpoints")
+    ax_dyn.grid(**grid_style)
+    ax_dyn.legend(loc="upper left", frameon=True)
+    
+    # =========================================================================
+    # ROW 4: SURPRISE (Action Shift)
+    # Goal: "Is the agent surprised?" (Normalized Action Shift)
+    # =========================================================================
+    if has_surprise:
+        ax_dyn.set_xlabel("") # Remove xlabel from dyn if surprise is present
+        
+        surp_mean_full = ensure_length_n(metrics['surprise_mean'], n_full)
+        surp_std_full = ensure_length_n(metrics['surprise_std'], n_full)
+        
+        surp_mean = surp_mean_full[indices]
+        surp_std = surp_std_full[indices]
+        
+        ax_surp.plot(x, surp_mean, color='royalblue', linewidth=2, marker='p', label='Normalized Surprise')
+        ax_surp.fill_between(x, surp_mean - surp_std, surp_mean + surp_std, color='royalblue', alpha=0.2, label='Std Dev')
+        
+        # Add Reference Line at 0
+        ax_surp.axhline(0, color='black', linestyle=':', alpha=0.5)
+
+        ax_surp.set_title("D. Surprise (Normalized Action Shift)", loc='left', fontweight='bold', fontsize=12)
+        ax_surp.set_ylabel("Surprise (log-ratio / JS)")
+        ax_surp.grid(**grid_style)
+        ax_surp.legend(loc="upper left", frameon=True)
+        # Set x-label on the last plot
+        ax_surp.set_xlabel("Training Episodes (Checkpoint)")
+    else:
+        ax_dyn.set_xlabel("Training Checkpoints")
+
+    # Refine Layout
+    plt.tight_layout()
+    
+    return fig
+

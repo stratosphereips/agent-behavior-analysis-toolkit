@@ -13,7 +13,7 @@ class Transition:
     reward: float
     next_state: Any
 
-@dataclass
+@dataclass(slots=True)
 class Trajectory:
     """
     Class to represent a trajectory (sequence of transitions) in the environment.
@@ -144,15 +144,22 @@ class EmpiricalPolicy(Policy):
     Class representing an empirical policy based on a set of trajectories.
     The policy is defined by the most frequent action taken in each state.
     """
-    def __init__(self, trajectories: Iterable[Trajectory], action_space: Iterable = None):
+    def __init__(self, trajectories: Iterable[Trajectory], action_space: Iterable = None, metadata: dict = None):
         # Store the trajectories and build the policy from them
         self.trajectories = []
+        self.metadata = metadata if metadata is not None else {}
         self._state_action_map = {}
         self._edge_count = {}
         self._edge_reward = {}
         self._state_incoming_reward = {}
         self._state_incoming_edge_count = {}
+        self._state_incoming_edge_count = {}
         self._action_space = set(action_space) if action_space is not None else None
+        
+        # New attributes for state visitation probability Pk(s)
+        self._state_visitation_count = {}
+        self._total_visits = 0
+        
         self.update_policy(trajectories)
     @property
     def states(self)->Iterable:
@@ -207,6 +214,13 @@ class EmpiricalPolicy(Policy):
         total_returns = sum(traj.total_reward() for traj in self.trajectories)
         return total_returns / len(self.trajectories)
     
+    @property
+    def returns(self) -> List[float]:
+        """
+        Return a list of total rewards for each trajectory.
+        """
+        return [traj.total_reward() for traj in self.trajectories]
+
     def get_mean_winrate(self, is_winner:Callable[[Trajectory], bool]|None = None) -> float:
         """
         Calculate the mean winrate across all trajectories.
@@ -243,6 +257,14 @@ class EmpiricalPolicy(Policy):
         if not isinstance(trajectory, Trajectory):
             raise ValueError("Expected a Trajectory instance.")
         self.trajectories.append(trajectory)
+        
+        # Update state visitation counts
+        # We count every occurrence of a state in the trajectory
+        for state in trajectory.states:
+            s_hash = self._convert_to_hashable(state)
+            self._state_visitation_count[s_hash] = self._state_visitation_count.get(s_hash, 0) + 1
+            self._total_visits += 1
+
         for transition in trajectory:
             self._add_transition(transition)
     
@@ -360,6 +382,17 @@ class EmpiricalPolicy(Policy):
                 action_distribution[action] = prob
         return action_distribution
     
+    
+    def get_state_visitation_probability(self, state: Any) -> float:
+        """
+        Get the empirical probability of visiting a state: Pk(s).
+        Calculated as count(s) / total_visits_across_all_trajectories.
+        """
+        state = self._convert_to_hashable(state)
+        if self._total_visits == 0:
+            return 0.0
+        return self._state_visitation_count.get(state, 0) / self._total_visits
+
     def has_data(self, state: Any) -> bool:
         """
         Check if the policy has data for a given state.
