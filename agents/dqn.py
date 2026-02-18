@@ -66,7 +66,14 @@ class DQNAgent(Agent):
             return np.random.randint(self.act_dim)
         
         # Expect state to be (obs_dim,) or (1, obs_dim)
-        state_tensor = tf.convert_to_tensor(state.reshape(1, -1), dtype=tf.float32)
+        if not isinstance(state, np.ndarray):
+            state = np.array([state])
+
+        if self.is_discrete_obs:
+            state_tensor = tf.convert_to_tensor(state.reshape(1, 1), dtype=tf.int32)
+        else:
+            state_tensor = tf.convert_to_tensor(state.reshape(1, -1), dtype=tf.float32)
+            
         q_values = self.q_network(state_tensor)
         action = tf.argmax(q_values, axis=1)[0]
         return int(action.numpy())
@@ -182,7 +189,7 @@ class DQNAgent(Agent):
                     foldername = f"trajectories/dqn_{self.log_path_args}"
                     import os
                     os.makedirs(foldername, exist_ok=True)
-                    log_path = os.path.join(foldername, f"cp_{ep+1:04d}.jsonl")
+                    log_path = os.path.join(foldername, f"cp_{ep+1:05d}.jsonl")
                     print(f"Recording evaluation trajectories to {log_path}")
                     from utils.recorder import TrajectoryRecorder
                     recorder = TrajectoryRecorder(
