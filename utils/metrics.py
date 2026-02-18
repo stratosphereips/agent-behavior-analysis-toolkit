@@ -171,7 +171,7 @@ def compute_entropy_metrics(state_counts, action_counts, action_space_size):
     # P(s) = count(s) / total_steps
     p_s_values = np.array(list(state_counts.values())) / total_visits
     h_s_bits = entropy(p_s_values, base=2)
-    exploration_volume = 2 ** h_s_bits
+    effective_state_coverage = 2 ** h_s_bits
     # --- Metric 2: Strategic Confidence (H_pi) ---
     weighted_h_pi = 0.0
 
@@ -204,9 +204,71 @@ def compute_entropy_metrics(state_counts, action_counts, action_space_size):
     # Normalize H_pi to [0, 1]
     max_entropy = np.log2(action_space_size)
     if max_entropy == 0:
-        strategic_confidence = 1.0
+        empirical_policy_certainty = 1.0
     else:
         normalized_h_pi = weighted_h_pi / max_entropy
-        strategic_confidence = 1.0 - normalized_h_pi
+        empirical_policy_certainty = 1.0 - normalized_h_pi
 
-    return exploration_volume, strategic_confidence
+    return effective_state_coverage, empirical_policy_certainty
+
+
+def calculate_temporal_action_entropy(trajectories, num_actions=4):
+    """
+    Computes the Survival-Weighted Temporal Action Entropy (H_tau).
+    
+    Args:
+        trajectories: List of lists, where each inner list is a sequence of action indices.
+                      e.g., [[0, 1, 1], [0, 2], [0, 1, 1, 2]]
+        num_actions:  Integer, total number of possible actions in the env (e.g., 4 for FrozenLake).
+        
+    Returns:
+        float: A scalar between 0.0 (Deterministic) and 1.0 (Maximum Entropy).
+    """
+    # 1. Handle empty input
+    if not trajectories:
+        return 0.0
+        
+    # 2. Determine maximum trajectory length
+    max_len = max(len(t) for t in trajectories)
+    
+    # 3. Initialize counts: [time_step, action_index]
+    # This matrix counts how many agents took action 'a' at step 't'
+    action_counts = np.zeros((max_len, num_actions))
+    
+    # 4. Fill the matrix
+    for traj in trajectories:
+        for t, transition in enumerate(traj):
+            if 0 <= transition.action < num_actions: # Safety check
+                action_counts[t, transition.action] += 1
+                
+    # 5. Compute Entropy per time step
+    step_entropies = []
+    step_weights = []
+    
+    for t in range(max_len):
+        # Get the distribution of actions at step t
+        counts = action_counts[t]
+        total_survivors = np.sum(counts)
+        
+        # Only compute if there is at least 1 survivor
+        if total_survivors > 0:
+            # Scipy's entropy function automatically normalizes counts to probabilities.
+            # We use base=num_actions so the result is normalized to [0, 1].
+            # 0 = All survivors took the same action.
+            # 1 = Survivors split evenly among all actions.
+            H_t = entropy(counts, base=num_actions)
+            
+            step_entropies.append(H_t)
+            step_weights.append(total_survivors)
+            
+    # 6. Compute Weighted Average
+    # We weight each step's entropy by the number of survivors at that step.
+    # This prevents the tail end of long, rare trajectories from dominating the metric.
+    total_steps = sum(step_weights)
+    
+    if total_steps == 0:
+        return 0.0
+        
+    weighted_H_tau = np.average(step_entropies, weights=step_weights)
+    
+    return weighted_H_tau
