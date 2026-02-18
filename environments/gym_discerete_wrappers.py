@@ -70,3 +70,28 @@ class DiscreteBlackJackWrapper(gym.ObservationWrapper):
         state_id = player_bin * self.dealer_bins * self.ace_bins + dealer_bin * self.ace_bins + ace_bin
         print(obs, state_id)
         return state_id
+
+class DiscreteMiniGridWrapper(gym.ObservationWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        # Access unwrapped env for dimensions
+        # Use try/except or fallback if unwrapped doesn't have width immediately (though MiniGrid should)
+        try:
+             self.width = env.unwrapped.width
+             self.height = env.unwrapped.height
+        except AttributeError:
+             # Fallback or initialization issue
+             self.width = 19
+             self.height = 19
+             
+        self.dirs = 4
+        self.observation_space = gym.spaces.Discrete(self.width * self.height * self.dirs)
+        
+    def observation(self, obs):
+        # Access agent state directly from unwrapped env
+        env = self.env.unwrapped
+        x, y = env.agent_pos
+        d = env.agent_dir
+        
+        # Mapping: x + y*width + d*width*height
+        return x + y * self.width + d * self.width * self.height
