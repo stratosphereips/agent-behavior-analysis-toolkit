@@ -5,7 +5,6 @@ import copy
 import numpy as np
 
 # Transition class to represent a single transition in the trajectory
-# Transition class to represent a single transition in the trajectory
 @dataclass(frozen=True, slots=True)
 class Transition:
     state: Any
