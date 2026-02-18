@@ -4,6 +4,7 @@ import os
 import numpy as np
 import jsonlines
 from typing import Callable, Any, Optional
+import re
 from trajectory import Trajectory, Transition
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -38,13 +39,23 @@ class TrajectoryRecorder:
             action_encoder (Callable, optional): Function to encode action before storing.
             auto_flush (bool): If True, writes to file immediately on end_trajectory.
         """
+        if log_path:
+            # Enforce 4-digit zero padding for cp_X.jsonl files
+            dirname, filename = os.path.split(log_path)
+            match = re.match(r"^cp_(\d+)\.jsonl$", filename)
+            if match:
+                num = int(match.group(1))
+                new_filename = f"cp_{num:05d}.jsonl"
+                log_path = os.path.join(dirname, new_filename)
+        
         self.log_path = log_path
         self.state_encoder = state_encoder
         self.action_encoder = action_encoder
         self.auto_flush = auto_flush
         
         # Ensure directory exists
-        os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
+        if log_path:
+             os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
         
         self.current_trajectory: Optional[Trajectory] = None
         self.current_metadata: dict = {}
