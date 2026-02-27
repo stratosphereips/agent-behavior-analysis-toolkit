@@ -232,6 +232,16 @@ class EmpiricalPolicy(Policy):
         wins = sum(1 for traj in self.trajectories if is_winner(traj))
         return wins / len(self.trajectories)
     
+    @property
+    def wins(self)->List[int]:
+        """
+        Return a list of win indicators for each trajectory.
+        """
+        if not self.trajectories:
+            return []
+        is_winner = lambda traj: traj.total_reward() > 0
+        return [1 if is_winner(traj) else 0 for traj in self.trajectories]
+
     def _convert_to_hashable(self, value:Any)->Hashable:
         """
         Convert a value to a hashable type.
