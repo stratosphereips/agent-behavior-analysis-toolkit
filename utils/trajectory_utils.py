@@ -68,6 +68,7 @@ def load_trajectories_from_json(
     """
     ext = os.path.splitext(filename)[1].lower()
     if ext == ".jsonl":
+        print("JSONL file detected, using JSONL loader")
         return load_trajectories_from_jsonl(filename, load_metadata, max_trajectories, action_encoder, state_encoder)
     else:
         with open(filename, 'r') as f:
@@ -96,10 +97,18 @@ def load_trajectories_from_jsonl(
 
     with open(filename, 'r') as f:
         for i, line in enumerate(f):
-            if max_trajectories and i >= max_trajectories:
+            if max_trajectories and len(trajectories) >= max_trajectories:
                 break
-            obj = json.loads(line)
-
+            line = line.strip()
+            if not line:
+                continue
+            
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON on line {i}: {e}")
+                continue
+            
             # Handle metadata if present
             if load_metadata:
                 if "metadata" in obj:
@@ -108,20 +117,23 @@ def load_trajectories_from_jsonl(
                     metadata.update({k: v for k, v in obj.items() if k != "trajectory"})
 
             try:
-                traj = obj["trajectory"]
-                states = traj.get("states", None)
-                actions = traj.get("actions", None)
-                rewards = traj.get("rewards", None)
-                reconstructed_trajectory = rebuild_trajectory_from_components(
-                    states,
-                    actions,
-                    rewards,
-                    action_encoder=action_encoder,
-                    state_encoder=state_encoder
-                )
-                trajectories.append(reconstructed_trajectory)
-            except KeyError as e:
-                print(f"Error loading trajectory from line {i}: {e}")
+                traj_data = obj.get("trajectory")
+                if traj_data:
+                    states = traj_data.get("states", None)
+                    actions = traj_data.get("actions", None)
+                    rewards = traj_data.get("rewards", None)
+                    reconstructed_trajectory = rebuild_trajectory_from_components(
+                        states,
+                        actions,
+                        rewards,
+                        action_encoder=action_encoder,
+                        state_encoder=state_encoder
+                    )
+                    # print(reconstructed_trajectory.total_reward)
+                    trajectories.append(reconstructed_trajectory)
+            except Exception as e:
+                print(f"Error processing trajectory from line {i}: {e}")
+    print(f"Number of trajectories: {len(trajectories)}")
     return trajectories, metadata
 
 def rebuild_trajectory_from_components(
@@ -686,7 +698,8 @@ def load_trajectories(json_file, max_trajectories=None, load_metadata=True):
     """
     trajectories, metadata = load_trajectories_from_json(json_file, load_metadata=load_metadata, max_trajectories=max_trajectories, 
                                                          action_encoder=aidojo_action_type_from_dict,
-                                                         state_encoder=aidojo_state_str_from_dict)
+                                                         state_encoder=numpy_default)
+    print(f"Loaded {len(trajectories)} trajectories from {json_file}")
     return trajectories, metadata
 
 def build_empirical_policy_from_list(trajectories:list, max_trajectories, action_space=None)-> tuple[EmpiricalPolicy, list]:
