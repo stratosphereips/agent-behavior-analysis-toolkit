@@ -164,7 +164,7 @@ def plot_action_per_step_distribution(
     #     bottom += action_counts[:, action_idx]
 
     ax1.set_xlabel("Time step")
-    ax1.set_ylabel("Proportion" if normalize else "Count")
+    ax1.set_ylabel("Ratio" if normalize else "Count")
     ax1.set_title(title)
 
     # --- Plot trajectory survival line (only once, normalized to [0,1]) ---
@@ -182,7 +182,8 @@ def plot_action_per_step_distribution(
 
     # Merge legends (only once)
     handles1, labels1 = ax1.get_legend_handles_labels()
-    ax1.legend(handles1, labels1, title="Legend", loc="upper right")
+    ax1.legend(handles1, labels1, loc="upper center", bbox_to_anchor=(0.5, -0.15),
+              fancybox=True, shadow=True, ncol=min(3, len(labels1)))
 
     plt.tight_layout()
     return fig
@@ -961,7 +962,7 @@ def plot_behavioral_ontogeny(checkpoint_labels, metrics, every_nth=1):
     indices = np.arange(0, n_full, every_nth)
     x = x_full[indices]
         
-    has_surprise = 'surprise_mean' in metrics and len(metrics['surprise_mean']) > 0
+    has_surprise = False
     nrows = 4 if has_surprise else 3
     figsize = (12, 18) if has_surprise else (12, 14)
         
@@ -1074,36 +1075,100 @@ def plot_behavioral_ontogeny(checkpoint_labels, metrics, every_nth=1):
     ax_dyn.grid(**grid_style)
     ax_dyn.legend(loc="upper left", frameon=True)
     
-    # =========================================================================
-    # ROW 4: SURPRISE (Action Shift)
-    # Goal: "Is the agent surprised?" (Normalized Action Shift)
-    # =========================================================================
-    if has_surprise:
-        ax_dyn.set_xlabel("") # Remove xlabel from dyn if surprise is present
-        
-        surp_mean_full = ensure_length_n(metrics['surprise_mean'], n_full)
-        surp_std_full = ensure_length_n(metrics['surprise_std'], n_full)
-        
-        surp_mean = surp_mean_full[indices]
-        surp_std = surp_std_full[indices]
-        
-        ax_surp.plot(x, surp_mean, color='royalblue', linewidth=2, marker='p', label='Normalized Surprise')
-        ax_surp.fill_between(x, surp_mean - surp_std, surp_mean + surp_std, color='royalblue', alpha=0.2, label='Std Dev')
-        
-        # Add Reference Line at 0
-        ax_surp.axhline(0, color='black', linestyle=':', alpha=0.5)
-
-        ax_surp.set_title("D. Surprise (Normalized Action Shift)", loc='left', fontweight='bold', fontsize=12)
-        ax_surp.set_ylabel("Surprise (log-ratio / JS)")
-        ax_surp.grid(**grid_style)
-        ax_surp.legend(loc="upper left", frameon=True)
-        # Set x-label on the last plot
-        ax_surp.set_xlabel("Training Episodes (Checkpoint)")
-    else:
-        ax_dyn.set_xlabel("Training Checkpoints")
-
     # Refine Layout
     plt.tight_layout()
     
     return fig
 
+def plot_behavioral_ontogeny_multiseed(checkpoint_labels, multiseed_metrics: list[dict], every_nth=1):
+    """
+    Generates a Behavioral Ontogeny Dashboard for multiple seeds.
+    Each metric is plotted in its own subplot to prevent overcrowding.
+    
+    Args:
+        checkpoint_labels (list): Strings or Ints for the X-axis (e.g. ['100', '200'...])
+        multiseed_metrics (list of dict): List of dictionaries, each containing metrics for one seed.
+        every_nth (int): Plot only ever Nth checkpoint (subsampling).
+    """
+    # 1. Setup Data & Canvas
+    try:
+        x_full = np.array([int(lbl) for lbl in checkpoint_labels])
+    except ValueError:
+        x_full = np.arange(len(checkpoint_labels))
+        
+    def ensure_length_n(data, n):
+        arr = np.array(data)
+        if len(arr) == n - 1:
+            return np.concatenate(([0], arr))
+        return arr
+
+    n_full = len(x_full)
+    indices = np.arange(0, n_full, every_nth)
+    x = x_full[indices]
+    
+    # We plot 6 metrics explicitly
+    nrows = 6
+    figsize = (12, 18)
+    fig, axes = plt.subplots(nrows, 1, figsize=figsize, sharex=True)
+    ax_rew, ax_conf, ax_cov, ax_depth, ax_topo, ax_strat = axes
+    
+    grid_style = {'color': 'gray', 'linestyle': '--', 'linewidth': 0.5, 'alpha': 0.4}
+
+    ax_rew.set_title("Mean Return", loc='left', fontweight='bold', fontsize=12)
+    ax_rew.set_ylabel("Mean Return")
+    
+    ax_conf.set_title("Policy Certainty ($C_{\pi}$)", loc='left', fontweight='bold', fontsize=12)
+    ax_conf.set_ylabel("Certainty")
+    ax_conf.set_ylim(-0.05, 1.05)
+    
+    ax_cov.set_title("Effective State Coverage (Log Scale)", loc='left', fontweight='bold', fontsize=12)
+    ax_cov.set_ylabel("Coverage")
+    ax_cov.set_yscale('log')
+    
+    ax_depth.set_title("Robust Traversal Depth (Log Scale)", loc='left', fontweight='bold', fontsize=12)
+    ax_depth.set_ylabel("Depth")
+    ax_depth.set_yscale('log')
+    
+    ax_topo.set_title("Topological Shift ($\Delta_{Topo}$)", loc='left', fontweight='bold', fontsize=12)
+    ax_topo.set_ylabel("Shift (JSD)")
+    
+    ax_strat.set_title("Strategic Shift ($\Delta_{Strat}$)", loc='left', fontweight='bold', fontsize=12)
+    ax_strat.set_ylabel("Shift (JSD)")
+    ax_strat.set_xlabel("Training Checkpoints")
+
+    for ax in axes:
+        ax.grid(**grid_style)
+        ax.tick_params(labelbottom=True)
+
+    cmap = plt.get_cmap('tab10')
+    
+    for seed_idx, metrics in enumerate(multiseed_metrics):
+        color = cmap(seed_idx % 10)
+        label = f'Seed {seed_idx}'
+        
+        r_mean = np.array(metrics.get('reward', np.zeros(n_full)))[indices]
+        ax_rew.plot(x, r_mean, color=color, linewidth=2, label=label)
+        
+        conf = np.array(metrics.get('empirical_policy_certainty', np.zeros(n_full)))[indices]
+        ax_conf.plot(x, conf, color=color, linewidth=2, label=label)
+        
+        vol = np.array(metrics.get('effective_state_coverage', np.ones(n_full)))[indices]
+        ax_cov.plot(x, vol, color=color, linewidth=2, label=label)
+        
+        depth_min = np.array(metrics.get('robust_traversal_depth', np.ones(n_full)))[indices]
+        ax_depth.plot(x, depth_min, color=color, linewidth=2, label=label)
+        
+        topo_full = ensure_length_n(metrics.get('topological_shift', np.zeros(n_full-1)), n_full)
+        ax_topo.plot(x, topo_full[indices], color=color, linewidth=2, label=label)
+        
+        strat_full = ensure_length_n(metrics.get('strategic_shift', np.zeros(n_full-1)), n_full)
+        ax_strat.plot(x, strat_full[indices], color=color, linewidth=2, label=label)
+
+    # Put legend outside the first plot
+    ax_rew.legend(loc='center left', bbox_to_anchor=(1.02, 0.5), frameon=True, title="Seeds")
+    
+    plt.tight_layout()
+    # Adjust layout to make room for legend
+    plt.subplots_adjust(right=0.85)
+    
+    return fig
