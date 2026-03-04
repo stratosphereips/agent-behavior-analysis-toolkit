@@ -12,6 +12,8 @@ def main():
     parser.add_argument("--data_dir", type=str, default="data", help="Directory containing the data")
     parser.add_argument("--max_trajectories", type=int, default=1000, help="Maximum number of trajectories to load")
     parser.add_argument("--num_actions", type=int, default=None, help="Number of actions in the environment")
+    parser.add_argument("--every_nth", type=int, nargs='+', default=[1], help="List of intervals for plotting points")
+    parser.add_argument("--output_prefix", type=str, default="figures/behavioral_ontogeny", help="Prefix for output image")
     
     args = parser.parse_args()
     # load empirical policies from files
@@ -140,8 +142,15 @@ def main():
              metrics["surprise_std"].append(0.0)
              
         print(metrics)
-    fig = plot_behavioral_ontogeny(checkpoint_labels, metrics, every_nth=20)
-    plt.savefig("figures/behavioral_ontogeny.png", dpi=300)      
+    
+    for nth in args.every_nth:
+        print(f"Generating plot for every_nth={nth}")
+        try:
+            fig = plot_behavioral_ontogeny(checkpoint_labels, metrics, every_nth=nth)
+            plt.savefig(f"{args.output_prefix}_every_{nth}.png", dpi=300)
+            plt.close(fig)
+        except Exception as e:
+            print(f"Failed to generate plot for every_nth={nth}: {e}")
         
 if __name__ == "__main__":
     main()
