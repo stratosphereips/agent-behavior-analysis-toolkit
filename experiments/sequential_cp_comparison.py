@@ -15,7 +15,22 @@ def main():
     parser.add_argument("--every_nth", type=int, nargs='+', default=[1], help="List of intervals for plotting points")
     parser.add_argument("--output_prefix", type=str, default="figures/behavioral_ontogeny", help="Prefix for output image")
     
+    parser.add_argument("--use_wandb", action="store_true", default=True, help="Use Weights & Biases for logging")
+    parser.add_argument("--no_wandb", action="store_false", dest="use_wandb", help="Disable Weights & Biases logging")
+    parser.add_argument("--use_wanndb", action="store_true", dest="use_wandb", help=argparse.SUPPRESS) # alias
+    
     args = parser.parse_args()
+    
+    if args.use_wandb:
+        import wandb
+        run_name = f"cp_comp_{args.data_dir.replace('/', '_')}"
+        wandb.init(
+            project="agent_trajectory_analysis",
+            name=run_name,
+            config=vars(args),
+            tags=["sequential_cp_comparison"]
+        )
+
     # load empirical policies from files
     policies = load_policies_from_directory(args.data_dir, args.max_trajectories, test_split=0.5)
     checkpoints = list(policies.keys())
@@ -66,6 +81,7 @@ def main():
         "surprise_std": [],
     }
     for i, timestep in enumerate(checkpoints):
+        prev_lengths = {k: len(v) for k, v in metrics.items()}
         print(f"Processing checkpoint {timestep} (i={i})")
         # get policy and policy splits in current checkpoint
         current_policy = policies[timestep][0]
@@ -140,17 +156,36 @@ def main():
              # For the first checkpoint, no surprise relative to previous
              metrics["surprise_mean"].append(0.0)
              metrics["surprise_std"].append(0.0)
-             
-        print(metrics)
+
+        if args.use_wandb:
+            try:
+                step_metrics = {"checkpoint": checkpoint_labels[i]}
+                for k, v in metrics.items():
+                    if len(v) > prev_lengths[k]:
+                        step_metrics[k] = v[-1]
+                wandb.log(step_metrics, step=checkpoint_labels[i])
+            except Exception as e:
+                print(f"Wandb logging error: {e}")
     
     for nth in args.every_nth:
         print(f"Generating plot for every_nth={nth}")
         try:
             fig = plot_behavioral_ontogeny(checkpoint_labels, metrics, every_nth=nth)
             plt.savefig(f"{args.output_prefix}_every_{nth}.png", dpi=300)
+            if args.use_wandb:
+                try:
+                    wandb.log({f"plots/every_{nth}": wandb.Image(fig)})
+                except Exception as e:
+                    print(f"Wandb image logging error: {e}")
             plt.close(fig)
         except Exception as e:
             print(f"Failed to generate plot for every_nth={nth}: {e}")
-        
+            
+    if args.use_wandb:
+        try:
+            wandb.finish()
+        except Exception as e:
+            print(f"Wandb finish error: {e}")
+
 if __name__ == "__main__":
     main()
