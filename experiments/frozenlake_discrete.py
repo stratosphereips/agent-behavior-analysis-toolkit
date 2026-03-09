@@ -22,15 +22,20 @@ from agents.dqn import DQNAgent
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", default=4242, type=int, help="Random seed.")
-    parser.add_argument("--episodes", default=1000, type=int, help="Number of training episodes")
+    parser.add_argument("--episodes", default=30000, type=int, help="Number of training episodes")
     parser.add_argument("--evaluate_each", default=500, type=int, help="Periodic evluation frequency")
     parser.add_argument("--evaluate_for", default=500, type=int, help="Periodic evluation length")
     parser.add_argument("--model", default="random", type=str, choices=["random", "ppo", "q_learning", "sarsa", "dqn"], help="Agent model type")
-    parser.add_argument("--gamma", default=0.99, type=float, help="Discount factor")
+    parser.add_argument("--gamma", default=0.95, type=float, help="Discount factor")
     parser.add_argument("--alpha", default=0.1, type=float, help="Learning rate for Q-learning/Sarsa")
-    parser.add_argument("--epsilon_decay", default=0.995, type=float, help="Epsilon decay rate")
-    parser.add_argument("--min_epsilon", default=0.01, type=float, help="Minimum epsilon")
+    parser.add_argument("--epsilon_decay", default=0.9997, type=float, help="Epsilon decay rate")
+    parser.add_argument("--min_epsilon", default=0.05, type=float, help="Minimum epsilon")
+    parser.add_argument("--entropy_coef", default=0.03, type=float, help="Entropy coefficient for PPO (controls stochastic exploration)")
+    parser.add_argument("--hidden_layers", default="64,32", type=str, help="Comma-separated hidden layer sizes for NN-based models (DQN, PPO)")
     args = parser.parse_args()
+
+    # Parse hidden layers
+    args.hidden_layers = [int(x) for x in args.hidden_layers.split(",")]
 
     # Fix random seed
     random.seed(args.seed)
@@ -45,12 +50,14 @@ if __name__ == "__main__":
         "epsilon_min": args.min_epsilon,
         "epsilon_decay": args.epsilon_decay,
         # Hyperparams for PPO/DQN
-        "lr": 3e-4, 
+        "lr": 5e-4, 
         "clip_ratio": 0.2,
-        "batch_size": 64,
-        "memory_size": 10000,
+        "entropy_coef": args.entropy_coef,
+        "batch_size": 32,
+        "memory_size": 50000,
         "replay_each": 4,
-        "target_update_every": 1000
+        "target_update_every": 500,
+        "hidden_layers": args.hidden_layers
     }
     experiment_config.update(vars(args))
     print(experiment_config)
@@ -91,9 +98,9 @@ if __name__ == "__main__":
     if args.model in ["q_learning", "sarsa"]:
         relevant_keys = common_keys + ["gamma", "alpha", "epsilon", "epsilon_min", "epsilon_decay"]
     elif args.model == "dqn":
-        relevant_keys = common_keys + ["gamma", "epsilon", "epsilon_min", "epsilon_decay", "lr", "batch_size", "memory_size", "replay_each", "target_update_every"]
+        relevant_keys = common_keys + ["gamma", "epsilon", "epsilon_min", "epsilon_decay", "lr", "batch_size", "memory_size", "replay_each", "target_update_every", "hidden_layers"]
     elif args.model == "ppo":
-        relevant_keys = common_keys + ["gamma", "lr", "clip_ratio"]
+        relevant_keys = common_keys + ["gamma", "lr", "clip_ratio", "entropy_coef", "hidden_layers"]
     else: # random
         relevant_keys = common_keys
         
