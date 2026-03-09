@@ -34,6 +34,7 @@ class DQNAgent(Agent):
         self.memory_size = self.params.get("memory_size", 10000)
         self.replay_each = self.params.get("replay_each", 4) # Train every N steps
         self.target_update_every = self.params.get("target_update_every", 1000)
+        self.hidden_layers = self.params.get("hidden_layers", [64, 32])
         
         # Replay buffer
         self.memory = deque(maxlen=self.memory_size)
@@ -56,8 +57,8 @@ class DQNAgent(Agent):
             inputs = layers.Input(shape=(self.obs_dim,))
             x = inputs
             
-        x = layers.Dense(128, activation='relu')(x)
-        x = layers.Dense(128, activation='relu')(x)
+        for units in self.hidden_layers:
+            x = layers.Dense(units, activation='relu')(x)
         q_values = layers.Dense(self.act_dim, activation='linear')(x)
         return tf.keras.Model(inputs=inputs, outputs=q_values)
 
@@ -83,12 +84,16 @@ class DQNAgent(Agent):
 
     @tf.function
     def train_step(self, states, actions, rewards, next_states, dones):
-        # Predict next-state Q-values (from target network)
-        next_q_values = self.target_network(next_states, training=False)
-        max_next_q = tf.reduce_max(next_q_values, axis=1)
+        # Double DQN: use online network to SELECT best actions,
+        # but target network to EVALUATE their Q-values
+        next_q_online = self.q_network(next_states, training=False)
+        best_next_actions = tf.argmax(next_q_online, axis=1)
+        next_q_target = self.target_network(next_states, training=False)
+        best_next_indices = tf.stack([tf.range(tf.shape(best_next_actions)[0]), tf.cast(best_next_actions, tf.int32)], axis=1)
+        max_next_q = tf.gather_nd(next_q_target, best_next_indices)
         
         # Build target Q-values
-        # Bellman equation: Q(s,a) = r + gamma * max(Q(s', a'))
+        # Double DQN Bellman: Q(s,a) = r + gamma * Q_target(s', argmax_a' Q_online(s', a'))
         targets = rewards + self.gamma * max_next_q * (1.0 - dones)
         
         # Create a mask to update only the Q-values for the taken actions

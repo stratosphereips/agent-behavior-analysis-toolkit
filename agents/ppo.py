@@ -25,13 +25,14 @@ class PPOAgent(Agent):
         # Hyperparameters
         self.clip_ratio = self.params.get("clip_ratio", 0.2)
         self.gamma = self.params.get("gamma", 0.99)
-        self.lam = self.params.get("lam", 0.95)
-        self.train_iters = self.params.get("train_iters", 10)  # Epochs per update
+        self.lam = self.params.get("lam", 0.9)
+        self.train_iters = self.params.get("train_iters", 5)  # Epochs per update (lower to prevent policy collapse)
         self.batch_size = self.params.get("batch_size", 64)
         self.lr = self.params.get("lr", 3e-4)
         self.target_kl = self.params.get("target_kl", 0.01)
         self.entropy_coef = self.params.get("entropy_coef", 0.01)
         self.value_coef = self.params.get("value_coef", 0.5)
+        self.hidden_layers = self.params.get("hidden_layers", [64, 32])
 
         # Policy Network
         self.actor = self._build_actor()
@@ -49,8 +50,8 @@ class PPOAgent(Agent):
             inputs = layers.Input(shape=(self.obs_dim,))
             x = inputs
             
-        x = layers.Dense(64, activation='tanh')(x)
-        x = layers.Dense(64, activation='tanh')(x)
+        for units in self.hidden_layers:
+            x = layers.Dense(units, activation='relu')(x)
         logits = layers.Dense(self.act_dim)(x)
         return tf.keras.Model(inputs=inputs, outputs=logits)
 
@@ -63,8 +64,8 @@ class PPOAgent(Agent):
             inputs = layers.Input(shape=(self.obs_dim,))
             x = inputs
 
-        x = layers.Dense(64, activation='tanh')(x)
-        x = layers.Dense(64, activation='tanh')(x)
+        for units in self.hidden_layers:
+            x = layers.Dense(units, activation='relu')(x)
         value = layers.Dense(1)(x)
         return tf.keras.Model(inputs=inputs, outputs=value)
 
@@ -161,7 +162,7 @@ class PPOAgent(Agent):
         # For simplicity in this structure: gather 'steps_per_epoch' steps, then update.
         # Overriding the loop slightly to fit the PPO style efficiently.
         
-        steps_per_epoch = self.params.get("steps_per_epoch", 2048)
+        steps_per_epoch = self.params.get("steps_per_epoch", 4096)
         total_steps = 0
         rewards_history = []
         
@@ -235,9 +236,16 @@ class PPOAgent(Agent):
                 dataset = tf.data.Dataset.from_tensor_slices((obs_arr, act_arr, logprob_arr, ret_arr, adv_arr))
                 dataset = dataset.shuffle(steps_per_epoch).batch(self.batch_size)
                 
-                for _ in range(self.train_iters):
+                for epoch in range(self.train_iters):
+                    kl_exceeded = False
                     for batch in dataset:
-                        self.train_step(*batch)
+                        loss, p_loss, v_loss, approx_kl = self.train_step(*batch)
+                        # Early stopping on KL divergence to prevent destructive updates
+                        if approx_kl > 1.5 * self.target_kl:
+                            kl_exceeded = True
+                            break
+                    if kl_exceeded:
+                        break
                 
                 # Clear buffers
                 b_obs, b_acts, b_logprobs, b_rews, b_dones, b_vals = [], [], [], [], [], []
