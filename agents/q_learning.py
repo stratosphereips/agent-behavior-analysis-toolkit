@@ -32,8 +32,8 @@ class QLearningAgent(Agent):
         self.epsilon_min = self.params.get("epsilon_min", 0.01)
         self.epsilon_decay = self.params.get("epsilon_decay", 0.995)
         
-        # Initialize Q-table
-        self.Q = np.zeros((self.obs_dim, self.act_dim))
+        # Initialize Q-table with optimistic values to encourage exploration
+        self.Q = np.full((self.obs_dim, self.act_dim), 0.5)
 
     def step(self, state, training=False):
         # Handle state extraction
