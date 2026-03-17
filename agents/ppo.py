@@ -262,22 +262,26 @@ class PPOAgent(Agent):
                  
                  if self.store_trajectories:
                     # Construct path similar to RandomAgent
-                    if not hasattr(self, "log_path_args"):
-                        # Build it if not present (RandomAgent does it in init)
-                         args = self.params.get("args", {})
-                         self.log_path_args = "_".join(f"{k}={v}" for k, v in sorted(args.items()))
-                    
-                    foldername = f"trajectories/ppo_{self.log_path_args}"
-                    import os
-                    os.makedirs(foldername, exist_ok=True)
-                    log_path = os.path.join(foldername, f"cp_{episodes_completed:05d}.jsonl")
-                    print(f"Recording evaluation trajectories to {log_path}")
-                    from utils.recorder import TrajectoryRecorder
-                    recorder = TrajectoryRecorder(
-                        log_path=log_path,
-                        state_encoder=self.trajectory_json_encoder,
-                        action_encoder=self.trajectory_json_encoder
-                    )
+                     if not hasattr(self, "log_path_args"):
+                          args = self.params.get("args", {})
+                          filtered_args = {k: v for k, v in args.items() if k not in ["model", "env", "episodes", "evaluate_each", "evaluate_for", "seed", "log_dir"]}
+                          self.log_path_args = "_".join(f"{k}={v}" for k, v in sorted(filtered_args.items()))
+                     
+                     import os
+                     if "log_dir" in self.params:
+                         base_dir = self.params["log_dir"]
+                         foldername = os.path.join(base_dir, f"ppo_{self.log_path_args}")
+                     else:
+                         foldername = f"trajectories/ppo_{self.log_path_args}"
+                     os.makedirs(foldername, exist_ok=True)
+                     log_path = os.path.join(foldername, f"cp_{episodes_completed:05d}.jsonl")
+                     print(f"Recording evaluation trajectories to {log_path}")
+                     from utils.recorder import TrajectoryRecorder
+                     recorder = TrajectoryRecorder(
+                         log_path=log_path,
+                         state_encoder=self.trajectory_json_encoder,
+                         action_encoder=self.trajectory_json_encoder
+                     )
 
                  for _ in range(evaluate_for):
                      s, _ = env.reset()
