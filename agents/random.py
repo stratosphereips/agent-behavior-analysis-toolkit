@@ -42,16 +42,19 @@ class RandomAgent(Agent):
 
             # Evaluation
             if evaluate_each and (ep + 1) % evaluate_each == 0:
-                 print(f"Evaluation after episode {ep+1}...")
-                 eval_returns = []
-                 recorder = None
+                print(f"Evaluation after episode {ep+1}...")
+                eval_returns = []
+                recorder = None
                  
-                 if self.store_trajectories:
-                    if not hasattr(self, "log_path_args"):
-                         args = self.params.get("args", {})
-                         self.log_path_args = "_".join(f"{k}={v}" for k, v in sorted(args.items()))
-                    
-                    foldername = f"trajectories/random_{self.log_path_args}"
+                if self.store_trajectories:
+                    args = self.params.get("args", {})
+                    filtered_args = {k: v for k, v in args.items() if k not in ["model", "env", "episodes", "evaluate_each", "evaluate_for", "seed", "log_dir"]}
+                    self.log_path_args = "_".join(f"{k}={v}" for k, v in sorted(filtered_args.items()))
+                
+                    if "log_dir" in self.params:
+                        foldername = self.params["log_dir"]
+                    else:
+                        foldername = f"trajectories/random_{self.log_path_args}"
                     os.makedirs(foldername, exist_ok=True)
                     log_path = os.path.join(foldername, f"cp_{ep+1:05d}.jsonl")
                     print(f"Recording evaluation trajectories to {log_path}")
@@ -63,28 +66,28 @@ class RandomAgent(Agent):
                         action_encoder=self.trajectory_json_encoder
                     )
 
-                 for _ in range(evaluate_for):
-                     s, _ = env.reset()
-                     if recorder:
-                         recorder.start_trajectory(metadata={"agent": "random", "checkpoint": ep+1})
-                     
-                     d = False
-                     ret = 0
-                     while not d:
-                         a = self.step(s)
-                         ns, r, term, trunc, _ = env.step(a)
-                         
-                         if recorder:
-                             recorder.add_transition(s, a, r, ns)
-                             
-                         s = ns
-                         ret += r
-                         d = term or trunc
-                     
-                     if recorder:
-                         recorder.end_trajectory()
-                     eval_returns.append(ret)
+                for _ in range(evaluate_for):
+                    s, _ = env.reset()
+                    if recorder:
+                        recorder.start_trajectory(metadata={"agent": "random", "checkpoint": ep+1})
+                    
+                    d = False
+                    ret = 0
+                    while not d:
+                        a = self.step(s)
+                        ns, r, term, trunc, _ = env.step(a)
+                        
+                        if recorder:
+                            recorder.add_transition(s, a, r, ns)
+                            
+                        s = ns
+                        ret += r
+                        d = term or trunc
+                    
+                    if recorder:
+                        recorder.end_trajectory()
+                    eval_returns.append(ret)
                  
-                 print(f"Evaluation mean return = {np.mean(eval_returns):.2f}")
+                print(f"Evaluation mean return = {np.mean(eval_returns):.2f}")
 
         return rewards_history
