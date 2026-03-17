@@ -32,7 +32,8 @@ class SarsaAgent(Agent):
         self.epsilon_decay = self.params.get("epsilon_decay", 0.995)
         
         # Initialize Q-table with optimistic values to encourage exploration
-        self.Q = np.full((self.obs_dim, self.act_dim), 0.5)
+        self.q_init_val = self.params.get("q_init_val", 0.5)
+        self.Q = np.full((self.obs_dim, self.act_dim), self.q_init_val)
 
     def step(self, state, training=False):
         # Handle state extraction
@@ -110,12 +111,16 @@ class SarsaAgent(Agent):
                  
                  if self.store_trajectories:
                     if not hasattr(self, "log_path_args"):
-                         # Attempt to construct log path args from params['args'] if available
                          args = self.params.get("args", {})
-                         self.log_path_args = "_".join(f"{k}={v}" for k, v in sorted(args.items()))
+                         filtered_args = {k: v for k, v in args.items() if k not in ["model", "env", "episodes", "evaluate_each", "evaluate_for", "seed", "log_dir"]}
+                         self.log_path_args = "_".join(f"{k}={v}" for k, v in sorted(filtered_args.items()))
                     
-                    foldername = f"trajectories/sarsa_{self.log_path_args}"
                     import os
+                    if "log_dir" in self.params:
+                        base_dir = self.params["log_dir"]
+                        foldername = os.path.join(base_dir, f"sarsa_{self.log_path_args}")
+                    else:
+                        foldername = f"trajectories/sarsa_{self.log_path_args}"
                     os.makedirs(foldername, exist_ok=True)
                     log_path = os.path.join(foldername, f"cp_{ep+1:05d}.jsonl")
                     print(f"Recording evaluation trajectories to {log_path}")
