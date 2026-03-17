@@ -189,10 +189,15 @@ class DQNAgent(Agent):
                  if self.store_trajectories:
                     if not hasattr(self, "log_path_args"):
                          args = self.params.get("args", {})
-                         self.log_path_args = "_".join(f"{k}={v}" for k, v in sorted(args.items()))
+                         filtered_args = {k: v for k, v in args.items() if k not in ["model", "env", "episodes", "evaluate_each", "evaluate_for", "seed", "log_dir"]}
+                         self.log_path_args = "_".join(f"{k}={v}" for k, v in sorted(filtered_args.items()))
                     
-                    foldername = f"trajectories/dqn_{self.log_path_args}"
                     import os
+                    if "log_dir" in self.params:
+                        base_dir = self.params["log_dir"]
+                        foldername = os.path.join(base_dir, f"dqn_{self.log_path_args}")
+                    else:
+                        foldername = f"trajectories/dqn_{self.log_path_args}"
                     os.makedirs(foldername, exist_ok=True)
                     log_path = os.path.join(foldername, f"cp_{ep+1:05d}.jsonl")
                     print(f"Recording evaluation trajectories to {log_path}")
