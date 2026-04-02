@@ -2,12 +2,100 @@ import argparse
 import json
 import os
 from utils.data_utils import load_policies_from_directory
-from utils.metrics import topological_shift, strategic_shift, traversal_depth, compute_entropy_metrics, calculate_temporal_action_entropy
+from utils.metrics import (
+    topological_shift,
+    strategic_shift,
+    traversal_depth,
+    compute_entropy_metrics,
+    calculate_temporal_action_entropy,
+    compute_ngram_jsd,
+    compute_ngram_wasserstein_fast
+)
 import numpy as np
 import scipy.stats as stats
 import matplotlib.pyplot as plt
 from utils.plotting_utils import plot_behavioral_ontogeny
 from utils.trajectory_utils import js_divergence_per_state, compute_trajectory_surprises
+import itertools
+from trajectory import EmpiricalPolicy
+
+
+def estimate_noise_value(trajectories,cost_matrix, global_ngrams, global_actions, num_samples:int=100, percentile:float=0.95) -> float:
+    """
+    Estimate the noise value for the given trajectories.
+    Args:
+        trajectories: List of trajectories
+    Returns:
+        noise_value: Estimated noise value
+    """
+    N = len(trajectories)
+    errors = {
+        "topological_shift": [],
+        "strategic_shift": [],
+        "robust_traversal_depth": [],
+        "3-gram_jsd": [],
+        "3-gram_wasserstein": [],
+    }
+    for _ in range(num_samples):
+        indices_A = np.random.choice(N, size=N, replace=True)
+        indices_B = np.random.choice(N, size=N, replace=True)
+        
+        set_A = [trajectories[i] for i in indices_A]
+        set_B = [trajectories[i] for i in indices_B]
+        ep_A = EmpiricalPolicy(set_A, metadata=None)
+        ep_B = EmpiricalPolicy(set_B, metadata=None)
+        errors["topological_shift"].append(topological_shift(ep_A._state_visitation_count, ep_B._state_visitation_count, noise_value=0.0))
+        errors["strategic_shift"].append(strategic_shift(ep_A, ep_B, global_actions=global_actions, noise_value=0.0))
+        errors["robust_traversal_depth"].append(min(traversal_depth(ep_A.trajectories), traversal_depth(ep_B.trajectories)))
+        errors["3-gram_jsd"].append(compute_ngram_jsd(ep_A.trajectories, ep_B.trajectories, n=3,action_space_size=len(global_actions)))
+        errors["3-gram_wasserstein"].append(compute_ngram_wasserstein_fast(ep_A.trajectories, ep_B.trajectories, global_ngrams, cost_matrix, n=3))
+    return {k: np.percentile(v, percentile) for k, v in errors.items()}
+    
+
+def get_levenshtein_distance(seq1: tuple, seq2: tuple) -> float:
+    """
+    Compute the Levenshtein distance between two sequences.
+    Args:
+        seq1: First sequence
+        seq2: Second sequence
+    Returns:
+        levenshtein_distance: Levenshtein distance between the two sequences
+    """
+    size_x, size_y = len(seq1) + 1, len(seq2) + 1
+    matrix = np.zeros((size_x, size_y))
+    for x in range(size_x): matrix[x, 0] = x
+    for y in range(size_y): matrix[0, y] = y
+    for x in range(1, size_x):
+        for y in range(1, size_y):
+            if seq1[x-1] == seq2[y-1]:
+                matrix[x, y] = min(matrix[x-1, y] + 1, matrix[x-1, y-1], matrix[x, y-1] + 1)
+            else:
+                matrix[x, y] = min(matrix[x-1, y] + 1, matrix[x-1, y-1] + 1, matrix[x, y-1] + 1)
+    return matrix[size_x - 1, size_y - 1]
+
+def build_global_environment_cache(action_space: list, n: int = 3):
+    """
+    Build the global environment cache for n-gram analysis.
+    Args:
+        action_space: List of actions in the environment
+        n: Length of n-grams
+    Returns:
+        global_ngrams: Canonical ordering of all possible n-grams
+        cost_matrix: Static cost matrix for n-grams
+    """
+    # 1. Generate canonical ordering of all possible n-grams
+    global_ngrams = list(itertools.product(action_space, repeat=n))
+    num_motifs = len(global_ngrams)
+    
+    # 2. Build the static ground cost matrix
+    cost_matrix = np.zeros((num_motifs, num_motifs))
+    for i in range(num_motifs):
+        for j in range(i, num_motifs):
+            dist = get_levenshtein_distance(global_ngrams[i], global_ngrams[j])
+            cost_matrix[i, j] = dist
+            cost_matrix[j, i] = dist
+            
+    return global_ngrams, cost_matrix
 
 def main():
     # GLOBAL_ACTIONS is now determined dynamically
@@ -77,6 +165,9 @@ def main():
     else:
         GLOBAL_ACTIONS = [0, 1] # Fallback default
 
+    # precompute ngrams and distance matrix
+    global_ngrams_3, cost_matrix_3 = build_global_environment_cache(GLOBAL_ACTIONS, n=3)
+    # compute metrics for each checkpoint
     metrics = {
         "topological_shift": [],
         "strategic_shift": [],
@@ -94,14 +185,37 @@ def main():
         "surprise_std": [],
         "temporal_action_entropy":[],
         "topological_shift_noise":[],
+        "topological_shift_noise_bootstrap": [],
+        "topological_shift_noise_halfsplit": [],
         "strategic_shift_noise":[],
+        "strategic_shift_noise_bootstrap": [],
+        "strategic_shift_noise_halfsplit": [],
         "traveral_depth_delta":[],
         "effective_stae_coverage_delta":[],
         "temporal_action_entropy_delta":[],
         "empirical_policy_certainty_delta":[],
         "unweighted_policy_certainty_delta":[],
-        "reward_delta":[]
-        
+        "reward_delta":[],
+        "2-gram_jsd": [],
+        "3-gram_jsd": [],
+        "4-gram_jsd": [],
+        "2-gram_wasserstein": [],
+        "3-gram_wasserstein": [],
+        "4-gram_wasserstein": [],
+        "topological_shift_w_bootstrap": [],
+        "strategic_shift_w_bootstrap": [],
+        "3-gram_jsd_w_bootstrap": [],
+        "3-gram_wasserstein_w_bootstrap": [],
+        "3-gram_jsd_raw": [],
+        "3-gram_wasserstein_raw": [],
+        "topological_shift_raw": [],
+        "strategic_shift_raw": [],
+        "3-gram_jsd_noise_bootstrap": [],
+        "3-gram_wasserstein_noise_bootstrap": [],
+        "3-gram_jsd_noise_halfsplit": [],
+        "3-gram_wasserstein_noise_halfsplit": [],
+        "support_set_size": [],
+        "support_set_size_ratio": [],
     }
     for i, timestep in enumerate(checkpoints):
         prev_lengths = {k: len(v) for k, v in metrics.items()}
@@ -131,15 +245,7 @@ def main():
         metrics["empirical_policy_certainty_noise"].append(noise_empirical_policy_certainty)
         metrics["unweighted_policy_certainty_noise"].append(noise_unweighted_policy_certainty)
 
-        # compute traversal depth
-        # For Robust Traversal Depth, we want the Min of the splits, not the full dataset value?
-        # The paper says: min(max(depth_A), max(depth_B)). 
-        # But here we were computing it on the full policy too.
-        # Let's stick to the paper definition for the main metric if we want to be strict,
-        # OR we can keep tracking both.
-        # The previous code tracked 'traversal_depth' (full) and 'traversal_depth_min' (robust).
-        # We will map 'robust_traversal_depth' to the robust version (min of splits).
-        
+        # compute traversal depth       
         traversal_depth_current_splitA = traversal_depth(current_policy_splitA.trajectories)
         traversal_depth_current_splitB = traversal_depth(current_policy_splitB.trajectories)
         metrics["robust_traversal_depth"].append(min(traversal_depth_current_splitA, traversal_depth_current_splitB))
@@ -151,22 +257,37 @@ def main():
         if i > 0:
             print(f"Computing deltas for checkpoint {checkpoints[i-1]} (i={i-1})")
             previous_policy = policies[checkpoints[i-1]][0]
-
+            errors = estimate_noise_value(current_policy.trajectories, cost_matrix_3, global_ngrams_3, global_actions=GLOBAL_ACTIONS, num_samples=50, percentile=0.95)
             # compute noise values (from the A/B split)
             topo_shift_noise = topological_shift(current_policy_splitA._state_visitation_count, current_policy_splitB._state_visitation_count, noise_value=   0.0)
             strategic_shift_noise = strategic_shift(current_policy_splitA, current_policy_splitB, global_actions=GLOBAL_ACTIONS, noise_value=0.0)
+            three_gram_jsd_noise = compute_ngram_jsd(current_policy_splitA.trajectories, current_policy_splitB.trajectories, n=3,action_space_size=len(GLOBAL_ACTIONS))
+            three_gram_wasserstein_noise = compute_ngram_wasserstein_fast(current_policy_splitA.trajectories, current_policy_splitB.trajectories, global_ngrams_3, cost_matrix_3, n=3)
+
+            # compute raw values of the shifts
+            topological_shift_raw = topological_shift(current_policy._state_visitation_count, previous_policy._state_visitation_count, noise_value=0)
+            strategic_shift_raw = strategic_shift(current_policy, previous_policy, global_actions=GLOBAL_ACTIONS, noise_value=0)
+            three_gram_jsd_raw = compute_ngram_jsd(current_policy.trajectories, previous_policy.trajectories, n=3,action_space_size=len(GLOBAL_ACTIONS))
+            three_gram_wasserstein_raw = compute_ngram_wasserstein_fast(current_policy.trajectories, previous_policy.trajectories, global_ngrams_3, cost_matrix_3, n=3)
             
-            # compute deltas of topological and strategic shift
-            metrics["topological_shift"].append(topological_shift(current_policy._state_visitation_count, previous_policy._state_visitation_count, noise_value=topo_shift_noise))
-            metrics["strategic_shift"].append(strategic_shift(current_policy, previous_policy, global_actions=GLOBAL_ACTIONS, noise_value=strategic_shift_noise))
-            metrics["topological_shift_noise"].append(topo_shift_noise)
-            metrics["strategic_shift_noise"].append(strategic_shift_noise)
-            # --- COMPUTE SURPRISE ---
-            # 1. Compute per-state JS for normalization
-            # GLOBAL_ACTIONS is a list, convert to set for js function if needed, or pass as is if function handles it.
-            # js_divergence_per_state expects a set of actions
-            js_div_per_state, _ = js_divergence_per_state(current_policy, previous_policy, set(GLOBAL_ACTIONS))
+            metrics["3-gram_jsd_raw"].append(three_gram_jsd_raw)
+            metrics["3-gram_wasserstein_raw"].append(three_gram_wasserstein_raw)
+            metrics["topological_shift_raw"].append(topological_shift_raw)
+            metrics["strategic_shift_raw"].append(strategic_shift_raw)
+
             
+            metrics["topological_shift_noise_bootstrap"].append(errors["topological_shift"])
+            metrics["topological_shift_noise_halfsplit"].append(topo_shift_noise)
+            metrics["strategic_shift_noise_bootstrap"].append(errors["strategic_shift"])
+            metrics["strategic_shift_noise_halfsplit"].append(strategic_shift_noise)
+            metrics["3-gram_jsd_noise_bootstrap"].append(errors["3-gram_jsd"])
+            metrics["3-gram_wasserstein_noise_bootstrap"].append(errors["3-gram_wasserstein"])
+            metrics["3-gram_jsd_noise_halfsplit"].append(three_gram_jsd_noise)
+            metrics["3-gram_wasserstein_noise_halfsplit"].append(three_gram_wasserstein_noise)
+            
+            metrics["support_set_size"].append(len(set(current_policy.states) & set(previous_policy.states)))
+            metrics["support_set_size_ratio"].append(metrics["support_set_size"][-1]/len(set(current_policy.states)))
+
             # compute deltas of absolute metrics
             metrics["traveral_depth_delta"].append(metrics["robust_traversal_depth"][-1]-metrics["robust_traversal_depth"][-2])
             metrics["effective_stae_coverage_delta"].append(metrics["effective_state_coverage"][-1]-metrics["effective_state_coverage"][-2])
