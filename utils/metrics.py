@@ -5,6 +5,8 @@ from scipy.spatial.distance import jensenshannon
 from scipy.stats import entropy
 from trajectory import EmpiricalPolicy, Trajectory, Transition
 import networkx as nx
+from collections import Counter
+import ot
 
 def laplace_smoothing(counts: np.ndarray, alpha: float) -> np.ndarray:
     """
@@ -174,7 +176,7 @@ def compute_entropy_metrics(state_counts, action_counts, action_space_size):
     effective_state_coverage = 2 ** h_s_bits
     # --- Metric 2: Strategic Confidence (H_pi) ---
     weighted_h_pi = 0.0
-
+    unweighted_h_pi = 0.0
     for state, count in state_counts.items():
         p_s = count / total_visits
         
@@ -200,6 +202,7 @@ def compute_entropy_metrics(state_counts, action_counts, action_space_size):
         
         # Add to weighted sum
         weighted_h_pi += p_s * h_pi_s
+        unweighted_h_pi += h_pi_s
     
     # Normalize H_pi to [0, 1]
     max_entropy = np.log2(action_space_size)
@@ -207,10 +210,11 @@ def compute_entropy_metrics(state_counts, action_counts, action_space_size):
         empirical_policy_certainty = 1.0
     else:
         normalized_h_pi = weighted_h_pi / max_entropy
+        normalized_unweighted_h_pi = unweighted_h_pi / len(state_counts)
         empirical_policy_certainty = 1.0 - normalized_h_pi
+        unweighted_policy_certainty = 1.0 - normalized_unweighted_h_pi  
 
-    return effective_state_coverage, empirical_policy_certainty
-
+    return effective_state_coverage, empirical_policy_certainty, unweighted_policy_certainty
 
 def calculate_temporal_action_entropy(trajectories, num_actions=4):
     """
@@ -272,3 +276,53 @@ def calculate_temporal_action_entropy(trajectories, num_actions=4):
     weighted_H_tau = np.average(step_entropies, weights=step_weights)
     
     return weighted_H_tau
+
+def compute_ngram_histogram(trajectories, n=3, window_size=1)->dict:
+    
+
+    ngrams = []
+    for traj in trajectories:
+        for i in range(len(traj) - n + 1):
+            ngram = tuple(transition.action for transition in traj[i:i+n])
+            ngrams.append(ngram)
+    ngram_counts = Counter(ngrams)
+    return ngram_counts
+    
+def compute_ngram_jsd(trajectories1, trajectories2, n=3, window_size=1, alpha=1e-6, action_space_size=None)->float:
+    ngram_counts1 = compute_ngram_histogram(trajectories1, n, window_size)
+    ngram_counts2 = compute_ngram_histogram(trajectories2, n, window_size)
+    all_ngrams = set(ngram_counts1.keys()) | set(ngram_counts2.keys())
+    support_size = (action_space_size ** n) if action_space_size is not None else len(all_ngrams)
+    vec1 = np.array([ngram_counts1.get(k, 0) for k in all_ngrams], dtype=float)
+    vec2 = np.array([ngram_counts2.get(k, 0) for k in all_ngrams], dtype=float)
+    total1 = np.sum(vec1)
+    total2 = np.sum(vec2)
+    p = (vec1 + alpha) / (total1 + alpha * support_size)
+    q = (vec2 + alpha) / (total2 + alpha * support_size)
+    return jensenshannon(p, q, base=2)
+
+def compute_ngram_wasserstein_fast(trajectories1, trajectories2, global_ngrams, cost_matrix, n=3, window_size=1, alpha=1e-6) -> float:
+    # 1. Extract empirical histograms
+    ngram_counts1 = compute_ngram_histogram(trajectories1, n, window_size)
+    ngram_counts2 = compute_ngram_histogram(trajectories2, n, window_size)
+    
+    # 2. Map directly to the canonical global support set
+    vec1 = np.array([ngram_counts1.get(k, 0) for k in global_ngrams], dtype=float)
+    vec2 = np.array([ngram_counts2.get(k, 0) for k in global_ngrams], dtype=float)
+    
+    # 3. Additive Smoothing and Normalization
+    support_size = len(global_ngrams)
+    total1 = np.sum(vec1)
+    total2 = np.sum(vec2)
+    
+    p = (vec1 + alpha) / (total1 + alpha * support_size)
+    q = (vec2 + alpha) / (total2 + alpha * support_size)
+    
+    # Enforce strict float precision for the OT solver
+    p = p / np.sum(p)
+    q = q / np.sum(q)
+    
+    # 4. Compute optimal transport using the precomputed matrix
+    wasserstein_dist = ot.emd2(p, q, cost_matrix)
+    
+    return float(wasserstein_dist)
