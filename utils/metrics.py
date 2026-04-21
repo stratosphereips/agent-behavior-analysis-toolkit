@@ -33,6 +33,70 @@ def state_kl_divergence(counts1: Dict, counts2: Dict, global_keys: Iterable, alp
     kl_div_per_key = scipy.special.kl_div(p_probs, q_probs)
     return np.sum(kl_div_per_key)
 
+def compute_decomposed_jsd(counts_A:dict, counts_B:dict):
+    """
+    Computes the decomposed JSD using vectorized operations.
+    
+    Args:
+        counts_A (np.ndarray): 1D array of raw visit counts for Agent A.
+        counts_B (np.ndarray): 1D array of raw visit counts for Agent B.
+        
+    Returns:
+        dict: A breakdown of the JSD components (in bits).
+    """
+    # 1. Create a unified set of all keys (states)
+    all_keys = sorted(list(set(counts_A.keys()) | set(counts_B.keys())))
+    
+    # 2. Build aligned arrays
+    # We use a list comprehension or a loop to ensure indices match the global key set
+    array_A = np.array([counts_A.get(k, 0) for k in all_keys], dtype=float)
+    array_B = np.array([counts_B.get(k, 0) for k in all_keys], dtype=float)
+
+    # 3. Normalize to probabilities
+    sum_A = np.sum(array_A)
+    sum_B = np.sum(array_B)
+    
+    if sum_A == 0 or sum_B == 0:
+        raise ValueError("Cannot compute divergence: An agent has zero total visits.")
+        
+    A = array_A / sum_A
+    B = array_B / sum_B
+    
+    # 2. Create Boolean Masks for the support regions
+    mask_overlap = (A > 0) & (B > 0)
+    mask_unique_A = (A > 0) & (B == 0)
+    mask_unique_B = (A == 0) & (B > 0)
+    
+    # 3. Compute Overlapping JSD (Vectorized)
+    # Slicing with the mask guarantees all values are > 0, 
+    # so np.log2 will never throw a warning or NaN.
+    A_ov = A[mask_overlap]
+    B_ov = B[mask_overlap]
+    M_ov = (A_ov + B_ov) / 2.0
+    
+    kl_a = A_ov * np.log2(A_ov / M_ov)
+    kl_b = B_ov * np.log2(B_ov / M_ov)
+    
+    jsd_overlap = 0.5 * np.sum(kl_a) + 0.5 * np.sum(kl_b)
+    
+    # 4. Compute Non-Overlapping JSD strictly via probability mass
+    p_A_unique = np.sum(A[mask_unique_A])
+    p_B_unique = np.sum(B[mask_unique_B])
+    
+    # Because np.log2(2) is exactly 1.0, the constant simplifies to 0.5
+    jsd_non_overlap = 0.5 * (p_A_unique + p_B_unique)
+    
+    # 5. Total JSD
+    jsd_total = jsd_overlap + jsd_non_overlap
+    
+    return {
+        "jsd_total": jsd_total,
+        "jsd_overlap": jsd_overlap,
+        "jsd_non_overlap": jsd_non_overlap,
+        "p_A_unique": p_A_unique,
+        "p_B_unique": p_B_unique
+    }
+
 def topological_shift(current_state_visitation: Dict, previous_state_visitation: Dict, noise_value: float=0.0) -> float:
     """
     Compute the topological shift between two policies represented as JS divergence between their state visitation distributions.
@@ -326,3 +390,16 @@ def compute_ngram_wasserstein_fast(trajectories1, trajectories2, global_ngrams, 
     wasserstein_dist = ot.emd2(p, q, cost_matrix)
     
     return float(wasserstein_dist)
+
+def compute_perplexity_from_counts(counts:Dict[Any, float])->float:
+    """
+    Compute the perplexity of a probability distribution.
+    Args:
+        counts: counts for the distribution
+    Returns:
+        perplexity: perplexity of the distribution
+    """
+    vec_counts = np.array(list(counts.values()))
+    entropy = scipy.stats.entropy(vec_counts, base=2)
+    perplexity = 2 ** entropy
+    return perplexity
