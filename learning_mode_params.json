@@ -1,0 +1,785 @@
+{
+    "optimal": {
+        "ppo": {
+            "minigrid": {
+                "lr": 0.00025,
+                "gamma": 0.99,
+                "clip_ratio": 0.2,
+                "lam": 0.95,
+                "train_iters": 4,
+                "batch_size": 64,
+                "value_coef": 0.5,
+                "entropy_coef": 0.05,
+                "hidden_layers": [
+                    128,
+                    128
+                ],
+                "description": "Parameters based on Schulman et al. (2017) - https://arxiv.org/abs/1707.06347 and implementation details from Huang et al. (2022 ICLR Blog Track) - https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/"
+            },
+            "mountain_car": {
+                "lr": 0.00025,
+                "gamma": 0.99,
+                "clip_ratio": 0.2,
+                "lam": 0.95,
+                "train_iters": 4,
+                "batch_size": 64,
+                "value_coef": 0.5,
+                "entropy_coef": 0.03,
+                "hidden_layers": [
+                    64,
+                    64
+                ],
+                "description": "Parameters based on Schulman et al. (2017) - https://arxiv.org/abs/1707.06347 and implementation details from Huang et al. (2022 ICLR Blog Track) - https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/"
+            },
+            "taxi": {
+                "lr": 0.00025,
+                "gamma": 0.99,
+                "clip_ratio": 0.2,
+                "lam": 0.95,
+                "train_iters": 4,
+                "batch_size": 64,
+                "value_coef": 0.5,
+                "entropy_coef": 0.02,
+                "hidden_layers": [
+                    64,
+                    64
+                ],
+                "description": "Parameters based on Schulman et al. (2017) - https://arxiv.org/abs/1707.06347 and implementation details from Huang et al. (2022 ICLR Blog Track) - https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/"
+            },
+            "frozenlake": {
+                "lr": 0.00025,
+                "clip_ratio": 0.2,
+                "entropy_coef": 0.05,
+                "batch_size": 64,
+                "hidden_layers": [
+                    128,
+                    64
+                ],
+                "description": "Parameters based on Schulman et al. (2017) - https://arxiv.org/abs/1707.06347 and implementation details from Huang et al. (2022 ICLR Blog Track) - https://iclr-blog-track.github.io/2022/03/25/ppo-implementation-details/"
+            }
+        },
+        "dqn": {
+            "minigrid": {
+                "lr": 0.0005,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.999,
+                "epsilon_decay_steps": 500000,
+                "batch_size": 64,
+                "memory_size": 50000,
+                "replay_each": 4,
+                "target_update_every": 1000,
+                "hidden_layers": [
+                    128,
+                    128
+                ],
+                "description": "Parameters based on standard baselines from van Hasselt et al. (2016) - https://arxiv.org/abs/1509.06461"
+            },
+            "mountain_car": {
+                "lr": 0.0005,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.9995,
+                "epsilon_decay_steps": 100000,
+                "batch_size": 64,
+                "memory_size": 50000,
+                "replay_each": 4,
+                "target_update_every": 1000,
+                "hidden_layers": [
+                    64,
+                    64
+                ],
+                "description": "Parameters based on standard baselines from van Hasselt et al. (2016) - https://arxiv.org/abs/1509.06461"
+            },
+            "taxi": {
+                "lr": 0.0005,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.995,
+                "epsilon_decay_steps": 20000,
+                "batch_size": 64,
+                "memory_size": 50000,
+                "replay_each": 4,
+                "target_update_every": 1000,
+                "hidden_layers": [
+                    64,
+                    64
+                ],
+                "description": "Parameters based on standard baselines from van Hasselt et al. (2016) - https://arxiv.org/abs/1509.06461"
+            },
+            "frozenlake": {
+                "lr": 0.00025,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.9997,
+                "batch_size": 64,
+                "hidden_layers": [
+                    128,
+                    64
+                ],
+                "description": "Parameters based on standard baselines from van Hasselt et al. (2016) - https://arxiv.org/abs/1509.06461"
+            }
+        },
+        "sarsa": {
+            "minigrid": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.999993,
+                "q_init_val": 0.0,
+                "description": "Standard tabular parameters using typical baseline values for gridworld environments. Algorithm reference: Rummery & Niranjan (1994) - https://api.semanticscholar.org/CorpusID:59872172"
+            },
+            "mountain_car": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.9995,
+                "q_init_val": 0.0,
+                "description": "Standard tabular parameters using typical baseline values for gridworld environments. Algorithm reference: Rummery & Niranjan (1994) - https://api.semanticscholar.org/CorpusID:59872172"
+            },
+            "taxi": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.99,
+                "q_init_val": 0.0,
+                "description": "Standard tabular parameters using typical baseline values for gridworld environments. Algorithm reference: Rummery & Niranjan (1994) - https://api.semanticscholar.org/CorpusID:59872172"
+            },
+            "frozenlake": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.9997,
+                "q_init_val": 0.5,
+                "description": "Standard tabular parameters using typical baseline values for gridworld environments. Algorithm reference: Rummery & Niranjan (1994) - https://api.semanticscholar.org/CorpusID:59872172"
+            }
+        },
+        "q_learning": {
+            "minigrid": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.999993,
+                "q_init_val": 0.0,
+                "description": "Standard tabular parameters using typical baseline values for gridworld environments. Algorithm reference: Watkins & Dayan (1992) - https://doi.org/10.1007/BF00992698"
+            },
+            "mountain_car": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.9995,
+                "q_init_val": 0.0,
+                "description": "Standard tabular parameters using typical baseline values for gridworld environments. Algorithm reference: Watkins & Dayan (1992) - https://doi.org/10.1007/BF00992698"
+            },
+            "taxi": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.99,
+                "q_init_val": 0.0,
+                "description": "Standard tabular parameters using typical baseline values for gridworld environments. Algorithm reference: Watkins & Dayan (1992) - https://doi.org/10.1007/BF00992698"
+            },
+            "frozenlake": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.9997,
+                "q_init_val": 0.5,
+                "description": "Standard tabular parameters using typical baseline values for gridworld environments. Algorithm reference: Watkins & Dayan (1992) - https://doi.org/10.1007/BF00992698"
+            }
+        },
+        "random": {
+            "minigrid": {},
+            "mountain_car": {},
+            "taxi": {},
+            "frozenlake": {}
+        },
+        "description": "Standard baseline learning mode establishing optimal control, balancing exploration and exploitation. References: Ecoffet et al. (2021) - https://doi.org/10.1038/s41586-020-03157-9"
+    },
+    "reward_hacking": {
+        "ppo": {
+            "minigrid": {
+                "lr": 0.00025,
+                "gamma": 0.99,
+                "clip_ratio": 0.2,
+                "lam": 0.95,
+                "train_iters": 4,
+                "batch_size": 64,
+                "value_coef": 0.5,
+                "entropy_coef": 0.05,
+                "hidden_layers": [
+                    128,
+                    128
+                ]
+            },
+            "mountain_car": {
+                "lr": 0.00025,
+                "gamma": 0.99,
+                "clip_ratio": 0.2,
+                "lam": 0.95,
+                "train_iters": 4,
+                "batch_size": 64,
+                "value_coef": 0.5,
+                "entropy_coef": 0.03,
+                "hidden_layers": [
+                    64,
+                    64
+                ]
+            },
+            "taxi": {
+                "lr": 0.00025,
+                "gamma": 0.99,
+                "clip_ratio": 0.2,
+                "lam": 0.95,
+                "train_iters": 4,
+                "batch_size": 64,
+                "value_coef": 0.5,
+                "entropy_coef": 0.02,
+                "hidden_layers": [
+                    64,
+                    64
+                ]
+            },
+            "frozenlake": {
+                "lr": 0.00025,
+                "clip_ratio": 0.2,
+                "entropy_coef": 0.05,
+                "batch_size": 64,
+                "hidden_layers": [
+                    128,
+                    64
+                ]
+            }
+        },
+        "dqn": {
+            "minigrid": {
+                "lr": 0.0005,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.999,
+                "epsilon_decay_steps": 500000,
+                "batch_size": 64,
+                "memory_size": 50000,
+                "replay_each": 4,
+                "target_update_every": 1000,
+                "hidden_layers": [
+                    128,
+                    128
+                ]
+            },
+            "mountain_car": {
+                "lr": 0.0005,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.9995,
+                "epsilon_decay_steps": 100000,
+                "batch_size": 64,
+                "memory_size": 50000,
+                "replay_each": 4,
+                "target_update_every": 1000,
+                "hidden_layers": [
+                    64,
+                    64
+                ]
+            },
+            "taxi": {
+                "lr": 0.0005,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.995,
+                "epsilon_decay_steps": 20000,
+                "batch_size": 64,
+                "memory_size": 50000,
+                "replay_each": 4,
+                "target_update_every": 1000,
+                "hidden_layers": [
+                    64,
+                    64
+                ]
+            },
+            "frozenlake": {
+                "lr": 0.00025,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.9997,
+                "batch_size": 64,
+                "hidden_layers": [
+                    128,
+                    64
+                ]
+            }
+        },
+        "sarsa": {
+            "minigrid": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.999993,
+                "q_init_val": 0.0
+            },
+            "mountain_car": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.9995,
+                "q_init_val": 0.0
+            },
+            "taxi": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.99,
+                "q_init_val": 0.0
+            },
+            "frozenlake": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.9997,
+                "q_init_val": 0.5
+            }
+        },
+        "q_learning": {
+            "minigrid": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.999993,
+                "q_init_val": 0.0
+            },
+            "mountain_car": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.9995,
+                "q_init_val": 0.0
+            },
+            "taxi": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.99,
+                "q_init_val": 0.0
+            },
+            "frozenlake": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.9997,
+                "q_init_val": 0.5
+            }
+        },
+        "random": {
+            "minigrid": {},
+            "mountain_car": {},
+            "taxi": {},
+            "frozenlake": {}
+        },
+        "description": "Specification gaming pathology where the agent optimizes a proxy reward at the expense of the intended task goal, often by exploiting environment mechanics (e.g., suicide to avoid step penalties). References: Amodei et al. (2016) - https://arxiv.org/abs/1606.06565, Krakovna et al. (2020) - https://www.alignmentforum.org/posts/Fn52RvWzY8sCQC7by/specification-gaming-the-flip-side-of-ai-ingenuity"
+    },
+    "subexploration": {
+        "ppo": {
+            "minigrid": {
+                "lr": 0.00025,
+                "gamma": 0.99,
+                "clip_ratio": 0.2,
+                "lam": 0.95,
+                "train_iters": 4,
+                "batch_size": 64,
+                "value_coef": 0.5,
+                "entropy_coef": 0.05,
+                "hidden_layers": [
+                    128,
+                    128
+                ]
+            },
+            "mountain_car": {
+                "lr": 0.00025,
+                "gamma": 0.99,
+                "clip_ratio": 0.2,
+                "lam": 0.95,
+                "train_iters": 4,
+                "batch_size": 64,
+                "value_coef": 0.5,
+                "entropy_coef": 0.03,
+                "hidden_layers": [
+                    64,
+                    64
+                ]
+            },
+            "taxi": {
+                "lr": 0.00025,
+                "gamma": 0.99,
+                "clip_ratio": 0.2,
+                "lam": 0.95,
+                "train_iters": 4,
+                "batch_size": 64,
+                "value_coef": 0.5,
+                "entropy_coef": 0.02,
+                "hidden_layers": [
+                    64,
+                    64
+                ]
+            },
+            "frozenlake": {
+                "lr": 0.00025,
+                "clip_ratio": 0.2,
+                "entropy_coef": 0.05,
+                "batch_size": 64,
+                "hidden_layers": [
+                    128,
+                    64
+                ]
+            }
+        },
+        "dqn": {
+            "minigrid": {
+                "lr": 0.0005,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.999,
+                "epsilon_decay_steps": 500000,
+                "batch_size": 64,
+                "memory_size": 50000,
+                "replay_each": 4,
+                "target_update_every": 1000,
+                "hidden_layers": [
+                    128,
+                    128
+                ]
+            },
+            "mountain_car": {
+                "lr": 0.0005,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.9995,
+                "epsilon_decay_steps": 100000,
+                "batch_size": 64,
+                "memory_size": 50000,
+                "replay_each": 4,
+                "target_update_every": 1000,
+                "hidden_layers": [
+                    64,
+                    64
+                ]
+            },
+            "taxi": {
+                "lr": 0.0005,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.995,
+                "epsilon_decay_steps": 20000,
+                "batch_size": 64,
+                "memory_size": 50000,
+                "replay_each": 4,
+                "target_update_every": 1000,
+                "hidden_layers": [
+                    64,
+                    64
+                ]
+            },
+            "frozenlake": {
+                "lr": 0.00025,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.9997,
+                "batch_size": 64,
+                "hidden_layers": [
+                    128,
+                    64
+                ]
+            }
+        },
+        "sarsa": {
+            "minigrid": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 0.01,
+                "epsilon_min": 0.0,
+                "epsilon_decay": 0.999993,
+                "q_init_val": 0.0
+            },
+            "mountain_car": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.9995,
+                "q_init_val": 0.0
+            },
+            "taxi": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.99,
+                "q_init_val": 0.0
+            },
+            "frozenlake": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.9997,
+                "q_init_val": 0.5
+            }
+        },
+        "q_learning": {
+            "minigrid": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 0.01,
+                "epsilon_min": 0.0,
+                "epsilon_decay": 0.999993,
+                "q_init_val": 0.0
+            },
+            "mountain_car": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.9995,
+                "q_init_val": 0.0
+            },
+            "taxi": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.99,
+                "q_init_val": 0.0
+            },
+            "frozenlake": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.9997,
+                "q_init_val": 0.5
+            }
+        },
+        "random": {
+            "minigrid": {},
+            "mountain_car": {},
+            "taxi": {},
+            "frozenlake": {}
+        },
+        "description": "Exploration starvation / local optimum trap where exploration noise decays prematurely, freezing the agent into repeating early sub-optimal behaviors. References: Badia et al. (2020) - https://arxiv.org/abs/2002.06038"
+    },
+    "oscillation": {
+        "ppo": {
+            "minigrid": {
+                "lr": 0.0003,
+                "gamma": 0.99,
+                "clip_ratio": 0.2,
+                "train_iters": 10,
+                "batch_size": 64,
+                "value_coef": 0.5,
+                "entropy_coef": 0.01,
+                "hidden_layers": [
+                    128,
+                    128
+                ]
+            },
+            "mountain_car": {
+                "lr": 0.00025,
+                "gamma": 0.99,
+                "clip_ratio": 0.2,
+                "lam": 0.95,
+                "train_iters": 4,
+                "batch_size": 64,
+                "value_coef": 0.5,
+                "entropy_coef": 0.03,
+                "hidden_layers": [
+                    64,
+                    64
+                ]
+            },
+            "taxi": {
+                "lr": 0.00025,
+                "gamma": 0.99,
+                "clip_ratio": 0.2,
+                "lam": 0.95,
+                "train_iters": 4,
+                "batch_size": 64,
+                "value_coef": 0.5,
+                "entropy_coef": 0.02,
+                "hidden_layers": [
+                    64,
+                    64
+                ]
+            },
+            "frozenlake": {
+                "lr": 0.00025,
+                "clip_ratio": 0.2,
+                "entropy_coef": 0.05,
+                "batch_size": 64,
+                "hidden_layers": [
+                    128,
+                    64
+                ]
+            }
+        },
+        "dqn": {
+            "minigrid": {
+                "lr": 0.001,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.999,
+                "epsilon_decay_steps": 500000,
+                "batch_size": 64,
+                "memory_size": 20000,
+                "replay_each": 4,
+                "target_update_every": 1000,
+                "hidden_layers": [
+                    128,
+                    128
+                ]
+            },
+            "mountain_car": {
+                "lr": 0.0005,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.9995,
+                "epsilon_decay_steps": 100000,
+                "batch_size": 64,
+                "memory_size": 50000,
+                "replay_each": 4,
+                "target_update_every": 1000,
+                "hidden_layers": [
+                    64,
+                    64
+                ]
+            },
+            "taxi": {
+                "lr": 0.0005,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.995,
+                "epsilon_decay_steps": 20000,
+                "batch_size": 64,
+                "memory_size": 50000,
+                "replay_each": 4,
+                "target_update_every": 1000,
+                "hidden_layers": [
+                    64,
+                    64
+                ]
+            },
+            "frozenlake": {
+                "lr": 0.00025,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.9997,
+                "batch_size": 64,
+                "hidden_layers": [
+                    128,
+                    64
+                ]
+            }
+        },
+        "sarsa": {
+            "minigrid": {
+                "alpha": 1.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.999993,
+                "q_init_val": 0.0
+            },
+            "mountain_car": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.9995,
+                "q_init_val": 0.0
+            },
+            "taxi": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.99,
+                "q_init_val": 0.0
+            },
+            "frozenlake": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.9997,
+                "q_init_val": 0.5
+            }
+        },
+        "q_learning": {
+            "minigrid": {
+                "alpha": 1.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.999993,
+                "q_init_val": 0.0
+            },
+            "mountain_car": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.9995,
+                "q_init_val": 0.0
+            },
+            "taxi": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.01,
+                "epsilon_decay": 0.99,
+                "q_init_val": 0.0
+            },
+            "frozenlake": {
+                "alpha": 0.1,
+                "gamma": 0.99,
+                "epsilon": 1.0,
+                "epsilon_min": 0.05,
+                "epsilon_decay": 0.9997,
+                "q_init_val": 0.5
+            }
+        },
+        "random": {
+            "minigrid": {},
+            "mountain_car": {},
+            "taxi": {},
+            "frozenlake": {}
+        },
+        "description": "Training instability and optimization collapse due to excessively high learning rates, small batches, or missing target delays, causing wild value oscillations without convergence. References: van Hasselt et al. (2018) - https://arxiv.org/abs/1812.02648, Henderson et al. (2018) - https://arxiv.org/abs/1709.06560"
+    }
+}
