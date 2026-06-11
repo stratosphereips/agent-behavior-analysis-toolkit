@@ -29,12 +29,14 @@ class DQNAgent(Agent):
         self.epsilon = self.params.get("epsilon", 1.0)
         self.epsilon_min = self.params.get("epsilon_min", 0.01)
         self.epsilon_decay = self.params.get("epsilon_decay", 0.999)
-        self.lr = self.params.get("lr", 0.001)
+        self.epsilon_decay_steps = self.params.get("epsilon_decay_steps", None)  # Linear decay over N steps (overrides exponential if set)
+        self.lr = self.params.get("lr", 1e-4)
         self.batch_size = self.params.get("batch_size", 64)
-        self.memory_size = self.params.get("memory_size", 10000)
+        self.memory_size = self.params.get("memory_size", 100000)
         self.replay_each = self.params.get("replay_each", 4) # Train every N steps
         self.target_update_every = self.params.get("target_update_every", 1000)
-        self.hidden_layers = self.params.get("hidden_layers", [64, 32])
+        self.hidden_layers = self.params.get("hidden_layers", [128, 64])
+        self.max_grad_norm = self.params.get("max_grad_norm", 10.0)
         
         # Replay buffer
         self.memory = deque(maxlen=self.memory_size)
@@ -115,6 +117,7 @@ class DQNAgent(Agent):
             loss = self.loss_fn(targets, pred_q_values)
             
         grads = tape.gradient(loss, self.q_network.trainable_variables)
+        grads = [tf.clip_by_norm(g, self.max_grad_norm) for g in grads]
         self.optimizer.apply_gradients(zip(grads, self.q_network.trainable_variables))
         return loss
 
@@ -171,7 +174,11 @@ class DQNAgent(Agent):
                     self.target_network.set_weights(self.q_network.get_weights())
             
             # Epsilon decay
-            if self.epsilon > self.epsilon_min:
+            if self.epsilon_decay_steps is not None:
+                # Linear step-based decay (more robust for short-episode environments)
+                frac = min(1.0, total_steps / self.epsilon_decay_steps)
+                self.epsilon = max(self.epsilon_min, 1.0 - frac * (1.0 - self.epsilon_min))
+            elif self.epsilon > self.epsilon_min:
                 self.epsilon *= self.epsilon_decay
                 
             rewards_history.append(ep_reward)

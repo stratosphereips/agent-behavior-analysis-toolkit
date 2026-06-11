@@ -1,23 +1,11 @@
 import numpy as np
 import math
+from collections import defaultdict
 from .base_agent import Agent
 
 class QLearningAgent(Agent):
     def _initialize_agent(self):
         env = self.params["env"]
-        
-        # Check for discrete observation space
-        if hasattr(env.observation_space, 'n'):
-             self.obs_dim = env.observation_space.n
-             self.is_discrete_obs = True
-        else:
-             # Just take the first dimension if shape is present, 
-             # though tabular Q-Learning won't work well without discretization.
-             self.obs_dim = env.observation_space.shape[0]
-             self.is_discrete_obs = False
-
-        if not self.is_discrete_obs:
-            raise NotImplementedError("Tabular Q-Learning requires a discrete observation space.")
 
         # Check for discrete action space
         if hasattr(env.action_space, 'n'):
@@ -32,13 +20,23 @@ class QLearningAgent(Agent):
         self.epsilon_min = self.params.get("epsilon_min", 0.01)
         self.epsilon_decay = self.params.get("epsilon_decay", 0.995)
         
-        # Initialize Q-table with optimistic values to encourage exploration
+        # Initialize Q-table as a dictionary so it works with any hashable state
+        # (integer indices, tuples, etc.) without needing to know the state space size.
         self.q_init_val = self.params.get("q_init_val", 0.5)
-        self.Q = np.full((self.obs_dim, self.act_dim), self.q_init_val)
+        self.Q = defaultdict(lambda: np.full(self.act_dim, self.q_init_val))
+
+    def _make_state_key(self, state):
+        """Convert a state observation into a hashable key for the Q-table."""
+        if isinstance(state, np.ndarray):
+            return tuple(state.flatten())
+        if isinstance(state, (int, float, np.integer, np.floating)):
+            return int(state)
+        # Already hashable (e.g. tuple from TabularTupleWrapper)
+        return state
 
     def step(self, state, training=False):
         # Handle state extraction
-        state_idx = self._get_state_idx(state)
+        state_key = self._make_state_key(state)
 
         if training:
             if np.random.rand() < self.epsilon:
@@ -46,18 +44,10 @@ class QLearningAgent(Agent):
         
         # Greedy action (argmax)
         # Random tie-breaking for better exploration behavior in initial stages
-        qs = self.Q[state_idx]
+        qs = self.Q[state_key]
         max_q = np.max(qs)
         actions_with_max_q = np.where(qs == max_q)[0]
         return int(np.random.choice(actions_with_max_q))
-
-    def _get_state_idx(self, state):
-        if isinstance(state, np.ndarray):
-            if state.size == 1:
-                return int(state.item())
-            if state.ndim > 0:
-                 return int(state[0])
-        return int(state)
 
     def train_policy(self, env, num_episodes, evaluate_each=None, evaluate_for=None):
         total_steps = 0
@@ -65,25 +55,26 @@ class QLearningAgent(Agent):
         
         for ep in range(num_episodes):
             state, _ = env.reset()
-            state_idx = self._get_state_idx(state)
+            state_key = self._make_state_key(state)
             
             done = False
             ep_reward = 0
             
             while not done:
-                action = self.step(state_idx, training=True)
+                action = self.step(state, training=True)
                 next_state, reward, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
-                next_state_idx = self._get_state_idx(next_state)
+                next_state_key = self._make_state_key(next_state)
                 
                 # Q-learning update
                 # Q(s,a) <- Q(s,a) + alpha * (r + gamma * max(Q(s', a')) - Q(s,a))
-                best_next_action_val = np.max(self.Q[next_state_idx])
+                best_next_action_val = np.max(self.Q[next_state_key])
                 
-                target = reward + self.gamma * best_next_action_val * (not done)
-                self.Q[state_idx, action] += self.alpha * (target - self.Q[state_idx, action])
+                target = reward + self.gamma * best_next_action_val * (not terminated)
+                self.Q[state_key][action] += self.alpha * (target - self.Q[state_key][action])
                 
-                state_idx = next_state_idx
+                state_key = next_state_key
+                state = next_state
                 ep_reward += reward
                 total_steps += 1
             

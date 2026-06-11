@@ -1,22 +1,10 @@
 import numpy as np
+from collections import defaultdict
 from .base_agent import Agent
 
 class SarsaAgent(Agent):
     def _initialize_agent(self):
         env = self.params["env"]
-        
-        # Check for discrete observation space
-        if hasattr(env.observation_space, 'n'):
-             self.obs_dim = env.observation_space.n
-             self.is_discrete_obs = True
-        else:
-             # Just take the first dimension if shape is present, 
-             # though tabular SARSA won't work well without discretization.
-             self.obs_dim = env.observation_space.shape[0]
-             self.is_discrete_obs = False
-
-        if not self.is_discrete_obs:
-            raise NotImplementedError("Tabular Sarsa only supports discrete observation spaces.")
 
         # Check for discrete action space
         if hasattr(env.action_space, 'n'):
@@ -31,13 +19,23 @@ class SarsaAgent(Agent):
         self.epsilon_min = self.params.get("epsilon_min", 0.01)
         self.epsilon_decay = self.params.get("epsilon_decay", 0.995)
         
-        # Initialize Q-table with optimistic values to encourage exploration
+        # Initialize Q-table as a dictionary so it works with any hashable state
+        # (integer indices, tuples, etc.) without needing to know the state space size.
         self.q_init_val = self.params.get("q_init_val", 0.5)
-        self.Q = np.full((self.obs_dim, self.act_dim), self.q_init_val)
+        self.Q = defaultdict(lambda: np.full(self.act_dim, self.q_init_val))
+
+    def _make_state_key(self, state):
+        """Convert a state observation into a hashable key for the Q-table."""
+        if isinstance(state, np.ndarray):
+            return tuple(state.flatten())
+        if isinstance(state, (int, float, np.integer, np.floating)):
+            return int(state)
+        # Already hashable (e.g. tuple from TabularTupleWrapper)
+        return state
 
     def step(self, state, training=False):
         # Handle state extraction
-        state_idx = self._get_state_idx(state)
+        state_key = self._make_state_key(state)
 
         if training:
             if np.random.rand() < self.epsilon:
@@ -45,18 +43,10 @@ class SarsaAgent(Agent):
         
         # Greedy action (argmax)
         # Random tie-breaking for better exploration behavior in initial stages
-        qs = self.Q[state_idx]
+        qs = self.Q[state_key]
         max_q = np.max(qs)
         actions_with_max_q = np.where(qs == max_q)[0]
         return int(np.random.choice(actions_with_max_q))
-
-    def _get_state_idx(self, state):
-        if isinstance(state, np.ndarray):
-            if state.size == 1:
-                return int(state.item())
-            if state.ndim > 0:
-                 return int(state[0])
-        return int(state)
 
     def train_policy(self, env, num_episodes, evaluate_each=None, evaluate_for=None):
         total_steps = 0
@@ -64,10 +54,10 @@ class SarsaAgent(Agent):
         
         for ep in range(num_episodes):
             state, _ = env.reset()
-            state_idx = self._get_state_idx(state)
+            state_key = self._make_state_key(state)
             
             # Select action a
-            action = self.step(state_idx, training=True)
+            action = self.step(state, training=True)
             
             done = False
             ep_reward = 0
@@ -75,20 +65,21 @@ class SarsaAgent(Agent):
             while not done:
                 next_state, reward, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
-                next_state_idx = self._get_state_idx(next_state)
+                next_state_key = self._make_state_key(next_state)
                 
-                # Select action a'
-                if not done:
-                    next_action = self.step(next_state_idx, training=True)
+                if not terminated:
+                    next_action = self.step(next_state, training=True)
                     # SARSA update
-                    target = reward + self.gamma * self.Q[next_state_idx, next_action]
-                    self.Q[state_idx, action] += self.alpha * (target - self.Q[state_idx, action])
-                    
-                    state_idx = next_state_idx
-                    action = next_action
+                    target = reward + self.gamma * self.Q[next_state_key][next_action]
+                    self.Q[state_key][action] += self.alpha * (target - self.Q[state_key][action])
                 else:
                     # Terminal update
-                    self.Q[state_idx, action] += self.alpha * (reward - self.Q[state_idx, action])
+                    self.Q[state_key][action] += self.alpha * (reward - self.Q[state_key][action])
+                
+                if not done:
+                    state_key = next_state_key
+                    state = next_state
+                    action = next_action
                 
                 ep_reward += reward
                 total_steps += 1

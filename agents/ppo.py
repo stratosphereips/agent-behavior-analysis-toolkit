@@ -25,20 +25,28 @@ class PPOAgent(Agent):
         # Hyperparameters
         self.clip_ratio = self.params.get("clip_ratio", 0.2)
         self.gamma = self.params.get("gamma", 0.99)
-        self.lam = self.params.get("lam", 0.9)
-        self.train_iters = self.params.get("train_iters", 5)  # Epochs per update (lower to prevent policy collapse)
+        self.lam = self.params.get("lam", 0.95)
+        self.train_iters = self.params.get("train_iters", 4)  # Epochs per update (lower to prevent policy collapse in stochastic envs)
         self.batch_size = self.params.get("batch_size", 64)
-        self.lr = self.params.get("lr", 3e-4)
-        self.target_kl = self.params.get("target_kl", 0.01)
-        self.entropy_coef = self.params.get("entropy_coef", 0.01)
+        self.lr = self.params.get("lr", 2.5e-4)
+        self.target_kl = self.params.get("target_kl", 0.015)
+        self.entropy_coef = self.params.get("entropy_coef", 0.05)
         self.value_coef = self.params.get("value_coef", 0.5)
-        self.hidden_layers = self.params.get("hidden_layers", [64, 32])
+        self.hidden_layers = self.params.get("hidden_layers", [64, 64])
+        self.max_grad_norm = self.params.get("max_grad_norm", 0.5)
+        self.anneal_lr = self.params.get("anneal_lr", True)
+        
+        # Epsilon-greedy exploration (helps PPO escape local minima in sparse-reward envs)
+        self.epsilon = self.params.get("epsilon", 1.0)
+        self.epsilon_min = self.params.get("epsilon_min", 0.01)
+        self.epsilon_decay_frac = self.params.get("epsilon_decay_frac", 0.6)  # Decay over 60% of training
 
         # Policy Network
         self.actor = self._build_actor()
         self.critic = self._build_critic()
         
-        self.optimizer = optimizers.Adam(learning_rate=self.lr)
+        self.actor_optimizer = optimizers.Adam(learning_rate=self.lr)
+        self.critic_optimizer = optimizers.Adam(learning_rate=self.lr)
 
     def _build_actor(self):
         if self.is_discrete_obs:
@@ -69,6 +77,15 @@ class PPOAgent(Agent):
         value = layers.Dense(1)(x)
         return tf.keras.Model(inputs=inputs, outputs=value)
 
+    @tf.function
+    def _step_tf(self, state_tensor, training):
+        logits = self.actor(state_tensor)
+        if training:
+            action = tf.random.categorical(logits, 1)[0, 0]
+        else:
+            action = tf.argmax(logits, axis=1)[0]
+        return action
+
     def step(self, state, training=False):
         # Expect state to be (obs_dim,) or (1, obs_dim)
         if not isinstance(state, np.ndarray):
@@ -79,16 +96,22 @@ class PPOAgent(Agent):
         else:
              state_tensor = tf.convert_to_tensor(state.reshape(1, -1), dtype=tf.float32)
 
-        logits = self.actor(state_tensor)
-        
-        if training:
-            action = tf.random.categorical(logits, 1)[0, 0]
-        else:
-            action = tf.argmax(logits, axis=1)[0]
+        action = self._step_tf(state_tensor, tf.convert_to_tensor(training, dtype=tf.bool))
             
         return int(action.numpy())
 
-    def get_action_and_val(self, state):
+    @tf.function
+    def _get_action_and_val_tf(self, state_tensor):
+        logits = self.actor(state_tensor)
+        value = self.critic(state_tensor)
+        
+        action = tf.random.categorical(logits, 1)[0, 0]
+        log_prob = tf.nn.log_softmax(logits)
+        action_log_prob = log_prob[0, action]
+        
+        return action, action_log_prob, value[0, 0]
+
+    def get_action_and_val(self, state, explore_epsilon=0.0):
         if not isinstance(state, np.ndarray):
             state = np.array([state])
             
@@ -97,17 +120,24 @@ class PPOAgent(Agent):
         else:
              state_tensor = tf.convert_to_tensor(state.reshape(1, -1), dtype=tf.float32)
 
-        logits = self.actor(state_tensor)
-        value = self.critic(state_tensor)
+        action, log_prob, val = self._get_action_and_val_tf(state_tensor)
+        action = int(action.numpy())
         
-        action = tf.random.categorical(logits, 1)[0, 0]
-        log_prob = tf.nn.log_softmax(logits)
-        action_log_prob = log_prob[0, action]
+        # Epsilon-greedy override: take a random action with probability epsilon
+        # but keep the log_prob from the policy for the PPO update
+        if explore_epsilon > 0 and np.random.rand() < explore_epsilon:
+            action = np.random.randint(self.act_dim)
+            # Recompute log_prob for the random action from the current policy
+            logits = self.actor(state_tensor)
+            all_log_probs = tf.nn.log_softmax(logits)
+            log_prob = all_log_probs[0, action].numpy()
+        else:
+            log_prob = log_prob.numpy()
         
-        return int(action.numpy()), action_log_prob.numpy(), value.numpy()[0, 0]
+        return action, log_prob, val.numpy()
 
     def compute_gae(self, rewards, values, dones, next_value):
-        advantages = np.zeros_like(rewards)
+        advantages = np.zeros(len(rewards), dtype=np.float32)
         last_gae_lam = 0
         values = np.append(values, next_value)
         
@@ -120,10 +150,9 @@ class PPOAgent(Agent):
 
     @tf.function
     def train_step(self, states, actions, old_log_probs, returns, advantages):
-        with tf.GradientTape() as tape:
+        # Actor update
+        with tf.GradientTape() as actor_tape:
             logits = self.actor(states)
-            values = self.critic(states)
-            values = tf.squeeze(values)
             
             # Policy Loss
             log_probs = tf.nn.log_softmax(logits)
@@ -137,23 +166,32 @@ class PPOAgent(Agent):
             surr2 = tf.clip_by_value(ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio) * advantages
             policy_loss = -tf.reduce_mean(tf.minimum(surr1, surr2))
             
-            # Value Loss
-            value_loss = tf.reduce_mean((returns - values) ** 2)
-            
             # Entropy
             probs = tf.nn.softmax(logits)
             entropy = -tf.reduce_sum(probs * log_probs, axis=1)
             entropy_mean = tf.reduce_mean(entropy)
             
-            loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy_mean
+            actor_loss = policy_loss - self.entropy_coef * entropy_mean
 
-        trainable_vars = self.actor.trainable_variables + self.critic.trainable_variables
-        grads = tape.gradient(loss, trainable_vars)
-        self.optimizer.apply_gradients(zip(grads, trainable_vars))
+        actor_grads = actor_tape.gradient(actor_loss, self.actor.trainable_variables)
+        actor_grads, _ = tf.clip_by_global_norm(actor_grads, self.max_grad_norm)
+        self.actor_optimizer.apply_gradients(zip(actor_grads, self.actor.trainable_variables))
         
-        # Approximate KL for early stopping (optional, mostly for logging/debugging here)
+        # Critic update
+        with tf.GradientTape() as critic_tape:
+            values = self.critic(states)
+            values = tf.squeeze(values, axis=-1)
+            value_loss = tf.reduce_mean((returns - values) ** 2)
+
+        critic_grads = critic_tape.gradient(value_loss, self.critic.trainable_variables)
+        critic_grads, _ = tf.clip_by_global_norm(critic_grads, self.max_grad_norm)
+        self.critic_optimizer.apply_gradients(zip(critic_grads, self.critic.trainable_variables))
+        
+        loss = actor_loss + self.value_coef * value_loss
+        
+        # Approximate KL(old || new) for early stopping
         approx_kl = tf.reduce_mean(old_log_probs - new_log_probs)
-        return loss, policy_loss, value_loss, approx_kl
+        return loss, policy_loss, value_loss, tf.abs(approx_kl)
 
     def train_policy(self, env, num_episodes, evaluate_each=None, evaluate_for=None):
         # Note: PPO typically trains on a fixed number of timesteps per update, rather than strictly episodes.
@@ -162,7 +200,7 @@ class PPOAgent(Agent):
         # For simplicity in this structure: gather 'steps_per_epoch' steps, then update.
         # Overriding the loop slightly to fit the PPO style efficiently.
         
-        steps_per_epoch = self.params.get("steps_per_epoch", 4096)
+        steps_per_epoch = self.params.get("steps_per_epoch", 2048)
         total_steps = 0
         rewards_history = []
         
@@ -170,13 +208,15 @@ class PPOAgent(Agent):
         
         # We'll just run for num_episodes effectively, but batched updates happen every steps_per_epoch
         episodes_completed = 0
+        episode_reward = 0  # Accumulator for current episode return
+        pending_eval = False  # Flag for triggering evaluation after buffer updates
         
         # Buffers for one epoch
         b_obs, b_acts, b_logprobs, b_rews, b_dones, b_vals = [], [], [], [], [], []
         
         while episodes_completed < num_episodes:
-            # Collect experience
-            action, log_prob, val = self.get_action_and_val(state)
+            # Collect experience with epsilon-greedy exploration
+            action, log_prob, val = self.get_action_and_val(state, explore_epsilon=self.epsilon)
             next_state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
             
@@ -189,12 +229,15 @@ class PPOAgent(Agent):
             
             state = next_state
             total_steps += 1
+            episode_reward += reward
             
-            term = False
             if done:
                 episodes_completed += 1
-                rewards_history.append(np.sum(b_rews[-(len(b_rews) - len(b_vals) + 1):])) # This is tricky with the buffer logic, let's just track ep rewards separately
+                rewards_history.append(episode_reward)
+                episode_reward = 0
                 state, _ = env.reset()
+                if evaluate_each and episodes_completed % evaluate_each == 0:
+                    pending_eval = True
                 
             # If buffer is full, update
             if len(b_obs) >= steps_per_epoch:
@@ -232,14 +275,36 @@ class PPOAgent(Agent):
                 # Normalize advantages
                 adv_arr = (adv_arr - adv_arr.mean()) / (adv_arr.std() + 1e-8)
                 
+                # Learning rate annealing
+                if self.anneal_lr:
+                    frac = max(0.0, 1.0 - (episodes_completed / num_episodes))
+                    self.actor_optimizer.learning_rate.assign(self.lr * frac)
+                    self.critic_optimizer.learning_rate.assign(self.lr * frac)
+                
+                # Epsilon decay (linear over epsilon_decay_frac of total episodes)
+                decay_episodes = num_episodes * self.epsilon_decay_frac
+                if decay_episodes > 0:
+                    self.epsilon = max(self.epsilon_min, 1.0 - (episodes_completed / decay_episodes) * (1.0 - self.epsilon_min))
+                
                 # Update
-                dataset = tf.data.Dataset.from_tensor_slices((obs_arr, act_arr, logprob_arr, ret_arr, adv_arr))
-                dataset = dataset.shuffle(steps_per_epoch).batch(self.batch_size)
+                indices = np.arange(len(obs_arr))
                 
                 for epoch in range(self.train_iters):
+                    np.random.shuffle(indices)
                     kl_exceeded = False
-                    for batch in dataset:
-                        loss, p_loss, v_loss, approx_kl = self.train_step(*batch)
+                    for start in range(0, len(obs_arr), self.batch_size):
+                        batch_idx = indices[start:start+self.batch_size]
+                        
+                        b_obs_tf = tf.convert_to_tensor(obs_arr[batch_idx])
+                        b_act_tf = tf.convert_to_tensor(act_arr[batch_idx])
+                        b_logprob_tf = tf.convert_to_tensor(logprob_arr[batch_idx])
+                        b_ret_tf = tf.convert_to_tensor(ret_arr[batch_idx])
+                        b_adv_tf = tf.convert_to_tensor(adv_arr[batch_idx])
+                        
+                        loss, p_loss, v_loss, approx_kl = self.train_step(
+                            b_obs_tf, b_act_tf, b_logprob_tf, b_ret_tf, b_adv_tf
+                        )
+                        
                         # Early stopping on KL divergence to prevent destructive updates
                         if approx_kl > 1.5 * self.target_kl:
                             kl_exceeded = True
@@ -254,7 +319,8 @@ class PPOAgent(Agent):
                 if rewards_history:
                     print(f"Update at step {total_steps}. Recent Mean Reward: {np.mean(rewards_history[-10:]):.2f}")
 
-            if evaluate_each and episodes_completed % evaluate_each == 0 and done:
+            if pending_eval:
+                 pending_eval = False
                  print(f"Evaluation after episode {episodes_completed}...")
                  # Manual evaluation loop with recording to match RandomAgent style
                  eval_returns = []
