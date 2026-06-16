@@ -26,13 +26,28 @@ if __name__ == "__main__":
     parser.add_argument("--evaluate_each", default=500, type=int, help="Periodic evluation frequency")
     parser.add_argument("--evaluate_for", default=500, type=int, help="Periodic evluation length")
     parser.add_argument("--model", default="random", type=str, choices=["random", "ppo", "q_learning", "sarsa", "dqn"], help="Agent model type")
-    parser.add_argument("--gamma", default=0.95, type=float, help="Discount factor")
-    parser.add_argument("--alpha", default=0.1, type=float, help="Learning rate for Q-learning/Sarsa")
-    parser.add_argument("--epsilon_decay", default=0.9997, type=float, help="Epsilon decay rate")
-    parser.add_argument("--min_epsilon", default=0.05, type=float, help="Minimum epsilon")
-    parser.add_argument("--entropy_coef", default=0.03, type=float, help="Entropy coefficient for PPO (controls stochastic exploration)")
-    parser.add_argument("--hidden_layers", default="64,32", type=str, help="Comma-separated hidden layer sizes for NN-based models (DQN, PPO)")
+    parser.add_argument("--gamma", type=float, help="Discount factor")
+    parser.add_argument("--alpha", type=float, help="Learning rate for Q-learning/Sarsa")
+    parser.add_argument("--lr", type=float, help="Learning rate (NN)")
+    parser.add_argument("--epsilon", type=float, help="Epsilon (exploration)")
+    parser.add_argument("--epsilon_min", type=float, help="Minimum epsilon")
+    parser.add_argument("--epsilon_decay", type=float, help="Epsilon decay rate")
+    parser.add_argument("--entropy_coef", type=float, help="Entropy coefficient for PPO")
+    parser.add_argument("--entropy_min", type=float, help="PPO entropy minimum")
+    parser.add_argument("--entropy_decay_frac", type=float, help="Fraction of training over which entropy decays")
+    parser.add_argument("--hidden_layers", type=int, nargs="+", help="Hidden layer sizes for NN-based models")
     parser.add_argument("--slippery", action="store_true", default=True, help="Make the environment slippery")
+    parser.add_argument("--no_slippery", action="store_false", dest="slippery", help="Make the environment non-slippery")
+    parser.add_argument("--q_init_val", type=float, help="Initial value for Q-table")
+    parser.add_argument("--clip_ratio", type=float, help="PPO clip ratio")
+    parser.add_argument("--lam", type=float, help="PPO lambda")
+    parser.add_argument("--train_iters", type=int, help="PPO train iterations")
+    parser.add_argument("--batch_size", type=int, help="Batch size")
+    parser.add_argument("--value_coef", type=float, help="PPO value coefficient")
+    parser.add_argument("--memory_size", type=int, help="DQN memory size")
+    parser.add_argument("--replay_each", type=int, help="DQN replay frequency")
+    parser.add_argument("--target_update_every", type=int, help="DQN target update frequency")
+    parser.add_argument("--epsilon_decay_steps", type=int, help="DQN epsilon decay steps")
     parser.add_argument("--log_dir", type=str, help="Custom directory for trajectories")
     args = parser.parse_args()
     
@@ -40,36 +55,72 @@ if __name__ == "__main__":
     if args.episodes == 30000 or args.episodes == 5000:
         args.episodes = 30000 if args.slippery else 5000
 
-    # Parse hidden layers
-    args.hidden_layers = [int(x) for x in args.hidden_layers.split(",")]
-
     # Fix random seed
     random.seed(args.seed)
     np.random.seed(args.seed)
     tf.random.set_seed(args.seed)
-    experiment_config = {
-        "env": "FrozenLake-v1-8x8-slippery" if args.slippery else "FrozenLake-v1-8x8", # Custom name for logging
-        "model": args.model,
-        "gamma": args.gamma,
-        "alpha": args.alpha, # Q-learning/Sarsa alpha
-        "epsilon": 1.0,
-        "epsilon_min": args.min_epsilon,
-        "epsilon_decay": args.epsilon_decay,
-        # Hyperparams for PPO/DQN
-        "lr": 5e-4, 
-        "clip_ratio": 0.2,
-        "entropy_coef": args.entropy_coef,
-        "batch_size": 32,
-        "memory_size": 50000,
-        "replay_each": 4,
-        "target_update_every": 500,
-        "hidden_layers": args.hidden_layers
+
+    # Agent-specific configurations for FrozenLake
+    AGENT_CONFIGS = {
+        "ppo": {
+            "lr": args.lr,
+            "gamma": args.gamma,
+            "clip_ratio": args.clip_ratio,
+            "lam": args.lam,
+            "train_iters": args.train_iters,
+            "batch_size": args.batch_size,
+            "value_coef": args.value_coef,
+            "entropy_coef": args.entropy_coef,
+            "entropy_min": args.entropy_min,
+            "entropy_decay_frac": args.entropy_decay_frac,
+            "hidden_layers": args.hidden_layers
+        },
+        "dqn": {
+            "lr": args.lr,
+            "gamma": args.gamma,
+            "epsilon": args.epsilon,
+            "epsilon_min": args.epsilon_min,
+            "epsilon_decay": args.epsilon_decay,
+            "epsilon_decay_steps": args.epsilon_decay_steps,
+            "batch_size": args.batch_size,
+            "memory_size": args.memory_size,
+            "replay_each": args.replay_each,
+            "target_update_every": args.target_update_every,
+            "hidden_layers": args.hidden_layers
+        },
+        "sarsa": {
+            "alpha": args.alpha,
+            "gamma": args.gamma,
+            "epsilon": args.epsilon,
+            "epsilon_min": args.epsilon_min,
+            "epsilon_decay": args.epsilon_decay,
+            "q_init_val": args.q_init_val
+        },
+        "q_learning": {
+             "alpha": args.alpha,
+             "gamma": args.gamma,
+             "epsilon": args.epsilon,
+             "epsilon_min": args.epsilon_min,
+             "epsilon_decay": args.epsilon_decay,
+             "q_init_val": args.q_init_val
+        },
+        "random": {}
     }
-    experiment_config.update(vars(args))
+
+    # Start with the specific config for the selected model, filtering out unset (None) CLI args
+    experiment_config = {k: v for k, v in AGENT_CONFIGS[args.model].items() if v is not None}
+    
+    # Add common/environment configs
+    experiment_config.update({
+        "env": "FrozenLake-v1-8x8-slippery" if args.slippery else "FrozenLake-v1-8x8",
+        "model": args.model,
+    })
+    
+    # Override with any CLI arguments that were explicitly set (not None)
+    experiment_config.update({k: v for k, v in vars(args).items() if v is not None})
+    print(f"Running {experiment_config['env']} with config:")
     print(experiment_config)
     
-    # basic env
-    # FrozenLake-hard usually implies 8x8 map and slippery
 
     # FrozenLake-hard usually implies 8x8 map and slippery
     env = gym.make("FrozenLake-v1", desc=None, map_name="8x8", is_slippery=args.slippery)
@@ -102,11 +153,11 @@ if __name__ == "__main__":
     # Filter args for log path to avoid filename too long
     common_keys = ["env", "model", "seed", "episodes", "evaluate_each", "evaluate_for", "slippery"]
     if args.model in ["q_learning", "sarsa"]:
-        relevant_keys = common_keys + ["gamma", "alpha", "epsilon", "epsilon_min", "epsilon_decay"]
+        relevant_keys = common_keys + ["gamma", "alpha", "epsilon", "epsilon_min", "epsilon_decay", "q_init_val"]
     elif args.model == "dqn":
-        relevant_keys = common_keys + ["gamma", "epsilon", "epsilon_min", "epsilon_decay", "lr", "batch_size", "memory_size", "replay_each", "target_update_every", "hidden_layers"]
+        relevant_keys = common_keys + ["gamma", "epsilon", "epsilon_min", "epsilon_decay", "epsilon_decay_steps", "lr", "batch_size", "memory_size", "replay_each", "target_update_every", "hidden_layers"]
     elif args.model == "ppo":
-        relevant_keys = common_keys + ["gamma", "lr", "clip_ratio", "entropy_coef", "hidden_layers"]
+        relevant_keys = common_keys + ["gamma", "lr", "clip_ratio", "entropy_coef", "entropy_min", "entropy_decay_frac", "hidden_layers"]
     else: # random
         relevant_keys = common_keys
         

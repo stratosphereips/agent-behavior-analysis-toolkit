@@ -58,6 +58,7 @@ if __name__ == "__main__":
     parser.add_argument("--evaluate_each", default=100, type=int, help="Periodic evluation frequency")
     parser.add_argument("--evaluate_for", default=200, type=int, help="Periodic evluation length")
     parser.add_argument("--model", default="random", type=str, choices=["random", "ppo", "dqn", "sarsa", "q_learning"], help="Agent model type")
+    parser.add_argument("--env_type", default="both", type=str, choices=["standard", "fickle", "rainy", "both"], help="Environment type")
     
     # Hyperparameters (Optional overrides)
     parser.add_argument("--alpha", type=float, help="Learning rate (tabular)")
@@ -66,7 +67,9 @@ if __name__ == "__main__":
     parser.add_argument("--epsilon", type=float, help="Epsilon (exploration)")
     parser.add_argument("--epsilon_min", type=float, help="Minimum epsilon")
     parser.add_argument("--epsilon_decay", type=float, help="Epsilon decay rate/factor")
-    parser.add_argument("--entropy_coef", type=float, help="PPO entropy coefficient")
+    parser.add_argument("--entropy_coef", type=float, help="PPO entropy coefficient (initial value)")
+    parser.add_argument("--entropy_min", type=float, help="PPO entropy minimum")
+    parser.add_argument("--entropy_decay_frac", type=float, help="Fraction of training over which entropy decays (e.g. 0.3)")
     parser.add_argument("--q_init_val", type=float, help="Initial Q table value")
     parser.add_argument("--clip_ratio", type=float, help="PPO clip ratio")
     parser.add_argument("--lam", type=float, help="PPO lambda")
@@ -99,6 +102,8 @@ if __name__ == "__main__":
             "batch_size": args.batch_size,
             "value_coef": args.value_coef,
             "entropy_coef": args.entropy_coef,
+            "entropy_min": args.entropy_min,
+            "entropy_decay_frac": args.entropy_decay_frac,
             "hidden_layers": args.hidden_layers
         },
         "dqn": {
@@ -133,8 +138,9 @@ if __name__ == "__main__":
         "random": {}
     }
 
-    # Start with the specific config for the selected model
-    experiment_config = AGENT_CONFIGS[args.model].copy()
+    # Start with the specific config for the selected model, filtering out unset (None) CLI args
+    # so they don't override the agent's internal defaults
+    experiment_config = {k: v for k, v in AGENT_CONFIGS[args.model].items() if v is not None}
     
     # Add common/environment configs
     experiment_config.update({
@@ -148,12 +154,22 @@ if __name__ == "__main__":
     print(experiment_config)
     
     # Create Env
-    env = gym.make("Taxi-v4",fickle_passenger=True, is_rainy=True, rainy_probability=0.9, fickle_probability=0.1)
+    if args.env_type == "standard":
+        env = gym.make("Taxi-v4")
+    elif args.env_type == "fickle":
+        env = gym.make("Taxi-v4",fickle_passenger=True, fickle_probability=0.1)
+    elif args.env_type == "rainy":
+        env = gym.make("Taxi-v4",is_rainy=True, rainy_probability=0.9)
+    elif args.env_type == "both":
+        env = gym.make("Taxi-v4",fickle_passenger=True, is_rainy=True, rainy_probability=0.9, fickle_probability=0.1)
+
+    print(f"Running {args.env_type.upper()} Taxi-v3 with config:")
+    print(experiment_config)
     
-    # Apply Feature Wrapper ONLY for Neural Network agents so they can generalize!
-    if args.model in ["ppo"]:
-        env = TaxiFeatureWrapper(env)
-        
+    # We do NOT use TaxiFeatureWrapper for PPO anymore.
+    # Passing the raw discrete state allows PPO's internal one-hot encoding 
+    # to treat this as a tabular problem, avoiding the need to learn maze walls from coordinates.
+    
     env.action_space.seed(args.seed)
     env.reset(seed=args.seed)
     
@@ -164,7 +180,7 @@ if __name__ == "__main__":
     elif args.model == "dqn":
         relevant_keys = common_keys + ["gamma", "epsilon", "epsilon_min", "epsilon_decay", "lr", "batch_size", "memory_size", "replay_each", "target_update_every"]
     elif args.model == "ppo":
-        relevant_keys = common_keys + ["gamma", "lr", "clip_ratio", "entropy_coef"]
+        relevant_keys = common_keys + ["gamma", "lr", "clip_ratio", "entropy_coef", "entropy_min", "entropy_decay_frac"]
     else:
         relevant_keys = common_keys
         
