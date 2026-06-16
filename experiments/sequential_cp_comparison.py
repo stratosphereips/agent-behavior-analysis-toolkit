@@ -62,12 +62,13 @@ def compute_checkpoint_stats(checkpoint_policies):
         checkpoint_stats[cp_key] = checkpoint_stats_worker(checkpoint_policies[cp_key])
     return checkpoint_stats
 
-def checkpoint_comparison_worker(current_policy, previous_policy, ngram_cost_matrix, global_ngrams, global_actions):
+
+def policy_comparison_worker(policy1:EmpiricalPolicy, policy2:EmpiricalPolicy, ngram_cost_matrix:np.ndarray, global_ngrams:list[tuple], global_actions:list[int]):
     """
-    Worker function for comparing checkpoints.
+    Worker function for comparing two policies.
     Args:
-        current_policy: Current policy
-        previous_policy: Previous policy
+        policy1: Current policy
+        policy2: Previous policy
         ngram_cost_matrix: Cost matrix for n-grams
         global_ngrams: Global ordering of n-grams
         global_actions: Global ordering of actions
@@ -75,15 +76,67 @@ def checkpoint_comparison_worker(current_policy, previous_policy, ngram_cost_mat
         dict: Dictionary of errors for the given checkpoint pair
     """
     results = {}
-    topo_shift_values =  compute_decomposed_jsd(current_policy._state_visitation_count, previous_policy._state_visitation_count)
+    topo_shift_values =  compute_decomposed_jsd(policy1._state_visitation_count, policy2._state_visitation_count)
     results["topological_shift"] = topo_shift_values["jsd_total"]
     results["topological_shift_overlap"] = topo_shift_values["jsd_overlap"]
     results["topological_shift_non_overlap"] = topo_shift_values["jsd_non_overlap"]
-    results["strategic_shift"] = strategic_shift(current_policy, previous_policy, global_actions=global_actions, noise_value=0.0)
-    results["3-gram_wasserstein"] = compute_ngram_wasserstein_fast(current_policy.trajectories, previous_policy.trajectories, global_ngrams, ngram_cost_matrix, n=3)
-    results["node_overlap"] = len(set(current_policy.states).intersection(set(previous_policy.states)))
-    results["nodes_added"] = len(set(current_policy.states).difference(set(previous_policy.states)))
-    results["nodes_removed"] = len(set(previous_policy.states).difference(set(current_policy.states)))
+    results["strategic_shift"] = strategic_shift(policy1, policy2, global_actions=global_actions, noise_value=0.0)
+    results["3-gram_wasserstein"] = compute_ngram_wasserstein_fast(policy1.trajectories, policy2.trajectories, global_ngrams, ngram_cost_matrix, n=3)
+    results["node_overlap"] = len(set(policy1.states).intersection(set(policy2.states)))
+    results["nodes_added"] = len(set(policy1.states).difference(set(policy2.states)))
+    results["nodes_removed"] = len(set(policy2.states).difference(set(policy1.states)))
+    return results
+
+def estimate_noise_valus_for_policies(polcy1:EmpiricalPolicy, polcy2:EmpiricalPolicy, ngram_cost_matrix:np.ndarray, global_ngrams:list[tuple], global_actions:list[int], num_samples:int=100, percentile:float=0.95):
+    # combine all trajectories into single pool
+    all_trajectories = polcy1.trajectories + polcy2.trajectories
+    N = len(all_trajectories)
+    half_N = N // 2
+    errors = {
+        "topological_shift": [],
+        "topological_shift_overlap": [],
+        "topological_shift_non_overlap": [],
+        "strategic_shift": [],
+        "3-gram_wasserstein": [],
+    }
+    # prepare tmp policy pairs
+    tmp_policy_pairs = []
+    tmp_policies = {}
+    for i in range(num_samples):
+        tmp_policy_pairs = []
+        tmp_policies = {}
+        # shuffle trajectories
+        np.random.shuffle(all_trajectories)
+        # split into two halves
+        tmp_policy1 = EmpiricalPolicy(all_trajectories[:half_N], action_space=global_actions)
+        tmp_policy2 = EmpiricalPolicy(all_trajectories[half_N:], action_space=global_actions)
+        tmp_policy_pairs.append((f"{i}_1", f"{i}_2"))
+        tmp_policies[f"{i}_1"] = tmp_policy1
+        tmp_policies[f"{i}_2"] = tmp_policy2
+        # compute errors for all tmp policy pairs
+        tmp_errors = compare_checkpoints(tmp_policy_pairs,tmp_policies, ngram_cost_matrix, global_ngrams, global_actions)
+        for tmp_error in tmp_errors.values():
+            errors["topological_shift"].append(tmp_error["topological_shift"])  
+            errors["topological_shift_overlap"].append(tmp_error["topological_shift_overlap"])
+            errors["topological_shift_non_overlap"].append(tmp_error["topological_shift_non_overlap"])
+            errors["strategic_shift"].append(tmp_error["strategic_shift"])
+            errors["3-gram_wasserstein"].append(tmp_error["3-gram_wasserstein"])
+    # compute percentile for each metric and return
+    return {k: np.quantile(v, percentile) for k, v in errors.items()}
+
+def estimate_noise_values(policy_pairs, policies, ngram_cost_matrix, global_ngrams, global_actions, num_samples:int=50, percentile:float=0.95):
+    results = {}
+    with ProcessPoolExecutor() as executor:
+        futures = {
+            executor.submit(estimate_noise_valus_for_policies, policies[p1], policies[p2], ngram_cost_matrix, global_ngrams, global_actions, num_samples, percentile): (p1, p2)
+            for p1, p2 in policy_pairs
+        }
+        for f in as_completed(futures):
+            p1, p2 = futures[f]
+            try:
+                results[(p1, p2)] = f.result()
+            except Exception as e:
+                print(f"Error estimating noise values for policy pair: {e}")
     return results
 
 def compare_checkpoints(checkpoint_pairs, checkpoint_policies, ngram_cost_matrix, global_ngrams, global_actions):
@@ -100,10 +153,9 @@ def compare_checkpoints(checkpoint_pairs, checkpoint_policies, ngram_cost_matrix
     results = {}
     with ProcessPoolExecutor() as executor:
         futures = {
-            executor.submit(checkpoint_comparison_worker, checkpoint_policies[current], checkpoint_policies[previous], ngram_cost_matrix, global_ngrams, global_actions): (current, previous)
+            executor.submit(policy_comparison_worker, checkpoint_policies[current], checkpoint_policies[previous], ngram_cost_matrix, global_ngrams, global_actions): (current, previous)
             for previous, current in checkpoint_pairs
         }
-        
         for f in as_completed(futures):
             current, previous = futures[f]
             try:
@@ -112,77 +164,79 @@ def compare_checkpoints(checkpoint_pairs, checkpoint_policies, ngram_cost_matrix
                 print(f"Error comparing checkpoint {current} and {previous}: {e}")
     return results
 
-def compute_errors_per_checkpoint(checkpoint_policies:dict, ngram_cost_matrix, global_ngrams, global_actions):
-    """
-    Compute errors for each checkpoint.
-    Args:
-        checkpoint_policies: Dictionary of policies for each checkpoint
-        ngram_cost_matrix: Cost matrix for n-grams
-        global_ngrams: Global ordering of n-grams
-        global_actions: Global ordering of actions
-    Returns:
-        dict: Dictionary of errors for each checkpoint
-    """
-    results = {}
-    with ProcessPoolExecutor() as executor:
-        futures = {
-            executor.submit(estimate_noise_value, policy.trajectories, ngram_cost_matrix, global_ngrams, global_actions): cp_key
-            for (cp_key, policy) in checkpoint_policies.items()
-        }
-        
-        for f in as_completed(futures):
-            cp_key = futures[f]
-            try:
-                results[cp_key] = f.result()
-            except Exception as e:
-                print(f"Error computing errors for {cp_key}: {e}")
-    return results
 
-def estimate_noise_value(trajectories, cost_matrix, global_ngrams, global_actions, num_samples:int=100, percentile:float=0.95) -> float:
-    """
-    Estimate the noise value for the given trajectories.
-    Args:
-        trajectories: List of trajectories
-    Returns:
-        dict: Dictionary containaining the estimated mean noise value, its standard deviation and the threshold value for each metric based 
-        on the percentile of the distribution of noise values.
-    """
-    N = len(trajectories)
-    half_N = N // 2
-    errors = {
-        "topological_shift": [],
-        "topological_shift_overlap": [],
-        "topological_shift_non_overlap": [],
-        "strategic_shift": [],
-        "robust_traversal_depth": [],
-        "3-gram_wasserstein": [],
-        "state_visitation_perplexity": [],
-    }
-    for _ in range(num_samples):
-        indices = np.random.permutation(N)
-        set_A = [trajectories[i] for i in indices[:half_N]]
-        set_B = [trajectories[i] for i in indices[half_N:2*half_N]]
+
+# def compute_errors_per_checkpoint(checkpoint_policies:dict, ngram_cost_matrix, global_ngrams, global_actions):
+#     """
+#     Compute errors for each checkpoint.
+#     Args:
+#         checkpoint_policies: Dictionary of policies for each checkpoint
+#         ngram_cost_matrix: Cost matrix for n-grams
+#         global_ngrams: Global ordering of n-grams
+#         global_actions: Global ordering of actions
+#     Returns:
+#         dict: Dictionary of errors for each checkpoint
+#     """
+#     results = {}
+#     with ProcessPoolExecutor() as executor:
+#         futures = {
+#             executor.submit(estimate_noise_value, policy.trajectories, ngram_cost_matrix, global_ngrams, global_actions): cp_key
+#             for (cp_key, policy) in checkpoint_policies.items()
+#         }
         
-        ep_A = EmpiricalPolicy(set_A, metadata=None)
-        ep_B = EmpiricalPolicy(set_B, metadata=None)
-        jsd_results = compute_decomposed_jsd(ep_A._state_visitation_count, ep_B._state_visitation_count)
-        errors["topological_shift"].append(jsd_results["jsd_total"])
-        errors["topological_shift_overlap"].append(jsd_results["jsd_overlap"])
-        errors["topological_shift_non_overlap"].append(jsd_results["jsd_non_overlap"])
-        errors["strategic_shift"].append(strategic_shift(ep_A, ep_B, global_actions=global_actions, noise_value=0.0))
-        errors["robust_traversal_depth"].append(min(traversal_depth(ep_A.trajectories), traversal_depth(ep_B.trajectories)))
-        #errors["3-gram_jsd"].append(compute_ngram_jsd(ep_A.trajectories, ep_B.trajectories, n=3,action_space_size=len(global_actions)))
-        errors["3-gram_wasserstein"].append(compute_ngram_wasserstein_fast(ep_A.trajectories, ep_B.trajectories, global_ngrams, cost_matrix, n=3))
-        errors["state_visitation_perplexity"].append(compute_perplexity_from_counts(ep_A._state_visitation_count))
-        errors["state_visitation_perplexity"].append(compute_perplexity_from_counts(ep_B._state_visitation_count))
-    return {
-    k: {
-        "mean": float(np.mean(v)),
-        "std": float(np.std(v)),
-        "threshold": float(np.percentile(v, percentile))
-    } 
-    for k, v in errors.items()
-}
+#         for f in as_completed(futures):
+#             cp_key = futures[f]
+#             try:
+#                 results[cp_key] = f.result()
+#             except Exception as e:
+#                 print(f"Error computing errors for {cp_key}: {e}")
+#     return results
+
+# def estimate_noise_value(trajectories, cost_matrix, global_ngrams, global_actions, num_samples:int=100, percentile:float=0.95) -> float:
+#     """
+#     Estimate the noise value for the given trajectories.
+#     Args:
+#         trajectories: List of trajectories
+#     Returns:
+#         dict: Dictionary containaining the estimated mean noise value, its standard deviation and the threshold value for each metric based 
+#         on the percentile of the distribution of noise values.
+#     """
+#     N = len(trajectories)
+#     half_N = N // 2
+#     errors = {
+#         "topological_shift": [],
+#         "topological_shift_overlap": [],
+#         "topological_shift_non_overlap": [],
+#         "strategic_shift": [],
+#         "robust_traversal_depth": [],
+#         "3-gram_wasserstein": [],
+#         "state_visitation_perplexity": [],
+#     }
+#     for _ in range(num_samples):
+#         indices = np.random.permutation(N)
+#         set_A = [trajectories[i] for i in indices[:half_N]]
+#         set_B = [trajectories[i] for i in indices[half_N:2*half_N]]
+        
+#         ep_A = EmpiricalPolicy(set_A, metadata=None)
+#         ep_B = EmpiricalPolicy(set_B, metadata=None)
+#         jsd_results = compute_decomposed_jsd(ep_A._state_visitation_count, ep_B._state_visitation_count)
+#         errors["topological_shift"].append(jsd_results["jsd_total"])
+#         errors["topological_shift_overlap"].append(jsd_results["jsd_overlap"])
+#         errors["topological_shift_non_overlap"].append(jsd_results["jsd_non_overlap"])
+#         errors["strategic_shift"].append(strategic_shift(ep_A, ep_B, global_actions=global_actions, noise_value=0.0))
+#         errors["robust_traversal_depth"].append(min(traversal_depth(ep_A.trajectories), traversal_depth(ep_B.trajectories)))
+#         #errors["3-gram_jsd"].append(compute_ngram_jsd(ep_A.trajectories, ep_B.trajectories, n=3,action_space_size=len(global_actions)))
+#         errors["3-gram_wasserstein"].append(compute_ngram_wasserstein_fast(ep_A.trajectories, ep_B.trajectories, global_ngrams, cost_matrix, n=3))
+#         errors["state_visitation_perplexity"].append(compute_perplexity_from_counts(ep_A._state_visitation_count))
+#         errors["state_visitation_perplexity"].append(compute_perplexity_from_counts(ep_B._state_visitation_count))
+#     return {
+#     k: {
+#         "mean": float(np.mean(v)),
+#         "std": float(np.std(v)),
+#         "threshold": float(np.percentile(v, percentile))
+#     } 
+#     for k, v in errors.items()
+#}
 def get_levenshtein_distance(seq1: tuple, seq2: tuple) -> float:
     """
     Compute the Levenshtein distance between two sequences.
@@ -235,13 +289,14 @@ def main():
     parser.add_argument("--max_trajectories", type=int, default=1000, help="Maximum number of trajectories to load")
     parser.add_argument("--num_actions", type=int, default=None, help="Number of actions in the environment")
     parser.add_argument("--every_nth", type=int, nargs='+', default=[1], help="List of intervals for plotting points")
-    parser.add_argument("--output_prefix", type=str, default="figures/behavioral_ontogeny", help="Prefix for output image")
+    parser.add_argument("--output_prefix", type=str, default="figures/behavioral_ontology", help="Prefix for output image")
     
     parser.add_argument("--use_wandb", action="store_true", default=True, help="Use Weights & Biases for logging")
     parser.add_argument("--no_wandb", action="store_false", dest="use_wandb", help="Disable Weights & Biases logging")
     parser.add_argument("--use_wanndb", action="store_true", dest="use_wandb", help=argparse.SUPPRESS) # alias
     parser.add_argument("--wandb_tags", type=str, nargs='+', default=[], help="Tags for Weights & Biases run")
     parser.add_argument("--wandb_run_name", type=str, default=None, help="Run name for Weights & Biases")
+    parser.add_argument("--env", type=str, default="default", help="Environment type (e.g., default, netsecgame)")
 
     
     args = parser.parse_args()
@@ -249,7 +304,18 @@ def main():
     if args.wandb_run_name:
         run_name = args.wandb_run_name
     else:
-        run_name = f"cp_comp_{args.data_dir.replace('/', '_')}"
+        path_parts = os.path.normpath(args.data_dir).split(os.sep)
+        try:
+            if 'behavioral_ontogeny' in path_parts:
+                idx = path_parts.index('behavioral_ontogeny')
+                env_name = path_parts[idx+1]
+                model_name = path_parts[idx+2]
+                mode_name = path_parts[idx+3]
+                run_name = f"{env_name}_{model_name}_{mode_name}"
+            else:
+                run_name = f"cp_comp_{args.data_dir.replace('/', '_')}"
+        except IndexError:
+            run_name = f"cp_comp_{args.data_dir.replace('/', '_')}"
         
     if args.use_wandb:
         import wandb
@@ -263,16 +329,31 @@ def main():
             tags=tags
         )
 
+    action_encoder = None
+    state_encoder = None
+    if args.env in ["netsecgame", "aidojo"]:
+        from utils.aidojo_utils import aidojo_state_str_from_dict, aidojo_action_type_from_dict
+        action_encoder = aidojo_action_type_from_dict
+        state_encoder = aidojo_state_str_from_dict
+
     # load empirical policies from files
-    policies = load_policies_from_directory(args.data_dir, args.max_trajectories, test_split=None)
+    policies = load_policies_from_directory(
+        args.data_dir, 
+        args.max_trajectories, 
+        action_encoder=action_encoder,
+        state_encoder=state_encoder,
+        test_split=None
+    )
     checkpoints = list(policies.keys())
     # Sort checkpoints by the integer value in the filename (assuming cp_XXXX format)
     # The dictionary keys might not be sorted correctly if they are strings like "cp_100", "cp_1000"
     checkpoints.sort(key=lambda x: int(x.split("_")[-1]) if "_" in x and x.split("_")[-1].isdigit() else x)
     
+
     checkpoint_pairs = list(zip(checkpoints[:-1], checkpoints[1:]))
+    #checkpoint_pairs = [(checkpoints[0], cp) for cp in checkpoints[1:]]
     
-    checkpoint_labels = [int(cp.split("_")[-1]) for cp in checkpoints]
+    checkpoint_labels = [int(cp.split("_")[-1].lstrip("ep")) for cp in checkpoints]
 
     checkpoint_policies = {}
     for cp_key in checkpoints:
@@ -280,7 +361,11 @@ def main():
 
     
     # Determine GLOBAL_ACTIONS
-    if args.num_actions is not None:
+    if args.env in ["netsecgame", "aidojo"]:
+        from netsecgame.game_components import ActionType
+        GLOBAL_ACTIONS = sorted([a for a in list(ActionType) if a not in ['ActionType.JoinGame', 'ActionType.QuitGame', 'ActionType.ResetGame']], key=lambda x: str(x))
+        print(f"Using netsecgame ActionType for GLOBAL_ACTIONS: {GLOBAL_ACTIONS}")
+    elif args.num_actions is not None:
         GLOBAL_ACTIONS = list(range(args.num_actions))
         print(f"Using provided num_actions: {args.num_actions} -> {GLOBAL_ACTIONS}")
     elif len(checkpoints) > 0:
@@ -296,7 +381,7 @@ def main():
             all_actions = set()
             for cp in checkpoints:
                 all_actions.update(policies[cp][0].actions)
-            GLOBAL_ACTIONS = sorted(list(all_actions))
+            GLOBAL_ACTIONS = sorted(list(all_actions), key=lambda x: str(x))
             print(f"Inferred GLOBAL_ACTIONS from trajectories: {GLOBAL_ACTIONS}")
     else:
         GLOBAL_ACTIONS = [0, 1] # Fallback default
@@ -307,8 +392,10 @@ def main():
     checkpoint_stats = compute_checkpoint_stats(checkpoint_policies)
     
     # compute errors for each checkpoint
-    errors = compute_errors_per_checkpoint(checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS)
+    #errors = compute_errors_per_checkpoint(checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS)
 
+    # estimate noise values for each checkpoint
+    noise_values = estimate_noise_values(checkpoint_pairs, checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS,num_samples=10)
     
     # compare checkpoints
     comparisons = compare_checkpoints(checkpoint_pairs, checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS)
@@ -362,11 +449,11 @@ def main():
             metrics["nodes_removed"].append(comparisons[current_ts, prev_ts]["nodes_removed"])
 
             # add noise threshold deltas
-            metrics["topological_shift_noise_threshold"].append(errors[current_ts]["topological_shift"]["threshold"])
-            metrics["topological_shift_overlap_noise_threshold"].append(errors[current_ts]["topological_shift_overlap"]["threshold"])
-            metrics["topological_shift_non_overlap_noise_threshold"].append(errors[current_ts]["topological_shift_non_overlap"]["threshold"])
-            metrics["strategic_shift_noise_threshold"].append(errors[current_ts]["strategic_shift"]["threshold"])
-            metrics["3-gram_wasserstein_noise_threshold"].append(errors[current_ts]["3-gram_wasserstein"]["threshold"])
+            metrics["topological_shift_noise_threshold"].append(noise_values[prev_ts, current_ts]["topological_shift"])
+            metrics["topological_shift_overlap_noise_threshold"].append(noise_values[prev_ts, current_ts]["topological_shift_overlap"])
+            metrics["topological_shift_non_overlap_noise_threshold"].append(noise_values[prev_ts, current_ts]["topological_shift_non_overlap"])
+            metrics["strategic_shift_noise_threshold"].append(noise_values[prev_ts, current_ts]["strategic_shift"])
+            metrics["3-gram_wasserstein_noise_threshold"].append(noise_values[prev_ts, current_ts]["3-gram_wasserstein"])
 
         if args.use_wandb:
             try:
@@ -441,7 +528,7 @@ def main():
 
     # Visualization of experiments
     try:
-        fig, axes = plt.subplots(5, 1, figsize=(12, 25), sharex=True)
+        fig, axes = plt.subplots(5, 1, figsize=(14.4, 20), sharex=True)
         fig.suptitle(f"Run: {run_name}", fontsize=20)
         
         # Plot 1: Reward
@@ -476,20 +563,26 @@ def main():
         axes[2].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         axes[2].grid(True)
 
-        # Plot 4: Shifts
-        axes[3].plot(x_deltas, metrics["topological_shift_raw"], label="Full Topological Shift", marker='x')
-        axes[3].plot(x_deltas, metrics["topological_shift_overlap_raw"], label="Topological Shift on Overlap", marker='x')
-        axes[3].plot(x_deltas, metrics["strategic_shift_raw"], label="Strategic Shift", marker='x')
+        # Plot 4: Shifts (with noise estimates as dashed lines in matching colors)
+        color_topo = axes[3].plot(x_deltas, metrics["topological_shift_raw"], label="Full Topological Shift", marker='x')[0].get_color()
+        color_topo_overlap = axes[3].plot(x_deltas, metrics["topological_shift_overlap_raw"], label="Topological Shift on Overlap", marker='x')[0].get_color()
+        color_strategic = axes[3].plot(x_deltas, metrics["strategic_shift_raw"], label="Strategic Shift", marker='x')[0].get_color()
+        # Noise estimate dashed lines
+        axes[3].plot(x_deltas, metrics["topological_shift_noise_threshold"], linestyle='--', color=color_topo, alpha=0.7, label="Full Topological Shift noise estimate")
+        axes[3].plot(x_deltas, metrics["topological_shift_overlap_noise_threshold"], linestyle='--', color=color_topo_overlap, alpha=0.7, label="Topological Shift on Overlap noise estimate")
+        axes[3].plot(x_deltas, metrics["strategic_shift_noise_threshold"], linestyle='--', color=color_strategic, alpha=0.7, label="Strategic Shift noise estimate")
         axes[3].set_ylabel("Value (JSD)")
         axes[3].set_title("Behavioral Shifts")
         axes[3].set_ylim(-0.05, 1.05)
         axes[3].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         axes[3].grid(True)
 
-        # Plot 5: Ratios and Distances
+        # Plot 5: Ratios and Distances (with noise estimates as dashed lines)
         w_dist = np.array(metrics["3-gram_wasserstein_raw"])
+        w_noise = np.array(metrics["3-gram_wasserstein_noise_threshold"])
         max_w = 3 # max distance between two 3-grams
-        axes[4].plot(x_deltas, w_dist / max_w, label="Norm. Wasserstein 3-gram", marker='x')
+        color_wass = axes[4].plot(x_deltas, w_dist / max_w, label="Norm. Wasserstein 3-gram", marker='x')[0].get_color()
+        axes[4].plot(x_deltas, w_noise / max_w, linestyle='--', color=color_wass, alpha=0.7, label="Norm. Wasserstein 3-gram noise estimate")
         
         overlap_arr = np.array(metrics["node_overlap"])
         visited_arr = np.array(metrics["total_nodes"][1:])
@@ -509,11 +602,27 @@ def main():
 
         plt.tight_layout(rect=[0, 0, 1, 0.98])
         plot_path = f"{args.output_prefix}_{run_name}_stacked_metrics.png"
+        plot_name = os.path.basename(plot_path)
+        if len(plot_name) > 250:
+            import hashlib
+            hash_str = hashlib.md5(plot_name.encode()).hexdigest()[:8]
+            suffix = "_stacked_metrics.png"
+            max_len = 250 - len(suffix) - 1 - len(hash_str)
+            plot_name = plot_name[:max_len] + "_" + hash_str + suffix
+            plot_path = os.path.join(os.path.dirname(plot_path), plot_name)
+
         out_dir = os.path.dirname(plot_path)
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
-        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-        
+            
+        # Calculate DPI to ensure image does not exceed 8192x4096
+        fig_width, fig_height = fig.get_size_inches()
+        max_dpi_w = 8192 / fig_width
+        max_dpi_h = 4096 / fig_height
+        target_dpi = min(300, max_dpi_w, max_dpi_h)
+
+        plt.savefig(plot_path, dpi=target_dpi, bbox_inches='tight')
+
         if args.use_wandb:
             try:
                 wandb.log({"plots/stacked_metrics": wandb.Image(fig)})
