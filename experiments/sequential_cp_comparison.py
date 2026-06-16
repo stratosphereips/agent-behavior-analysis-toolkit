@@ -17,7 +17,7 @@ from utils.metrics import (
 import numpy as np
 import scipy.stats as stats
 import matplotlib.pyplot as plt
-from utils.plotting_utils import plot_behavioral_ontogeny
+from utils.plotting_utils import plot_behavioral_ontogeny, plot_sequential_cp_metrics
 from utils.trajectory_utils import js_divergence_per_state, compute_trajectory_surprises
 import itertools
 from trajectory import EmpiricalPolicy
@@ -61,7 +61,6 @@ def compute_checkpoint_stats(checkpoint_policies):
         print(f"[Stats computation] Checkpoint: {cp_key}")
         checkpoint_stats[cp_key] = checkpoint_stats_worker(checkpoint_policies[cp_key])
     return checkpoint_stats
-
 
 def policy_comparison_worker(policy1:EmpiricalPolicy, policy2:EmpiricalPolicy, ngram_cost_matrix:np.ndarray, global_ngrams:list[tuple], global_actions:list[int]):
     """
@@ -166,77 +165,6 @@ def compare_checkpoints(checkpoint_pairs, checkpoint_policies, ngram_cost_matrix
 
 
 
-# def compute_errors_per_checkpoint(checkpoint_policies:dict, ngram_cost_matrix, global_ngrams, global_actions):
-#     """
-#     Compute errors for each checkpoint.
-#     Args:
-#         checkpoint_policies: Dictionary of policies for each checkpoint
-#         ngram_cost_matrix: Cost matrix for n-grams
-#         global_ngrams: Global ordering of n-grams
-#         global_actions: Global ordering of actions
-#     Returns:
-#         dict: Dictionary of errors for each checkpoint
-#     """
-#     results = {}
-#     with ProcessPoolExecutor() as executor:
-#         futures = {
-#             executor.submit(estimate_noise_value, policy.trajectories, ngram_cost_matrix, global_ngrams, global_actions): cp_key
-#             for (cp_key, policy) in checkpoint_policies.items()
-#         }
-        
-#         for f in as_completed(futures):
-#             cp_key = futures[f]
-#             try:
-#                 results[cp_key] = f.result()
-#             except Exception as e:
-#                 print(f"Error computing errors for {cp_key}: {e}")
-#     return results
-
-# def estimate_noise_value(trajectories, cost_matrix, global_ngrams, global_actions, num_samples:int=100, percentile:float=0.95) -> float:
-#     """
-#     Estimate the noise value for the given trajectories.
-#     Args:
-#         trajectories: List of trajectories
-#     Returns:
-#         dict: Dictionary containaining the estimated mean noise value, its standard deviation and the threshold value for each metric based 
-#         on the percentile of the distribution of noise values.
-#     """
-#     N = len(trajectories)
-#     half_N = N // 2
-#     errors = {
-#         "topological_shift": [],
-#         "topological_shift_overlap": [],
-#         "topological_shift_non_overlap": [],
-#         "strategic_shift": [],
-#         "robust_traversal_depth": [],
-#         "3-gram_wasserstein": [],
-#         "state_visitation_perplexity": [],
-#     }
-#     for _ in range(num_samples):
-#         indices = np.random.permutation(N)
-#         set_A = [trajectories[i] for i in indices[:half_N]]
-#         set_B = [trajectories[i] for i in indices[half_N:2*half_N]]
-        
-#         ep_A = EmpiricalPolicy(set_A, metadata=None)
-#         ep_B = EmpiricalPolicy(set_B, metadata=None)
-#         jsd_results = compute_decomposed_jsd(ep_A._state_visitation_count, ep_B._state_visitation_count)
-#         errors["topological_shift"].append(jsd_results["jsd_total"])
-#         errors["topological_shift_overlap"].append(jsd_results["jsd_overlap"])
-#         errors["topological_shift_non_overlap"].append(jsd_results["jsd_non_overlap"])
-#         errors["strategic_shift"].append(strategic_shift(ep_A, ep_B, global_actions=global_actions, noise_value=0.0))
-#         errors["robust_traversal_depth"].append(min(traversal_depth(ep_A.trajectories), traversal_depth(ep_B.trajectories)))
-#         #errors["3-gram_jsd"].append(compute_ngram_jsd(ep_A.trajectories, ep_B.trajectories, n=3,action_space_size=len(global_actions)))
-#         errors["3-gram_wasserstein"].append(compute_ngram_wasserstein_fast(ep_A.trajectories, ep_B.trajectories, global_ngrams, cost_matrix, n=3))
-#         errors["state_visitation_perplexity"].append(compute_perplexity_from_counts(ep_A._state_visitation_count))
-#         errors["state_visitation_perplexity"].append(compute_perplexity_from_counts(ep_B._state_visitation_count))
-#     return {
-#     k: {
-#         "mean": float(np.mean(v)),
-#         "std": float(np.std(v)),
-#         "threshold": float(np.percentile(v, percentile))
-#     } 
-#     for k, v in errors.items()
-#}
 def get_levenshtein_distance(seq1: tuple, seq2: tuple) -> float:
     """
     Compute the Levenshtein distance between two sequences.
@@ -528,79 +456,7 @@ def main():
 
     # Visualization of experiments
     try:
-        fig, axes = plt.subplots(5, 1, figsize=(14.4, 20), sharex=True)
-        fig.suptitle(f"Run: {run_name}", fontsize=20)
-        
-        # Plot 1: Reward
-        axes[0].plot(checkpoint_labels, metrics["mean_return"], label="Mean Return", marker='x')
-        axes[0].fill_between(checkpoint_labels, 
-                             np.array(metrics["mean_return"]) - np.array(metrics["std_return"]),
-                             np.array(metrics["mean_return"]) + np.array(metrics["std_return"]),
-                             alpha=0.3)
-        axes[0].set_ylabel("Reward")
-        axes[0].set_title("Model Reward")
-        axes[0].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        axes[0].grid(True)
-
-        # Plot 2: Node Counts
-        x_deltas = checkpoint_labels[1:]
-        axes[1].plot(checkpoint_labels, metrics["total_nodes"], label="Total Visited Nodes", marker='x', color='blue')
-        axes[1].plot(x_deltas, metrics["node_overlap"], label="Overlapping Nodes", marker='x', color='orange')
-        axes[1].plot(x_deltas, metrics["nodes_added"], label="Added Nodes", marker='x', color='green')
-        axes[1].plot(x_deltas, metrics["nodes_removed"], label="Removed Nodes", marker='x', color='red')
-        axes[1].set_ylabel("Count")
-        axes[1].set_title("Node Discovery and Overlap")
-        axes[1].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        axes[1].grid(True)
-
-        # Plot 3: Perplexity
-        axes[2].plot(checkpoint_labels, metrics["state_visitation_perplexity"], label="State Visitation Perplexity", marker='x', color='purple')
-        axes[2].plot(checkpoint_labels, metrics["total_nodes"], label="Max Possible Perplexity (Nodes Visited)", linestyle='--', color='gray', alpha=0.7)
-        axes[2].set_ylabel("Perplexity")
-        axes[2].set_title("State Visitation Perplexity")
-        max_nodes = max(metrics["total_nodes"]) if metrics["total_nodes"] else 1
-        axes[2].set_ylim(0, max_nodes * 1.05)
-        axes[2].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        axes[2].grid(True)
-
-        # Plot 4: Shifts (with noise estimates as dashed lines in matching colors)
-        color_topo = axes[3].plot(x_deltas, metrics["topological_shift_raw"], label="Full Topological Shift", marker='x')[0].get_color()
-        color_topo_overlap = axes[3].plot(x_deltas, metrics["topological_shift_overlap_raw"], label="Topological Shift on Overlap", marker='x')[0].get_color()
-        color_strategic = axes[3].plot(x_deltas, metrics["strategic_shift_raw"], label="Strategic Shift", marker='x')[0].get_color()
-        # Noise estimate dashed lines
-        axes[3].plot(x_deltas, metrics["topological_shift_noise_threshold"], linestyle='--', color=color_topo, alpha=0.7, label="Full Topological Shift noise estimate")
-        axes[3].plot(x_deltas, metrics["topological_shift_overlap_noise_threshold"], linestyle='--', color=color_topo_overlap, alpha=0.7, label="Topological Shift on Overlap noise estimate")
-        axes[3].plot(x_deltas, metrics["strategic_shift_noise_threshold"], linestyle='--', color=color_strategic, alpha=0.7, label="Strategic Shift noise estimate")
-        axes[3].set_ylabel("Value (JSD)")
-        axes[3].set_title("Behavioral Shifts")
-        axes[3].set_ylim(-0.05, 1.05)
-        axes[3].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        axes[3].grid(True)
-
-        # Plot 5: Ratios and Distances (with noise estimates as dashed lines)
-        w_dist = np.array(metrics["3-gram_wasserstein_raw"])
-        w_noise = np.array(metrics["3-gram_wasserstein_noise_threshold"])
-        max_w = 3 # max distance between two 3-grams
-        color_wass = axes[4].plot(x_deltas, w_dist / max_w, label="Norm. Wasserstein 3-gram", marker='x')[0].get_color()
-        axes[4].plot(x_deltas, w_noise / max_w, linestyle='--', color=color_wass, alpha=0.7, label="Norm. Wasserstein 3-gram noise estimate")
-        
-        overlap_arr = np.array(metrics["node_overlap"])
-        visited_arr = np.array(metrics["total_nodes"][1:])
-        axes[4].plot(x_deltas, overlap_arr / np.maximum(visited_arr, 1), label="Overlap / Visited Nodes", marker='x')
-        
-        perp_arr = np.array(metrics["state_visitation_perplexity"])
-        axes[4].plot(checkpoint_labels, perp_arr / np.maximum(np.array(metrics["total_nodes"]), 1), label="Perplexity / Visited Nodes", marker='x')
-
-        axes[4].set_xlabel("Checkpoint")
-        axes[4].set_ylabel("Metrics (Scaled / Ratio)")
-        axes[4].set_title("Normalized Distances and Ratios")
-        axes[4].set_ylim(-0.05, 1.05)
-        axes[4].set_xticks(checkpoint_labels)
-        axes[4].tick_params(axis='x', rotation=45)
-        axes[4].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        axes[4].grid(True)
-
-        plt.tight_layout(rect=[0, 0, 1, 0.98])
+        fig = plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name)
         plot_path = f"{args.output_prefix}_{run_name}_stacked_metrics.png"
         plot_name = os.path.basename(plot_path)
         if len(plot_name) > 250:
@@ -621,7 +477,7 @@ def main():
         max_dpi_h = 4096 / fig_height
         target_dpi = min(300, max_dpi_w, max_dpi_h)
 
-        plt.savefig(plot_path, dpi=target_dpi, bbox_inches='tight')
+        fig.savefig(plot_path, dpi=target_dpi, bbox_inches='tight')
 
         if args.use_wandb:
             try:

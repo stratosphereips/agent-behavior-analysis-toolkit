@@ -1,8 +1,9 @@
-from cProfile import label
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
 import matplotlib.colors as mcolors
+import matplotlib.patches as mpatches
+from matplotlib.patches import Rectangle
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from typing import Iterable
 import networkx as nx
 from networkx.drawing.nx_agraph import to_agraph
@@ -379,18 +380,6 @@ def plot_trajectory_network_colored_nodes_by_cluster(trajectory: Trajectory, seg
     png_bytes = A.draw(format='png')
     return png_bytes
 
-import matplotlib.patches as mpatches
-
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-import matplotlib.patches as mpatches
-
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-import matplotlib.patches as mpatches
-
 def plot_trajectory_heatmap(surprise, action_change, cluster, gap=1, min_height=4, max_height=25):
     """
     Plots a heatmap for trajectory data: surprise, action change, cluster.
@@ -674,11 +663,6 @@ def visualize_clusters(
     return fig
 
 
-import matplotlib.pyplot as plt
-import numpy as np
-import matplotlib.colors as mcolors
-from typing import Iterable
-
 # --- Helper function for the first plot ---
 def plot_action_per_step_distribution_helper(
     trajectories: Iterable, num_actions: int, ax: plt.Axes, normalize=True
@@ -841,8 +825,6 @@ def plot_trajectory_surprise_matrix_helper(surprise_matrix: np.ndarray, ax: plt.
     ax.set_title('Surprise Across Trajectories (SymLogNorm)')
     
     # 3. Add Colorbar
-    # Create an axis for the colorbar next to the main plot
-    from mpl_toolkits.axes_grid1 import make_axes_locatable
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.1)
     
@@ -921,8 +903,94 @@ def plot_combined_trajectory_analysis(
 
 
 
-import matplotlib.pyplot as plt
-import numpy as np
+def plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name):
+    """
+    Generates the 5-panel stacked metrics figure for sequential checkpoint comparison.
+
+    Args:
+        checkpoint_labels: list of int checkpoint ids (x-axis values)
+        metrics: dict with keys matching those built in sequential_cp_comparison.main()
+        run_name: string used in the figure title
+
+    Returns:
+        matplotlib Figure
+    """
+    x_deltas = checkpoint_labels[1:]
+
+    fig, axes = plt.subplots(5, 1, figsize=(14.4, 20), sharex=True)
+    fig.suptitle(f"Run: {run_name}", fontsize=20)
+
+    # Plot 1: Reward
+    axes[0].plot(checkpoint_labels, metrics["mean_return"], label="Mean Return", marker='x')
+    axes[0].fill_between(
+        checkpoint_labels,
+        np.array(metrics["mean_return"]) - np.array(metrics["std_return"]),
+        np.array(metrics["mean_return"]) + np.array(metrics["std_return"]),
+        alpha=0.3,
+    )
+    axes[0].set_ylabel("Reward")
+    axes[0].set_title("Model Reward")
+    axes[0].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    axes[0].grid(True)
+
+    # Plot 2: Node Counts
+    axes[1].plot(checkpoint_labels, metrics["total_nodes"], label="Total Visited Nodes", marker='x', color='blue')
+    axes[1].plot(x_deltas, metrics["node_overlap"], label="Overlapping Nodes", marker='x', color='orange')
+    axes[1].plot(x_deltas, metrics["nodes_added"], label="Added Nodes", marker='x', color='green')
+    axes[1].plot(x_deltas, metrics["nodes_removed"], label="Removed Nodes", marker='x', color='red')
+    axes[1].set_ylabel("Count")
+    axes[1].set_title("Node Discovery and Overlap")
+    axes[1].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    axes[1].grid(True)
+
+    # Plot 3: Perplexity
+    axes[2].plot(checkpoint_labels, metrics["state_visitation_perplexity"], label="State Visitation Perplexity", marker='x', color='purple')
+    axes[2].plot(checkpoint_labels, metrics["total_nodes"], label="Max Possible Perplexity (Nodes Visited)", linestyle='--', color='gray', alpha=0.7)
+    axes[2].set_ylabel("Perplexity")
+    axes[2].set_title("State Visitation Perplexity")
+    max_nodes = max(metrics["total_nodes"]) if metrics["total_nodes"] else 1
+    axes[2].set_ylim(0, max_nodes * 1.05)
+    axes[2].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    axes[2].grid(True)
+
+    # Plot 4: Shifts (with noise estimates as dashed lines in matching colors)
+    color_topo = axes[3].plot(x_deltas, metrics["topological_shift_raw"], label="Full Topological Shift", marker='x')[0].get_color()
+    color_topo_overlap = axes[3].plot(x_deltas, metrics["topological_shift_overlap_raw"], label="Topological Shift on Overlap", marker='x')[0].get_color()
+    color_strategic = axes[3].plot(x_deltas, metrics["strategic_shift_raw"], label="Strategic Shift", marker='x')[0].get_color()
+    axes[3].plot(x_deltas, metrics["topological_shift_noise_threshold"], linestyle='--', color=color_topo, alpha=0.7, label="Full Topological Shift noise estimate")
+    axes[3].plot(x_deltas, metrics["topological_shift_overlap_noise_threshold"], linestyle='--', color=color_topo_overlap, alpha=0.7, label="Topological Shift on Overlap noise estimate")
+    axes[3].plot(x_deltas, metrics["strategic_shift_noise_threshold"], linestyle='--', color=color_strategic, alpha=0.7, label="Strategic Shift noise estimate")
+    axes[3].set_ylabel("Value (JSD)")
+    axes[3].set_title("Behavioral Shifts")
+    axes[3].set_ylim(-0.05, 1.05)
+    axes[3].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    axes[3].grid(True)
+
+    # Plot 5: Ratios and Distances (with noise estimates as dashed lines)
+    w_dist = np.array(metrics["3-gram_wasserstein_raw"])
+    w_noise = np.array(metrics["3-gram_wasserstein_noise_threshold"])
+    max_w = 3  # max distance between two 3-grams
+    color_wass = axes[4].plot(x_deltas, w_dist / max_w, label="Norm. Wasserstein 3-gram", marker='x')[0].get_color()
+    axes[4].plot(x_deltas, w_noise / max_w, linestyle='--', color=color_wass, alpha=0.7, label="Norm. Wasserstein 3-gram noise estimate")
+
+    overlap_arr = np.array(metrics["node_overlap"])
+    visited_arr = np.array(metrics["total_nodes"][1:])
+    axes[4].plot(x_deltas, overlap_arr / np.maximum(visited_arr, 1), label="Overlap / Visited Nodes", marker='x')
+
+    perp_arr = np.array(metrics["state_visitation_perplexity"])
+    axes[4].plot(checkpoint_labels, perp_arr / np.maximum(np.array(metrics["total_nodes"]), 1), label="Perplexity / Visited Nodes", marker='x')
+
+    axes[4].set_xlabel("Checkpoint")
+    axes[4].set_ylabel("Metrics (Scaled / Ratio)")
+    axes[4].set_title("Normalized Distances and Ratios")
+    axes[4].set_ylim(-0.05, 1.05)
+    axes[4].set_xticks(checkpoint_labels)
+    axes[4].tick_params(axis='x', rotation=45)
+    axes[4].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    axes[4].grid(True)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.98])
+    return fig
 
 
 def plot_behavioral_ontogeny(checkpoint_labels, metrics, every_nth=1):
