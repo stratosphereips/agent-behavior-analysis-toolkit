@@ -179,3 +179,4 @@ results/
 
 *task*.txt
 paper_summaries/
+.agents/rules/virtual-env-location.md
