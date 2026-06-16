@@ -18,7 +18,7 @@ class Agent:
         """
         pass
 
-    def step(state, training=False):
+    def step(self, state, training=False):
         raise NotImplementedError
     
     def evaluate_policy(self, env, num_episodes:int, get_trajectories:bool=False, final_evaluation=False):
