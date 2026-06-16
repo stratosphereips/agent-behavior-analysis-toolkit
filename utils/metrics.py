@@ -45,7 +45,7 @@ def compute_decomposed_jsd(counts_A:dict, counts_B:dict):
         dict: A breakdown of the JSD components (in bits).
     """
     # 1. Create a unified set of all keys (states)
-    all_keys = sorted(list(set(counts_A.keys()) | set(counts_B.keys())))
+    all_keys = sorted(list(set(counts_A.keys()) | set(counts_B.keys())), key=str)
     
     # 2. Build aligned arrays
     # We use a list comprehension or a loop to ensure indices match the global key set
