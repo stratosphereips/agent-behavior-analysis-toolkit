@@ -218,7 +218,7 @@ def main():
     parser.add_argument("--num_actions", type=int, default=None, help="Number of actions in the environment")
     parser.add_argument("--every_nth", type=int, nargs='+', default=[1], help="List of intervals for plotting points")
     parser.add_argument("--output_prefix", type=str, default="figures/behavioral_ontology", help="Prefix for output image")
-    
+    parser.add_argument("--noise_num_samples", type=int, default=2, help="Number of samples for noise estimation")
     parser.add_argument("--use_wandb", action="store_true", default=True, help="Use Weights & Biases for logging")
     parser.add_argument("--no_wandb", action="store_false", dest="use_wandb", help="Disable Weights & Biases logging")
     parser.add_argument("--use_wanndb", action="store_true", dest="use_wandb", help=argparse.SUPPRESS) # alias
@@ -393,67 +393,6 @@ def main():
             except Exception as e:
                 print(f"Wandb logging error: {e}")
     
-    # print("\n--- Metric Correlations ---")
-    # corr_metrics = [
-    #     "topological_shift", "strategic_shift", "robust_traversal_depth", 
-    #     "reward", "effective_state_coverage", "empirical_policy_certainty", 
-    #     "unweighted_policy_certainty", "temporal_action_entropy"
-    # ]
-    # valid_metrics = [m for m in corr_metrics if len(metrics.get(m, [])) > 0]
-    
-    # if len(valid_metrics) > 1:
-    #     min_len = min(len(metrics[m]) for m in valid_metrics)
-    #     if min_len > 1:
-    #         aligned_data = np.array([metrics[m][-min_len:] for m in valid_metrics])
-            
-    #         # Suppress warnings for constant data resulting in NaNs
-    #         with np.errstate(invalid='ignore'):
-    #             pearson_corr = np.corrcoef(aligned_data)
-    #             spearman_corr, _ = stats.spearmanr(aligned_data, axis=1)
-            
-    #         print("Pearson Correlation:")
-    #         header = f"{'':>28} " + " ".join([f"{m[:8]:>8}" for m in valid_metrics])
-    #         print(header)
-    #         for i, m1 in enumerate(valid_metrics):
-    #             row_str = " ".join([f"{pearson_corr[i,j]:8.3f}" for j in range(len(valid_metrics))])
-    #             print(f"{m1:>28} {row_str}")
-                
-    #         print("\nSpearman Correlation:")
-    #         print(header)
-    #         for i, m1 in enumerate(valid_metrics):
-    #             row_str = " ".join([f"{spearman_corr[i,j]:8.3f}" for j in range(len(valid_metrics))])
-    #             print(f"{m1:>28} {row_str}")
-
-    #         if args.use_wandb:
-    #             def log_corr_matrix(matrix, title, tag):
-    #                 try:
-    #                     fig, ax = plt.subplots(figsize=(10, 8))
-    #                     # Use np.nan_to_num to avoid matshow issues with pure NaN
-    #                     clean_matrix = np.nan_to_num(matrix, nan=0.0)
-    #                     cax = ax.matshow(clean_matrix, cmap='coolwarm', vmin=-1, vmax=1)
-    #                     fig.colorbar(cax)
-                        
-    #                     for i in range(len(valid_metrics)):
-    #                         for j in range(len(valid_metrics)):
-    #                             val = matrix[i,j]
-    #                             text_val = f"{val:.2f}" if not np.isnan(val) else "NaN"
-    #                             text_color = 'white' if abs(clean_matrix[i,j]) >= 0.5 else 'black'
-    #                             ax.text(j, i, text_val, ha='center', va='center', color=text_color)
-                                
-    #                     ax.set_xticks(range(len(valid_metrics)))
-    #                     ax.set_yticks(range(len(valid_metrics)))
-    #                     ax.set_xticklabels(valid_metrics, rotation=45, ha='left')
-    #                     ax.set_yticklabels(valid_metrics)
-    #                     plt.title(title, pad=20)
-    #                     plt.tight_layout()
-    #                     wandb.log({tag: wandb.Image(fig)})
-    #                     plt.close(fig)
-    #                 except Exception as e:
-    #                     print(f"Wandb {tag} logging error: {e}")
-                        
-    #             log_corr_matrix(pearson_corr, "Pearson Correlation", "correlations/pearson")
-    #             log_corr_matrix(spearman_corr, "Spearman Correlation", "correlations/spearman")
-
     # Visualization of experiments
     try:
         fig = plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name)
@@ -495,7 +434,7 @@ def main():
         parsed_name = "metrics"
     
     out_dir = os.path.dirname(args.output_prefix) if os.path.dirname(args.output_prefix) else "metrics"
-    metrics_file = os.path.join(out_dir, f"{parsed_name}_metrics.json")
+    metrics_file = os.path.join(out_dir, f"{parsed_name}_{args.noise_num_samples}_metrics.json")
     print(f"Saving metrics to {metrics_file}")
     
     # Convert numpy types to basic python types for JSON serialization
@@ -520,6 +459,6 @@ def main():
             wandb.finish()
         except Exception as e:
             print(f"Wandb finish error: {e}")
-    save_metrics_to_csv(metrics, "metrics.csv", args.wandb_run_name, "")
+    #save_metrics_to_csv(metrics, "metrics.csv", args.wandb_run_name, "")
 if __name__ == "__main__":
     main()
