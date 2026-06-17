@@ -905,7 +905,7 @@ def plot_combined_trajectory_analysis(
 
 def plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name):
     """
-    Generates the 5-panel stacked metrics figure for sequential checkpoint comparison.
+    Generates the 6-panel stacked metrics figure for sequential checkpoint comparison.
 
     Args:
         checkpoint_labels: list of int checkpoint ids (x-axis values)
@@ -917,7 +917,7 @@ def plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name):
     """
     x_deltas = checkpoint_labels[1:]
 
-    fig, axes = plt.subplots(5, 1, figsize=(14.4, 20), sharex=True)
+    fig, axes = plt.subplots(6, 1, figsize=(14.4, 24), sharex=True)
     fig.suptitle(f"Run: {run_name}", fontsize=20)
 
     # Plot 1: Reward
@@ -966,28 +966,48 @@ def plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name):
     axes[3].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     axes[3].grid(True)
 
-    # Plot 5: Ratios and Distances (with noise estimates as dashed lines)
+    # Plot 5: Topological Flux (directional non-overlap: discovery vs abandonment)
+    # The net flux = discovery - abandonment is signed: above the noise band = net
+    # frontier expansion, below = net footprint collapse, inside the band = no net
+    # direction (a significant Full Topological Shift with net inside the band means
+    # spatial churn - states discovered and abandoned in equal measure).
+    if "topological_shift_net_raw" in metrics and len(metrics["topological_shift_net_raw"]) > 0:
+        net = np.array(metrics["topological_shift_net_raw"])
+        axes[4].axhline(0.0, color='gray', linewidth=1.0, alpha=0.7)
+        if "topological_shift_net_noise_hi" in metrics and "topological_shift_net_noise_lo" in metrics:
+            net_hi = np.array(metrics["topological_shift_net_noise_hi"])
+            net_lo = np.array(metrics["topological_shift_net_noise_lo"])
+            axes[4].fill_between(x_deltas, net_lo, net_hi, color='gray', alpha=0.2,
+                                 label="Net flux noise band (two-sided)")
+        axes[4].plot(x_deltas, net, label="Net topological flux (discovery - abandonment)",
+                     marker='x', color='black')
+    axes[4].set_ylabel("Net flux (JSD)")
+    axes[4].set_title("Topological Flux (growth vs collapse)")
+    axes[4].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    axes[4].grid(True)
+
+    # Plot 6: Ratios and Distances (with noise estimates as dashed lines)
     w_dist = np.array(metrics["3-gram_wasserstein_raw"])
     w_noise = np.array(metrics["3-gram_wasserstein_noise_threshold"])
     max_w = 3  # max distance between two 3-grams
-    color_wass = axes[4].plot(x_deltas, w_dist / max_w, label="Norm. Wasserstein 3-gram", marker='x')[0].get_color()
-    axes[4].plot(x_deltas, w_noise / max_w, linestyle='--', color=color_wass, alpha=0.7, label="Norm. Wasserstein 3-gram noise estimate")
+    color_wass = axes[5].plot(x_deltas, w_dist / max_w, label="Norm. Wasserstein 3-gram", marker='x')[0].get_color()
+    axes[5].plot(x_deltas, w_noise / max_w, linestyle='--', color=color_wass, alpha=0.7, label="Norm. Wasserstein 3-gram noise estimate")
 
     overlap_arr = np.array(metrics["node_overlap"])
     visited_arr = np.array(metrics["total_nodes"][1:])
-    axes[4].plot(x_deltas, overlap_arr / np.maximum(visited_arr, 1), label="Overlap / Visited Nodes", marker='x')
+    axes[5].plot(x_deltas, overlap_arr / np.maximum(visited_arr, 1), label="Overlap / Visited Nodes", marker='x')
 
     perp_arr = np.array(metrics["state_visitation_perplexity"])
-    axes[4].plot(checkpoint_labels, perp_arr / np.maximum(np.array(metrics["total_nodes"]), 1), label="Perplexity / Visited Nodes", marker='x')
+    axes[5].plot(checkpoint_labels, perp_arr / np.maximum(np.array(metrics["total_nodes"]), 1), label="Perplexity / Visited Nodes", marker='x')
 
-    axes[4].set_xlabel("Checkpoint")
-    axes[4].set_ylabel("Metrics (Scaled / Ratio)")
-    axes[4].set_title("Normalized Distances and Ratios")
-    axes[4].set_ylim(-0.05, 1.05)
-    axes[4].set_xticks(checkpoint_labels)
-    axes[4].tick_params(axis='x', rotation=45)
-    axes[4].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    axes[4].grid(True)
+    axes[5].set_xlabel("Checkpoint")
+    axes[5].set_ylabel("Metrics (Scaled / Ratio)")
+    axes[5].set_title("Normalized Distances and Ratios")
+    axes[5].set_ylim(-0.05, 1.05)
+    axes[5].set_xticks(checkpoint_labels)
+    axes[5].tick_params(axis='x', rotation=45)
+    axes[5].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    axes[5].grid(True)
 
     plt.tight_layout(rect=[0, 0, 1, 0.98])
     return fig
