@@ -11,21 +11,22 @@
 - **Difficulty**: It's a sparse-reward, delayed-gratification problem. The agent's first successful trajectory requires 10-15 steps of pure negative reinforcement before hitting the jackpot.
 
 ## Fixed Evaluation Constraint
-All models evaluate uniformly over **2,000 episodes**, testing checkpoint performance every 100 episodes.
+All models evaluate uniformly over **3,000 episodes**, testing checkpoint performance every 100 episodes.
 
 ---
 
 ## 1. Standard (Baseline)
-The mathematically optimal parameters configured separately for each model type based on empirical testing.
+The research-optimal parameters configured separately for each model type.
 * Target: Solves the environment smoothly.
+* References: van Hasselt et al. (2016), Schulman et al. (2017), Huang et al. (2022 ICLR Blog Track)
 
 ### Hyperparameters
 | Model | Learning Rate | Discount ($\gamma$) | Exploration Strategy | Specific Overrides |
 |---|---|---|---|---|
-| **Q-Learning** | `alpha=0.1` | 0.99 | $\epsilon=1.0 \rightarrow 0.01$ (decay=0.995) | `q_init_val=0.0` |
-| **SARSA** | `alpha=0.1` | 0.99 | $\epsilon=1.0 \rightarrow 0.01$ (decay=0.995) | `q_init_val=0.0` |
-| **DQN** | `lr=1e-3` | 0.99 | $\epsilon=1.0 \rightarrow 0.01$ (decay=0.995) | `batch=64`, `memory=10000`, `update=1000`, `layers=[64,64]` |
-| **PPO** | `lr=3e-4` | 0.99 | `entropy_coef=0.01` | `clip=0.2`, `epochs=10`, `batch=64`, `layers=[64,64]` |
+| **Q-Learning** | `alpha=0.1` | 0.99 | $\epsilon=1.0 \rightarrow 0.01$ (decay=0.99) | `q_init_val=0.0` |
+| **SARSA** | `alpha=0.1` | 0.99 | $\epsilon=1.0 \rightarrow 0.01$ (decay=0.99) | `q_init_val=0.0` |
+| **DQN** | `lr=5e-4` | 0.99 | $\epsilon=1.0 \rightarrow 0.01$ (linear over 20k steps) | `batch=64`, `memory=50000`, `update=1000`, `layers=[64,64]`, `grad_clip=10.0` |
+| **PPO** | `lr=2.5e-4` (annealed) | 0.99 | `entropy_coef=0.02` | `clip=0.2`, `GAE_λ=0.95`, `epochs=4`, `batch=64`, `layers=[64,64]`, `grad_clip=0.5` |
 
 ---
 

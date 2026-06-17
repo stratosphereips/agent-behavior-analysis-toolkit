@@ -15,46 +15,46 @@ All models evaluate uniformly to guarantee mathematical alignment during plottin
 ---
 
 ## 1. Standard (Baseline)
-The mathematically optimal parameters configured separately for each model type based on empirical testing.
+The research-optimal parameters configured separately for each model type, based on published results and empirical validation.
 * Target: Successfully navigates the frozen lake while steering deliberately wide around deadly holes.
+* References: van Hasselt et al. (2016, AAAI), Schulman et al. (2017), Huang et al. (2022, ICLR Blog Track "37 Implementation Details of PPO")
 
 ### Hyperparameters
 | Model | Learning Rate | Discount ($\gamma$) | Exploration Strategy | Specific Overrides |
 |---|---|---|---|---|
-| **Q-Learning** | `alpha=0.1` | 0.95 | $\epsilon=1.0 \rightarrow 0.05$ (decay=0.999) | `q_init_val=0.0` |
-| **SARSA** | `alpha=0.1` | 0.95 | $\epsilon=1.0 \rightarrow 0.05$ (decay=0.999) | `q_init_val=0.0` |
-| **DQN** | `lr=5e-4` | 0.95 | $\epsilon=1.0 \rightarrow 0.05$ (decay=0.999) | `batch=32`, `memory=50000`, `update=500`, `layers=[64,32]` |
-| **PPO** | `lr=5e-4` | 0.95 | `entropy_coef=0.03` | `clip=0.2`, `batch=32`, `layers=[64,32]` |
+| **Q-Learning** | `alpha=0.1` | 0.99 | $\epsilon=1.0 \rightarrow 0.05$ (decay=0.9997) | `q_init_val=0.0` |
+| **SARSA** | `alpha=0.1` | 0.99 | $\epsilon=1.0 \rightarrow 0.05$ (decay=0.9997) | `q_init_val=0.0` |
+| **DQN** | `lr=5e-4` | 0.99 | $\epsilon=1.0 \rightarrow 0.01$ (linear over 500k steps) | `batch=64`, `memory=50000`, `update=500`, `replay_each=4`, `layers=[64,64]` |
+| **PPO** | `lr=3e-4` | 0.99 | `entropy_coef=0.1` → `0.01` (over 60% of training) | `clip=0.2`, `GAE_λ=0.95`, `layers=[64,64]` |
 
 ---
 
 ## 2. Reward Hacking
-**Mechanism**: A custom `step_penalty` parameter of `-0.08` is injected into the training loop for every valid step taken, directly fighting the native `0` penalty. 
-**Expected Behavior**: The agent determines that wandering the ice in search of the `+1` sparse goal is mathematically more damaging (`-0.08 * 14 steps = -1.12`) than immediate suicide. Because falling into a hole terminates the episode rapidly (preventing further step penalties), the agent actively learns to seek out the nearest hole and jump into it to "minimize its losses."
+**Mechanism**: A custom `step_penalty` parameter of `-0.05` is injected into the training loop for every valid step taken, directly fighting the native `0` penalty. 
+**Expected Behavior**: The agent determines that wandering the ice in search of the `+1` sparse goal is mathematically more damaging (`-0.05 * 14 steps = -0.7`) than immediate suicide. Because falling into a hole terminates the episode rapidly (preventing further step penalties), the agent actively learns to seek out the nearest hole and jump into it to "minimize its losses."
 
 ### Hyperparameters
-Uses the exact same baseline parameters as the Standard model, but with an artificially overridden `step_penalty` and `q_init_val=0.5`.
+Uses the same baseline parameters as the Standard model for most fields, but with an artificially overridden `step_penalty=0.05`. PPO reward hacking also uses `gamma=0.995` and `entropy_decay_frac=0.8`.
 
 ---
 
 ## 3. Limited Exploration (Local Optimum Trap)
-**Mechanism**: The agent's exploration constants point-blank refuse to take random actions, forcing the agent to rigidly follow the very first (terrible) Q-table updates it accidentally stumbles upon. 
+**Mechanism**: The agent's exploration constants decay rapidly to a near-zero minimum, forcing the agent to rigidly follow the very first (terrible) Q-table updates it accidentally stumbles upon. 
 **Expected Behavior**: The agent discovers a hole on its first step and refuses to learn any additional routes, forever looping itself endlessly into the hole via an underexpired Q-value path instead of discovering the goal.
-
+ 
 ### Hyperparameters
 | Model Group | Hardcoded Parameter Interventions |
 |---|---|
-| **Tabular & DQN** | `epsilon=0.01`, `min_epsilon=0.0`, `epsilon_decay=0.0` |
-| **PPO** | `entropy_coef=0.0` |
-
+| **DQN** | `epsilon=0.0`, `epsilon_min=0.0`, `epsilon_decay_steps=1`, `memory=200`, `replay_each=1`, `target_update=10`, `lr=0.001` |
+| **PPO** | `entropy_coef=0.0`, `entropy_min=0.0` |
+ 
 ---
-
-## 4. Oscillation (Aggressive Learning)
-**Mechanism**: Both neural and tabular optimization mathematics are completely destabilized. The optimization step size is set extremely high, causing the predicted value functions to constantly over-correct.
-**Expected Behavior**: Complete failure to converge. The agent's value map for the ice tiles rapidly shifts between `+1` and `-1` resulting in confused, spastic pathing that falls into holes constantly for the duration of its lifetime.
+ 
+## 4. Perpetual Reshaping
+**Mechanism**: Exploration never converges — entropy/epsilon is kept permanently elevated, so the agent continually revisits suboptimal actions and overwrites settled value estimates.
+**Expected Behavior**: Performance oscillates without ever stabilising. The agent can find a good path but is constantly knocked off it by ongoing random exploration, preventing the policy from locking in.
 
 ### Hyperparameters
 | Model Group | Hardcoded Parameter Interventions |
 |---|---|
-| **Tabular (QL/SARSA)** | `alpha=1.1` |
-| **Neural (DQN/PPO)** | `lr=5e-2`, `batch_size=8`, `target_update_every=1` (DQN), `train_iters=40` (PPO) |
+| **PPO** | `lr=0.005`, `clip_ratio=0.8`, `entropy_coef=0.1`, `entropy_decay_frac=0.8`, `entropy_min=0.0`, `gamma=0.995` |

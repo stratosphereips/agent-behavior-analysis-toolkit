@@ -1,58 +1,325 @@
-# MountainCar Learning Problem Specifications
+# MountainCar Discrete Pathologies
 
-## Environment Description
-**MountainCar-v0** is a continuous physics task (made discrete via `DiscreteMountainCarWrapper`) where an underpowered car must reach a flag atop a steep hill. The car's motor is too weak to scale the hill directly, forcing the agent to learn to drive backwards up the opposite slope to build sufficient momentum.
-- **Observations**: 2 continuous values (position, velocity) placed into 20x20 discrete bins (400 total states).
-- **Actions**: 3 discrete actions (0: push left, 1: no push, 2: push right).
-- **Rewards**: `-1` for every timestep taken. Max episode steps = 200. Reaching the flag ends the episode immediately (preventing the -1 penalty accumulation).
-- **Difficulty**: It requires sequential, counter-intuitive action planning (moving away from the goal to reach the goal).
+## 1. Q-Learning
 
-## Fixed Evaluation Constraint
-All models evaluate uniformly over **10,000 episodes**, testing checkpoint performance every 500 episodes.
+### Good Learning (Standard)
+*Uses Optimistic Initialization (0.0) to force exploration, but decays epsilon to 0.0 so the policy perfectly locks in once the goal is found.*
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model q_learning \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --alpha 0.1 \
+  --gamma 0.99 \
+  --epsilon 1.0 \
+  --epsilon_min 0.0 \
+  --epsilon_decay 0.9998 \
+  --q_init_val 0.0 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/q_learning/standard
+```
+
+### Perpetual Reshaping
+*Keeps `epsilon_min` at 0.05. The constant 5% random actions knock the agent off its path into optimistic 0.0 states, causing the Q-table to violently rewrite itself forever.*
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model q_learning \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --alpha 0.1 \
+  --gamma 0.99 \
+  --epsilon 1.0 \
+  --epsilon_min 0.05 \
+  --epsilon_decay 0.999 \
+  --q_init_val 0.0 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/q_learning/perpetual_reshaping
+```
+
+### Exploration Deprivation (Limited Exploration)
+*Uses Pessimistic Initialization (-200.0). Because every new state gives -200, the agent is terrified of unexplored states and cowers in the valley floor, completely failing to explore.*
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model q_learning \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --alpha 0.1 \
+  --gamma 0.99 \
+  --epsilon 0.01 \
+  --epsilon_min 0.01 \
+  --epsilon_decay 0.0 \
+  --q_init_val 0.0 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/q_learning/limited_exploration
+```
+
+### Catastrophic Forgetting
+*Uses a huge learning rate (`0.5`). When the agent accidentally explores a bad state, it violently overwrites its Q-table instantly, forgetting everything it learned.*
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model q_learning \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --alpha 0.5 \
+  --gamma 0.99 \
+  --epsilon 1.0 \
+  --epsilon_min 0.01 \
+  --epsilon_decay 0.9998 \
+  --q_init_val 0.0 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/q_learning/catastrophic_forgetting
+```
 
 ---
 
-## 1. Standard (Baseline)
-The mathematically optimal parameters configured separately for each model type based on empirical testing.
-* Target: Successfully builds momentum to reach the flag consistently within ~110-150 steps.
+## 2. SARSA
 
-### Hyperparameters
-| Model | Learning Rate | Discount ($\gamma$) | Exploration Strategy | Specific Overrides |
-|---|---|---|---|---|
-| **Q-Learning** | `alpha=0.1` | 0.99 | $\epsilon=1.0 \rightarrow 0.01$ (decay=0.9995) | `q_init_val=0.0` |
-| **SARSA** | `alpha=0.1` | 0.99 | $\epsilon=1.0 \rightarrow 0.01$ (decay=0.9995) | `q_init_val=0.0` |
-| **DQN** | `lr=1e-3` | 0.99 | $\epsilon=1.0 \rightarrow 0.01$ (decay=0.9995) | `batch=64`, `memory=20000`, `update=1000`, `layers=[64,64]` |
-| **PPO** | `lr=3e-4` | 0.99 | `entropy_coef=0.01` | `clip=0.2`, `epochs=10`, `batch=64`, `layers=[64,64]` |
+### Good Learning (Standard)
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model sarsa \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --alpha 0.1 \
+  --gamma 0.99 \
+  --epsilon 1.0 \
+  --epsilon_min 0.0 \
+  --epsilon_decay 0.9998 \
+  --q_init_val 0.0 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/sarsa/standard
+```
+
+### Perpetual Reshaping
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model sarsa \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --alpha 0.1 \
+  --gamma 0.99 \
+  --epsilon 1.0 \
+  --epsilon_min 0.05 \
+  --epsilon_decay 0.999 \
+  --q_init_val 0.0 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/sarsa/perpetual_reshaping
+```
+
+### Exploration Deprivation
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model sarsa \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --alpha 0.1 \
+  --gamma 0.99 \
+  --epsilon 0.01 \
+  --epsilon_min 0.01 \
+  --epsilon_decay 0.0 \
+  --q_init_val 0.0 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/sarsa/limited_exploration
+```
+
+### Catastrophic Forgetting
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model sarsa \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --alpha 0.5 \
+  --gamma 0.99 \
+  --epsilon 1.0 \
+  --epsilon_min 0.01 \
+  --epsilon_decay 0.9998 \
+  --q_init_val 0.0 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/sarsa/catastrophic_forgetting
+```
 
 ---
 
-## 2. Reward Hacking
-**Mechanism**: The `MountainCarRewardHackingWrapper` intentionally masks the constant `-1.0` native step penalty with a `+1.0` artificial reward specifically designed to trigger whenever the agent takes action `0` (push left). 
-**Expected Behavior**: Rather than taking the complex path to reach the flag to end the episode's penalty, the agent will learn that merely holding down the "left" button continuously generates positive score infinite farmable points, permanently anchoring itself firmly at the bottom of the left hill. 
+## 3. DQN
 
-### Hyperparameters
-Uses the exact same baseline parameters as the Standard model.
+### Good Learning (Standard)
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model dqn \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --lr 0.0001 \
+  --gamma 0.99 \
+  --epsilon 1.0 \
+  --epsilon_min 0.0 \
+  --epsilon_decay_steps 500000 \
+  --memory_size 200000 \
+  --batch_size 256 \
+  --replay_each 4 \
+  --target_update_every 2000 \
+  --hidden_layers 64 64 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/dqn/standard
+```
+
+### Perpetual Reshaping
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model dqn \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --lr 0.001 \
+  --gamma 0.99 \
+  --epsilon 1.0 \
+  --epsilon_min 0.05 \
+  --epsilon_decay 0.999 \
+  --memory_size 10000 \
+  --batch_size 64 \
+  --target_update_every 1 \
+  --hidden_layers 64 64 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/dqn/perpetual_reshaping
+```
+
+### Exploration Deprivation
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model dqn \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --lr 0.0001 \
+  --gamma 0.99 \
+  --epsilon 0.01 \
+  --epsilon_min 0.01 \
+  --epsilon_decay_steps 1 \
+  --memory_size 200000 \
+  --batch_size 256 \
+  --replay_each 4 \
+  --target_update_every 2000 \
+  --hidden_layers 64 64 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/dqn/limited_exploration
+```
+
+### Catastrophic Forgetting
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model dqn \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --lr 0.01 \
+  --gamma 0.99 \
+  --epsilon 1.0 \
+  --epsilon_min 0.01 \
+  --epsilon_decay 0.9998 \
+  --memory_size 64 \
+  --batch_size 64 \
+  --target_update_every 100 \
+  --hidden_layers 64 64 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/dqn/catastrophic_forgetting
+```
 
 ---
 
-## 3. Limited Exploration (Local Optimum Trap)
-**Mechanism**: The agent's exploration constants point-blank refuse to take random actions, forcing the agent to rigidly follow the very first (terrible) Q-table updates it accidentally stumbles upon. 
-**Expected Behavior**: Lacking the random exploration necessary to stumble across the precise physics momentum rhythm needed to reach the hill flag, this constrained agent will oscillate at the bottom of the valley forever, locking into a poor "wiggling" policy.
+## 4. PPO
 
-### Hyperparameters
-| Model Group | Hardcoded Parameter Interventions |
-|---|---|
-| **Tabular & DQN** | `epsilon=0.01`, `min_epsilon=0.0`, `epsilon_decay=0.0` |
-| **PPO** | `entropy_coef=0.0` |
+### Good Learning (Standard)
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model ppo \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --lr 0.0003 \
+  --gamma 0.99 \
+  --clip_ratio 0.2 \
+  --lam 0.95 \
+  --entropy_coef 0.01 \
+  --entropy_min 0.0 \
+  --entropy_decay_frac 0.5 \
+  --value_coef 0.5 \
+  --train_iters 10 \
+  --batch_size 2048 \
+  --hidden_layers 64 64 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/ppo/standard
+```
 
----
+### Perpetual Reshaping
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model ppo \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --lr 0.0003 \
+  --gamma 0.99 \
+  --clip_ratio 0.2 \
+  --lam 0.95 \
+  --entropy_coef 0.1 \
+  --entropy_min 0.05 \
+  --entropy_decay_frac 0.5 \
+  --value_coef 0.5 \
+  --train_iters 10 \
+  --batch_size 2048 \
+  --hidden_layers 64 64 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/ppo/perpetual_reshaping
+```
 
-## 4. Oscillation (Aggressive Learning)
-**Mechanism**: Both neural and tabular optimization mathematics are completely destabilized. The optimization step size is set greater than 100%, causing the predicted value functions to constantly slingshot past the real target value on every update.
-**Expected Behavior**: Complete failure to converge. The agent's performance graphs will exhibit massive, jagged zigzags and frequent crashes in overall score.
+### Exploration Deprivation
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model ppo \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --lr 0.0003 \
+  --gamma 0.99 \
+  --clip_ratio 0.2 \
+  --lam 0.95 \
+  --entropy_coef 0.0 \
+  --entropy_min 0.0 \
+  --entropy_decay_frac 0.0 \
+  --value_coef 0.5 \
+  --train_iters 10 \
+  --batch_size 128 \
+  --hidden_layers 64 64 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/ppo/limited_exploration
+```
 
-### Hyperparameters
-| Model Group | Hardcoded Parameter Interventions |
-|---|---|
-| **Tabular (QL/SARSA)** | `alpha=1.1` |
-| **Neural (DQN/PPO)** | `lr=0.01`, `batch_size=8`, `target_update_every=1` (DQN), `train_iters=40` (PPO) |
+### Catastrophic Forgetting
+```bash
+/data/ondra/venvs/atat-env/bin/python3 -m experiments.mountain_car.mountain_car_discrete \
+  --model ppo \
+  --seed 42 \
+  --episodes 30000 \
+  --evaluate_each 1000 \
+  --evaluate_for 500 \
+  --lr 0.0003 \
+  --gamma 0.99 \
+  --clip_ratio 0.2 \
+  --lam 0.95 \
+  --entropy_coef 0.01 \
+  --entropy_min 0.0 \
+  --entropy_decay_frac 0.5 \
+  --value_coef 0.5 \
+  --train_iters 50 \
+  --batch_size 1024 \
+  --hidden_layers 64 64 \
+  --log_dir /datafast/ondra/trajectories/behavioral_ontogeny/mountain_car/ppo/catastrophic_forgetting
+```
