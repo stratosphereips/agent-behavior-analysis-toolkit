@@ -79,6 +79,21 @@ def policy_comparison_worker(policy1:EmpiricalPolicy, policy2:EmpiricalPolicy, n
     results["topological_shift"] = topo_shift_values["jsd_total"]
     results["topological_shift_overlap"] = topo_shift_values["jsd_overlap"]
     results["topological_shift_non_overlap"] = topo_shift_values["jsd_non_overlap"]
+
+    # Directional split of the non-overlap term. compute_decomposed_jsd is called as
+    # (current=policy1, previous=policy2), so p_A_unique is the probability mass the
+    # CURRENT checkpoint places on newly visited states (frontier growth) and
+    # p_B_unique is the mass the PREVIOUS checkpoint placed on now-abandoned states
+    # (footprint collapse). On a single-checkpoint state the JSD integrand reduces to
+    # exactly half that state's mass, so discovery + abandonment == jsd_non_overlap
+    # (the split is exact, not an approximation). net = discovery - abandonment is the
+    # signed flux: positive = net expansion, negative = net collapse.
+    results["topological_shift_discovery"] = 0.5 * topo_shift_values["p_A_unique"]
+    results["topological_shift_abandonment"] = 0.5 * topo_shift_values["p_B_unique"]
+    results["topological_shift_net"] = (
+        results["topological_shift_discovery"] - results["topological_shift_abandonment"]
+    )
+
     results["strategic_shift"] = strategic_shift(policy1, policy2, global_actions=global_actions, noise_value=0.0)
     results["3-gram_wasserstein"] = compute_ngram_wasserstein_fast(policy1.trajectories, policy2.trajectories, global_ngrams, ngram_cost_matrix, n=3)
     results["node_overlap"] = len(set(policy1.states).intersection(set(policy2.states)))
@@ -95,6 +110,9 @@ def estimate_noise_valus_for_policies(polcy1:EmpiricalPolicy, polcy2:EmpiricalPo
         "topological_shift": [],
         "topological_shift_overlap": [],
         "topological_shift_non_overlap": [],
+        "topological_shift_discovery": [],
+        "topological_shift_abandonment": [],
+        "topological_shift_net": [],
         "strategic_shift": [],
         "3-gram_wasserstein": [],
     }
@@ -115,13 +133,31 @@ def estimate_noise_valus_for_policies(polcy1:EmpiricalPolicy, polcy2:EmpiricalPo
         # compute errors for all tmp policy pairs
         tmp_errors = compare_checkpoints(tmp_policy_pairs,tmp_policies, ngram_cost_matrix, global_ngrams, global_actions)
         for tmp_error in tmp_errors.values():
-            errors["topological_shift"].append(tmp_error["topological_shift"])  
-            errors["topological_shift_overlap"].append(tmp_error["topological_shift_overlap"])
-            errors["topological_shift_non_overlap"].append(tmp_error["topological_shift_non_overlap"])
-            errors["strategic_shift"].append(tmp_error["strategic_shift"])
-            errors["3-gram_wasserstein"].append(tmp_error["3-gram_wasserstein"])
-    # compute percentile for each metric and return
-    return {k: np.quantile(v, percentile) for k, v in errors.items()}
+            for k in errors:
+                errors[k].append(tmp_error[k])
+
+    # One-sided 95th-percentile floors for the non-negative metrics (significance
+    # gates: a metric is "real" when it exceeds its floor).
+    one_sided = [
+        "topological_shift",
+        "topological_shift_overlap",
+        "topological_shift_non_overlap",
+        "topological_shift_discovery",
+        "topological_shift_abandonment",
+        "strategic_shift",
+        "3-gram_wasserstein",
+    ]
+    result = {k: np.quantile(errors[k], percentile) for k in one_sided}
+
+    # The net flux (discovery - abandonment) is SIGNED and centered at ~0 under the
+    # paired-split null (the two halves are exchangeable, so spurious discovery and
+    # abandonment masses are equal in expectation). It therefore needs a TWO-SIDED
+    # band: net is meaningful only when it falls outside [lo, hi]. The symmetric
+    # alpha/2 tails give the band the same total coverage as the one-sided tests.
+    alpha = 1.0 - percentile
+    result["topological_shift_net_hi"] = np.quantile(errors["topological_shift_net"], 1.0 - alpha / 2.0)
+    result["topological_shift_net_lo"] = np.quantile(errors["topological_shift_net"], alpha / 2.0)
+    return result
 
 def estimate_noise_sensitivity_for_policies(
     policy1: EmpiricalPolicy,
@@ -153,10 +189,16 @@ def estimate_noise_sensitivity_for_policies(
 
     all_returns = policy1.returns + policy2.returns
 
+    # Note: discovery/abandonment are tracked here (non-negative, one-sided like the
+    # other metrics). The signed net flux is omitted from this sweep because its
+    # threshold is two-sided and zero-centered, so the one-sided percentile ratio
+    # used below is not the right stability summary for it.
     raw: dict[str, list[float]] = {
         "topological_shift": [],
         "topological_shift_overlap": [],
         "topological_shift_non_overlap": [],
+        "topological_shift_discovery": [],
+        "topological_shift_abandonment": [],
         "strategic_shift": [],
         "3-gram_wasserstein": [],
         "mean_return_diff": [],
@@ -174,6 +216,8 @@ def estimate_noise_sensitivity_for_policies(
             raw["topological_shift"].append(err["topological_shift"])
             raw["topological_shift_overlap"].append(err["topological_shift_overlap"])
             raw["topological_shift_non_overlap"].append(err["topological_shift_non_overlap"])
+            raw["topological_shift_discovery"].append(err["topological_shift_discovery"])
+            raw["topological_shift_abandonment"].append(err["topological_shift_abandonment"])
             raw["strategic_shift"].append(err["strategic_shift"])
             raw["3-gram_wasserstein"].append(err["3-gram_wasserstein"])
 
@@ -461,11 +505,20 @@ def main():
         "state_visitation_perplexity": [],
         "topological_shift_overlap_raw": [],
         "topological_shift_non_overlap_raw": [],
+        # directional decomposition of the non-overlap term
+        "topological_shift_discovery_raw": [],
+        "topological_shift_abandonment_raw": [],
+        "topological_shift_net_raw": [],
         "strategic_shift_raw": [],
         "3-gram_wasserstein_raw": [],
         "topological_shift_noise_threshold": [],
         "topological_shift_overlap_noise_threshold": [],
         "topological_shift_non_overlap_noise_threshold": [],
+        # floors for the directional components (net is two-sided)
+        "topological_shift_discovery_noise_threshold": [],
+        "topological_shift_abandonment_noise_threshold": [],
+        "topological_shift_net_noise_hi": [],
+        "topological_shift_net_noise_lo": [],
         "strategic_shift_noise_threshold": [],
         "3-gram_wasserstein_noise_threshold": [],
         "total_nodes": [],
@@ -495,6 +548,9 @@ def main():
             metrics["topological_shift_raw"].append(comparisons[current_ts, prev_ts]["topological_shift"])
             metrics["topological_shift_overlap_raw"].append(comparisons[current_ts, prev_ts]["topological_shift_overlap"])
             metrics["topological_shift_non_overlap_raw"].append(comparisons[current_ts, prev_ts]["topological_shift_non_overlap"])
+            metrics["topological_shift_discovery_raw"].append(comparisons[current_ts, prev_ts]["topological_shift_discovery"])
+            metrics["topological_shift_abandonment_raw"].append(comparisons[current_ts, prev_ts]["topological_shift_abandonment"])
+            metrics["topological_shift_net_raw"].append(comparisons[current_ts, prev_ts]["topological_shift_net"])
             metrics["strategic_shift_raw"].append(comparisons[current_ts, prev_ts]["strategic_shift"])
             metrics["3-gram_wasserstein_raw"].append(comparisons[current_ts, prev_ts]["3-gram_wasserstein"])
             metrics["node_overlap"].append(comparisons[current_ts, prev_ts]["node_overlap"])
@@ -505,6 +561,10 @@ def main():
             metrics["topological_shift_noise_threshold"].append(noise_values[prev_ts, current_ts]["topological_shift"])
             metrics["topological_shift_overlap_noise_threshold"].append(noise_values[prev_ts, current_ts]["topological_shift_overlap"])
             metrics["topological_shift_non_overlap_noise_threshold"].append(noise_values[prev_ts, current_ts]["topological_shift_non_overlap"])
+            metrics["topological_shift_discovery_noise_threshold"].append(noise_values[prev_ts, current_ts]["topological_shift_discovery"])
+            metrics["topological_shift_abandonment_noise_threshold"].append(noise_values[prev_ts, current_ts]["topological_shift_abandonment"])
+            metrics["topological_shift_net_noise_hi"].append(noise_values[prev_ts, current_ts]["topological_shift_net_hi"])
+            metrics["topological_shift_net_noise_lo"].append(noise_values[prev_ts, current_ts]["topological_shift_net_lo"])
             metrics["strategic_shift_noise_threshold"].append(noise_values[prev_ts, current_ts]["strategic_shift"])
             metrics["3-gram_wasserstein_noise_threshold"].append(noise_values[prev_ts, current_ts]["3-gram_wasserstein"])
 
