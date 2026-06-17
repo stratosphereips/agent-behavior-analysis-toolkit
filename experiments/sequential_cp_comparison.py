@@ -123,6 +123,131 @@ def estimate_noise_valus_for_policies(polcy1:EmpiricalPolicy, polcy2:EmpiricalPo
     # compute percentile for each metric and return
     return {k: np.quantile(v, percentile) for k, v in errors.items()}
 
+def estimate_noise_sensitivity_for_policies(
+    policy1: EmpiricalPolicy,
+    policy2: EmpiricalPolicy,
+    ngram_cost_matrix: np.ndarray,
+    global_ngrams: list[tuple],
+    global_actions: list[int],
+    m_values: list[int],
+    n_subsamples: int = 20,
+    percentile: float = 0.95,
+) -> dict:
+    """
+    Estimate noise threshold sensitivity to bootstrap sample count M.
+
+    Runs the full bootstrap once at max(m_values), saves all raw metric values,
+    then for each M in m_values subsamples M values n_subsamples times and
+    computes the percentile threshold each time. Returns mean and std of those
+    estimates, normalized by the max-M reference.
+
+    Returns:
+        dict keyed by metric name, each value is a dict:
+            {M: {"mean": float, "std": float, "mean_normalized": float, "std_normalized": float}}
+    """
+    m_max = max(m_values)
+
+    # --- collect m_max raw bootstrap values ---
+    all_trajectories = policy1.trajectories + policy2.trajectories
+    half_N = len(all_trajectories) // 2
+
+    all_returns = policy1.returns + policy2.returns
+
+    raw: dict[str, list[float]] = {
+        "topological_shift": [],
+        "topological_shift_overlap": [],
+        "topological_shift_non_overlap": [],
+        "strategic_shift": [],
+        "3-gram_wasserstein": [],
+        "mean_return_diff": [],
+    }
+
+    for i in range(m_max):
+        shuffled = all_trajectories[:]
+        np.random.shuffle(shuffled)
+        tmp_p1 = EmpiricalPolicy(shuffled[:half_N], action_space=global_actions)
+        tmp_p2 = EmpiricalPolicy(shuffled[half_N:], action_space=global_actions)
+        tmp_pairs = [(f"{i}_1", f"{i}_2")]
+        tmp_policies = {f"{i}_1": tmp_p1, f"{i}_2": tmp_p2}
+        tmp_errors = compare_checkpoints(tmp_pairs, tmp_policies, ngram_cost_matrix, global_ngrams, global_actions)
+        for err in tmp_errors.values():
+            raw["topological_shift"].append(err["topological_shift"])
+            raw["topological_shift_overlap"].append(err["topological_shift_overlap"])
+            raw["topological_shift_non_overlap"].append(err["topological_shift_non_overlap"])
+            raw["strategic_shift"].append(err["strategic_shift"])
+            raw["3-gram_wasserstein"].append(err["3-gram_wasserstein"])
+
+        # reward noise: split pooled returns 50/50, measure |mean difference|
+        shuffled_returns = all_returns[:]
+        np.random.shuffle(shuffled_returns)
+        half_R = len(shuffled_returns) // 2
+        raw["mean_return_diff"].append(
+            abs(np.mean(shuffled_returns[:half_R]) - np.mean(shuffled_returns[half_R:]))
+        )
+
+    # reference threshold at m_max
+    ref = {k: np.quantile(v, percentile) for k, v in raw.items()}
+
+    # --- subsample for each M ---
+    results: dict[str, dict[int, dict]] = {k: {} for k in raw}
+
+    for M in m_values:
+        for metric, values in raw.items():
+            subsample_quantiles = [
+                np.quantile(np.random.choice(values, size=M, replace=False), percentile)
+                for _ in range(n_subsamples)
+            ]
+            mean_q = float(np.mean(subsample_quantiles))
+            std_q = float(np.std(subsample_quantiles))
+            ref_val = ref[metric] if ref[metric] > 0 else 1.0
+            results[metric][M] = {
+                "mean": mean_q,
+                "std": std_q,
+                "mean_normalized": mean_q / ref_val,
+                "std_normalized": std_q / ref_val,
+            }
+
+    return results
+
+
+def estimate_noise_sensitivity(
+    policy_pairs: list[tuple],
+    policies: dict,
+    ngram_cost_matrix: np.ndarray,
+    global_ngrams: list[tuple],
+    global_actions: list[int],
+    m_values: list[int],
+    n_subsamples: int = 20,
+    percentile: float = 0.95,
+) -> dict:
+    """
+    Run estimate_noise_sensitivity_for_policies for all checkpoint pairs in parallel.
+
+    Returns:
+        dict keyed by (p1, p2), each value is the output of
+        estimate_noise_sensitivity_for_policies — i.e.
+        {metric: {M: {"mean", "std", "mean_normalized", "std_normalized"}}}
+    """
+    results = {}
+    with ProcessPoolExecutor() as executor:
+        futures = {
+            executor.submit(
+                estimate_noise_sensitivity_for_policies,
+                policies[p1], policies[p2],
+                ngram_cost_matrix, global_ngrams, global_actions,
+                m_values, n_subsamples, percentile,
+            ): (p1, p2)
+            for p1, p2 in policy_pairs
+        }
+        for f in as_completed(futures):
+            p1, p2 = futures[f]
+            try:
+                results[(p1, p2)] = f.result()
+            except Exception as e:
+                print(f"Error estimating noise sensitivity for ({p1}, {p2}): {e}")
+    return results
+
+
 def estimate_noise_values(policy_pairs, policies, ngram_cost_matrix, global_ngrams, global_actions, num_samples:int=50, percentile:float=0.95):
     results = {}
     with ProcessPoolExecutor() as executor:
@@ -323,7 +448,7 @@ def main():
     #errors = compute_errors_per_checkpoint(checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS)
 
     # estimate noise values for each checkpoint
-    noise_values = estimate_noise_values(checkpoint_pairs, checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS,num_samples=10)
+    noise_values = estimate_noise_values(checkpoint_pairs, checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS,num_samples=20)
     
     # compare checkpoints
     comparisons = compare_checkpoints(checkpoint_pairs, checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS)
