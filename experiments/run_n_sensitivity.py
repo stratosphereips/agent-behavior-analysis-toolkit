@@ -36,6 +36,10 @@ from experiments.sequential_cp_comparison import (
 )
 from trajectory import EmpiricalPolicy
 
+# Default N grid. Keep N at most ~40% of the collected pool size: subsampling
+# WITHOUT replacement deflates variance by sqrt(1 - N/pool), so points with N
+# close to the pool look spuriously stable (at N = pool size, std is exactly 0).
+# With a 500-trajectory pool the honest ceiling is N~200; a 1000-pool allows ~400.
 N_VALUES = [10, 50, 100, 200]
 N_SUBSAMPLES = 20
 
@@ -102,12 +106,12 @@ def evaluate_at_n(
 
 def process_pair(args):
     cp_prev, cp_curr, trajectories_prev, trajectories_curr, \
-        ngram_cost_matrix, global_ngrams, global_actions, n_subsamples = args
+        ngram_cost_matrix, global_ngrams, global_actions, n_subsamples, n_values = args
 
     policy_prev = EmpiricalPolicy(trajectories_prev, action_space=global_actions)
 
     result = {}
-    for N in N_VALUES:
+    for N in n_values:
         result[N] = evaluate_at_n(
             trajectories_curr, policy_prev,
             ngram_cost_matrix, global_ngrams, global_actions,
@@ -122,7 +126,13 @@ def main():
     parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--num_actions", type=int, default=None)
     parser.add_argument("--n_subsamples", type=int, default=N_SUBSAMPLES)
+    parser.add_argument("--n_values", type=int, nargs="+", default=N_VALUES,
+                        help="Subsample sizes to probe. Keep each at most ~40%% of "
+                             "the collected pool (e.g. <=200 for a 500-traj pool, "
+                             "<=400 for a 1000-traj pool) to avoid finite-population "
+                             "variance deflation.")
     args = parser.parse_args()
+    n_values = sorted(args.n_values)
 
     policies = load_policies_from_directory(args.data_dir, max_trajectories=1000)
     checkpoints = sorted(
@@ -142,8 +152,15 @@ def main():
 
     global_ngrams, cost_matrix = build_global_environment_cache(global_actions, n=3)
 
+    # Warn if any requested N is too large a fraction of the available pool.
+    min_pool = min(len(policies[cp][0].trajectories) for cp in checkpoints)
+    if max(n_values) > 0.4 * min_pool:
+        print(f"WARNING: largest N={max(n_values)} exceeds 40% of the smallest pool "
+              f"({min_pool}); finite-population deflation will make large-N points "
+              f"look spuriously stable. Consider N <= {int(0.4 * min_pool)}.")
+
     print(f"Running N sensitivity over {len(checkpoint_pairs)} checkpoint pairs, "
-          f"N={N_VALUES}, n_subsamples={args.n_subsamples} ...")
+          f"N={n_values}, n_subsamples={args.n_subsamples} ...")
 
     work = [
         (
@@ -151,7 +168,7 @@ def main():
             policies[cp_prev][0].trajectories,
             policies[cp_curr][0].trajectories,
             cost_matrix, global_ngrams, global_actions,
-            args.n_subsamples,
+            args.n_subsamples, n_values,
         )
         for cp_prev, cp_curr in checkpoint_pairs
     ]
@@ -163,7 +180,7 @@ def main():
             try:
                 cp_prev, cp_curr, result = f.result()
                 key = f"{cp_prev}__{cp_curr}"
-                sensitivity[key] = {str(N): result[N] for N in N_VALUES}
+                sensitivity[key] = {str(N): result[N] for N in n_values}
             except Exception as e:
                 print(f"Error: {e}")
 
@@ -177,7 +194,7 @@ def main():
     # different units/scales: it answers "how big is the sampling noise at N relative
     # to how much this metric actually moves over training?". CV is retained for the
     # bounded behavioral metrics, where it remains meaningful during the active phase.
-    ref_N = str(max(N_VALUES))
+    ref_N = str(max(n_values))
     metric_names = [
         "seff",
         "topological_shift",
@@ -211,7 +228,7 @@ def main():
 
     output = {
         "n_subsamples": args.n_subsamples,
-        "n_values": N_VALUES,
+        "n_values": n_values,
         "signal_range": signal_range,
         "pairs": sensitivity,
     }
