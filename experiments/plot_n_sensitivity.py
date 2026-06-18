@@ -93,8 +93,9 @@ def load_and_aggregate(path: str, field: str) -> dict[str, dict[int, list]]:
 
 
 def plot_sensitivity(aggregated: dict, operating: dict, ax: plt.Axes, title: str,
-                     field: str, tolerance: float | None):
-    for metric, label in METRICS:
+                     field: str, tolerance: float | None, ymax: float | None):
+    n_metrics = len(METRICS)
+    for i, (metric, label) in enumerate(METRICS):
         if metric not in aggregated:
             continue
         n_vals = sorted(aggregated[metric].keys())
@@ -104,27 +105,30 @@ def plot_sensitivity(aggregated: dict, operating: dict, ax: plt.Axes, title: str
         color = METRIC_COLORS.get(metric, "grey")
         ls = METRIC_LINESTYLE.get(metric, "-")
         ax.plot(n_vals, means, color=color, linestyle=ls, marker="o",
-                markersize=4, linewidth=1.8, label=label)
-        ax.fill_between(n_vals, means - stds, means + stds, color=color, alpha=0.15)
+                markersize=4, linewidth=1.8, label=label, zorder=3)
+        # light band so overlapping uncertainties don't swamp the lines
+        ax.fill_between(n_vals, means - stds, means + stds, color=color,
+                        alpha=0.08, zorder=1)
 
-        # operating-budget point: directly-measured precision at the full pool
+        # operating-budget point: directly-measured precision at the full pool.
+        # Spread markers horizontally per metric (multiplicative offset on the log
+        # axis) so they don't overlap into one blob at the right edge.
         if metric in operating and operating[metric]["values"]:
             op_N = float(np.median(operating[metric]["N"]))
             op_mean = float(np.mean(operating[metric]["values"]))
             op_std = float(np.std(operating[metric]["values"]))
-            # faint connector from the last subsampling point to the operating point
-            ax.plot([n_vals[-1], op_N], [means[-1], op_mean],
-                    color=color, linestyle=":", linewidth=0.8, alpha=0.5)
-            ax.errorbar(op_N, op_mean, yerr=op_std, marker="*", markersize=13,
-                        color=color, linestyle="none", zorder=5,
-                        markeredgecolor="black", markeredgewidth=0.4)
+            offset = 1.0 + 0.05 * (i - (n_metrics - 1) / 2.0)
+            ax.errorbar(op_N * offset, op_mean, yerr=op_std, marker="*",
+                        markersize=11, color=color, linestyle="none", zorder=6,
+                        markeredgecolor="black", markeredgewidth=0.4,
+                        elinewidth=0.8, capsize=2, alpha=0.85)
 
     if tolerance is not None:
         ax.axhline(tolerance, color="black", linewidth=0.8, linestyle=":")
 
     # proxy legend entry explaining the star marker
     if any(m in operating for m, _ in METRICS):
-        ax.plot([], [], marker="*", linestyle="none", color="gray", markersize=13,
+        ax.plot([], [], marker="*", linestyle="none", color="gray", markersize=11,
                 markeredgecolor="black", markeredgewidth=0.4,
                 label="operating budget (bootstrap)")
 
@@ -137,7 +141,7 @@ def plot_sensitivity(aggregated: dict, operating: dict, ax: plt.Axes, title: str
             ticks.add(int(np.median(operating[any_metric]["N"])))
         ax.set_xticks(sorted(ticks))
         ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
-    ax.set_ylim(bottom=0)
+    ax.set_ylim(bottom=0, top=ymax)
     ax.set_title(title, fontsize=11)
     ax.set_xlabel("N (evaluation trajectories)", fontsize=9)
     ylab = (r"std / signal range" if field == "std_over_range"
@@ -159,6 +163,9 @@ def main():
     parser.add_argument("--tolerance", type=float, default=0.1,
                         help="Horizontal reference line for 'stable enough' "
                              "(set to a negative value to omit)")
+    parser.add_argument("--ymax", type=float, default=0.3,
+                        help="Upper y-limit; clips the very large small-N bands so "
+                             "the tolerance region is readable (set <=0 for auto)")
     args = parser.parse_args()
 
     if len(args.inputs) != len(args.labels):
@@ -166,18 +173,21 @@ def main():
         sys.exit(1)
 
     tol = args.tolerance if args.tolerance >= 0 else None
+    ymax = args.ymax if args.ymax > 0 else None
 
     n = len(args.inputs)
-    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4), sharey=True)
+    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4.2), sharey=True)
     if n == 1:
         axes = [axes]
 
     for ax, path, label in zip(axes, args.inputs, args.labels):
         aggregated, operating = load_and_aggregate(path, args.field)
-        plot_sensitivity(aggregated, operating, ax, label, args.field, tol)
+        plot_sensitivity(aggregated, operating, ax, label, args.field, tol, ymax)
 
-    handles, labels = axes[-1].get_legend_handles_labels()
-    axes[-1].legend(handles, labels, fontsize=8, loc="upper right")
+    # single figure-level legend below the panels (keeps it off the data)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, fontsize=9, loc="lower center",
+               ncol=len(labels), bbox_to_anchor=(0.5, -0.04))
 
     fig.suptitle("Metric estimation stability vs number of evaluation trajectories N",
                  fontsize=12, y=1.01)
