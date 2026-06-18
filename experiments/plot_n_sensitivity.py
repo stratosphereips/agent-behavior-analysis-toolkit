@@ -75,11 +75,25 @@ def load_and_aggregate(path: str, field: str) -> dict[str, dict[int, list]]:
                 if val is None or not np.isfinite(val):
                     continue
                 aggregated.setdefault(metric, {}).setdefault(N, []).append(val)
-    return aggregated
+
+    # Operating-budget points (full-pool bootstrap), if present.
+    operating: dict[str, dict[str, list]] = {}
+    op_data = data.get("operating", {}) if isinstance(data, dict) else {}
+    for pair_key, entry in op_data.items():
+        op_N = entry.get("N")
+        for metric, stats in entry.get("stats", {}).items():
+            val = stats.get(field, float("nan"))
+            if val is None or not np.isfinite(val):
+                continue
+            d = operating.setdefault(metric, {"N": [], "values": []})
+            d["N"].append(op_N)
+            d["values"].append(val)
+
+    return aggregated, operating
 
 
-def plot_sensitivity(aggregated: dict, ax: plt.Axes, title: str, field: str,
-                     tolerance: float | None):
+def plot_sensitivity(aggregated: dict, operating: dict, ax: plt.Axes, title: str,
+                     field: str, tolerance: float | None):
     for metric, label in METRICS:
         if metric not in aggregated:
             continue
@@ -93,14 +107,35 @@ def plot_sensitivity(aggregated: dict, ax: plt.Axes, title: str, field: str,
                 markersize=4, linewidth=1.8, label=label)
         ax.fill_between(n_vals, means - stds, means + stds, color=color, alpha=0.15)
 
+        # operating-budget point: directly-measured precision at the full pool
+        if metric in operating and operating[metric]["values"]:
+            op_N = float(np.median(operating[metric]["N"]))
+            op_mean = float(np.mean(operating[metric]["values"]))
+            op_std = float(np.std(operating[metric]["values"]))
+            # faint connector from the last subsampling point to the operating point
+            ax.plot([n_vals[-1], op_N], [means[-1], op_mean],
+                    color=color, linestyle=":", linewidth=0.8, alpha=0.5)
+            ax.errorbar(op_N, op_mean, yerr=op_std, marker="*", markersize=13,
+                        color=color, linestyle="none", zorder=5,
+                        markeredgecolor="black", markeredgewidth=0.4)
+
     if tolerance is not None:
         ax.axhline(tolerance, color="black", linewidth=0.8, linestyle=":")
 
+    # proxy legend entry explaining the star marker
+    if any(m in operating for m, _ in METRICS):
+        ax.plot([], [], marker="*", linestyle="none", color="gray", markersize=13,
+                markeredgecolor="black", markeredgewidth=0.4,
+                label="operating budget (bootstrap)")
+
     ax.set_xscale("log")
-    # x ticks inferred from any metric present
+    # x ticks: subsampling N grid plus the operating-budget N
     any_metric = next((m for m, _ in METRICS if m in aggregated), None)
     if any_metric is not None:
-        ax.set_xticks(sorted(aggregated[any_metric].keys()))
+        ticks = set(aggregated[any_metric].keys())
+        if any_metric in operating and operating[any_metric]["N"]:
+            ticks.add(int(np.median(operating[any_metric]["N"])))
+        ax.set_xticks(sorted(ticks))
         ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
     ax.set_ylim(bottom=0)
     ax.set_title(title, fontsize=11)
@@ -138,8 +173,8 @@ def main():
         axes = [axes]
 
     for ax, path, label in zip(axes, args.inputs, args.labels):
-        aggregated = load_and_aggregate(path, args.field)
-        plot_sensitivity(aggregated, ax, label, args.field, tol)
+        aggregated, operating = load_and_aggregate(path, args.field)
+        plot_sensitivity(aggregated, operating, ax, label, args.field, tol)
 
     handles, labels = axes[-1].get_legend_handles_labels()
     axes[-1].legend(handles, labels, fontsize=8, loc="upper right")
