@@ -167,10 +167,62 @@ def main():
             except Exception as e:
                 print(f"Error: {e}")
 
+    # --- Post-process: add a range-normalized std for cross-metric comparison ---
+    # CV (std/mean) is unstable wherever a metric's mean is near or crosses zero:
+    #   - mean_return crosses zero in Taxi/MountainCar (CV blows up / flips sign),
+    #   - the shift metrics decay to ~0 at convergence (CV blows up).
+    # We therefore also report std normalized by each metric's *signal range* across
+    # the checkpoint series (max - min of the per-pair means at the largest N). This
+    # is robust to both pathologies and directly comparable across metrics with
+    # different units/scales: it answers "how big is the sampling noise at N relative
+    # to how much this metric actually moves over training?". CV is retained for the
+    # bounded behavioral metrics, where it remains meaningful during the active phase.
+    ref_N = str(max(N_VALUES))
+    metric_names = [
+        "seff",
+        "topological_shift",
+        "topological_shift_overlap",
+        "topological_shift_non_overlap",
+        "strategic_shift",
+        "3-gram_wasserstein",
+        "mean_return",
+    ]
+    signal_range = {}
+    for metric in metric_names:
+        means = [
+            sensitivity[k][ref_N][metric]["mean"]
+            for k in sensitivity
+            if ref_N in sensitivity[k]
+            and metric in sensitivity[k][ref_N]
+            and np.isfinite(sensitivity[k][ref_N][metric]["mean"])
+        ]
+        rng = (max(means) - min(means)) if len(means) >= 2 else float("nan")
+        signal_range[metric] = float(rng) if (np.isfinite(rng) and rng > 0) else float("nan")
+
+    for k in sensitivity:
+        for N_key in sensitivity[k]:
+            for metric, stats in sensitivity[k][N_key].items():
+                rng = signal_range.get(metric, float("nan"))
+                stats["std_over_range"] = (
+                    float(stats["std"] / rng)
+                    if (np.isfinite(rng) and rng > 0)
+                    else float("nan")
+                )
+
+    output = {
+        "n_subsamples": args.n_subsamples,
+        "n_values": N_VALUES,
+        "signal_range": signal_range,
+        "pairs": sensitivity,
+    }
+
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     with open(args.output, "w") as f:
-        json.dump(sensitivity, f, indent=2)
+        json.dump(output, f, indent=2)
     print(f"Saved to {args.output}")
+    print("Signal range (denominator for std_over_range) per metric:")
+    for m, r in signal_range.items():
+        print(f"  {m:34s} {r}")
 
 
 if __name__ == "__main__":
