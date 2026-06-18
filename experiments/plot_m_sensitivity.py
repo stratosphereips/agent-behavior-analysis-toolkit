@@ -89,7 +89,7 @@ def plot_sensitivity(aggregated: dict, ax: plt.Axes, title: str):
 
     # reference line and operating point
     ax.axhline(1.0, color="black", linewidth=0.8, linestyle=":")
-    ax.axvline(10, color="black", linewidth=0.8, linestyle="--", alpha=0.5)
+    ax.axvline(20, color="black", linewidth=0.8, linestyle="--", alpha=0.5)
 
     ax.set_xscale("log")
     ax.set_xticks([1, 2, 5, 10, 20, 50, 100, 200])
@@ -129,7 +129,7 @@ def main():
 
     # annotation for the operating point
     for ax in axes:
-        ax.annotate("M=10", xy=(10, 0.02), fontsize=7, ha="center", color="grey")
+        ax.annotate("M=20", xy=(20, 0.02), fontsize=7, ha="center", color="grey")
 
     fig.suptitle("Noise threshold stability vs bootstrap sample count M",
                  fontsize=12, y=1.01)
