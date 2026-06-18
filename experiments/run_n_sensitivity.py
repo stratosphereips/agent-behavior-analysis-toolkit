@@ -52,13 +52,22 @@ def evaluate_at_n(
     global_actions: list,
     N: int,
     n_subsamples: int,
+    replace: bool = False,
 ) -> dict:
     """
-    Subsample N trajectories from checkpoint k n_subsamples times.
-    For each subsample compute all metrics against the full policy_prev.
+    Resample N trajectories from checkpoint k n_subsamples times.
+    For each resample compute all metrics against the full policy_prev.
     Returns mean, std, and CV for each metric at this N.
+
+    replace=False  -> subsampling without replacement. Estimates the variance of
+                      an N-trajectory estimate, but is only valid for N well below
+                      the pool size (variance is deflated by sqrt(1 - N/pool) and
+                      is exactly 0 at N = pool size).
+    replace=True   -> bootstrap with replacement. Gives a non-degenerate variance
+                      estimate even at N = pool size, so it is used to measure the
+                      precision of the estimate at the full operating budget.
     """
-    if N > len(trajectories_k):
+    if N > len(trajectories_k) and not replace:
         N = len(trajectories_k)
 
     metric_samples: dict[str, list[float]] = {
@@ -72,7 +81,7 @@ def evaluate_at_n(
     }
 
     for _ in range(n_subsamples):
-        indices = np.random.choice(len(trajectories_k), size=N, replace=False)
+        indices = np.random.choice(len(trajectories_k), size=N, replace=replace)
         subsample = [trajectories_k[i] for i in indices]
 
         policy_sub = EmpiricalPolicy(subsample, action_space=global_actions)
@@ -117,7 +126,18 @@ def process_pair(args):
             ngram_cost_matrix, global_ngrams, global_actions,
             N, n_subsamples,
         )
-    return cp_prev, cp_curr, result
+
+    # Operating-budget point: precision of the estimate computed from the FULL pool,
+    # measured by bootstrap (with replacement) so it is non-degenerate at N = pool
+    # size. This is the directly-measured precision at the budget actually used,
+    # not an extrapolation from the subsampling curve.
+    op_N = len(trajectories_curr)
+    op_stats = evaluate_at_n(
+        trajectories_curr, policy_prev,
+        ngram_cost_matrix, global_ngrams, global_actions,
+        op_N, n_subsamples, replace=True,
+    )
+    return cp_prev, cp_curr, result, op_N, op_stats
 
 
 def main():
@@ -174,13 +194,15 @@ def main():
     ]
 
     sensitivity = {}
+    operating = {}
     with ProcessPoolExecutor() as executor:
         futures = {executor.submit(process_pair, w): w for w in work}
         for f in as_completed(futures):
             try:
-                cp_prev, cp_curr, result = f.result()
+                cp_prev, cp_curr, result, op_N, op_stats = f.result()
                 key = f"{cp_prev}__{cp_curr}"
                 sensitivity[key] = {str(N): result[N] for N in n_values}
+                operating[key] = {"N": op_N, "stats": op_stats}
             except Exception as e:
                 print(f"Error: {e}")
 
@@ -216,21 +238,30 @@ def main():
         rng = (max(means) - min(means)) if len(means) >= 2 else float("nan")
         signal_range[metric] = float(rng) if (np.isfinite(rng) and rng > 0) else float("nan")
 
+    def add_std_over_range(stats_by_metric):
+        for metric, stats in stats_by_metric.items():
+            rng = signal_range.get(metric, float("nan"))
+            stats["std_over_range"] = (
+                float(stats["std"] / rng)
+                if (np.isfinite(rng) and rng > 0)
+                else float("nan")
+            )
+
     for k in sensitivity:
         for N_key in sensitivity[k]:
-            for metric, stats in sensitivity[k][N_key].items():
-                rng = signal_range.get(metric, float("nan"))
-                stats["std_over_range"] = (
-                    float(stats["std"] / rng)
-                    if (np.isfinite(rng) and rng > 0)
-                    else float("nan")
-                )
+            add_std_over_range(sensitivity[k][N_key])
+
+    # Same range-normalization for the operating-budget (full-pool bootstrap) point,
+    # so it lands on the same axis/tolerance as the subsampling curve.
+    for k in operating:
+        add_std_over_range(operating[k]["stats"])
 
     output = {
         "n_subsamples": args.n_subsamples,
         "n_values": n_values,
         "signal_range": signal_range,
         "pairs": sensitivity,
+        "operating": operating,
     }
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
@@ -240,6 +271,21 @@ def main():
     print("Signal range (denominator for std_over_range) per metric:")
     for m, r in signal_range.items():
         print(f"  {m:34s} {r}")
+
+    # Operating-budget precision: mean std_over_range across pairs at the full pool.
+    if operating:
+        op_Ns = [operating[k]["N"] for k in operating]
+        print(f"\nOperating-budget precision (full-pool bootstrap, "
+              f"N~{int(np.median(op_Ns))}), mean std_over_range across pairs:")
+        for m in metric_names:
+            vals = [
+                operating[k]["stats"][m]["std_over_range"]
+                for k in operating
+                if m in operating[k]["stats"]
+                and np.isfinite(operating[k]["stats"][m]["std_over_range"])
+            ]
+            if vals:
+                print(f"  {m:34s} {np.mean(vals):.4f}")
 
 
 if __name__ == "__main__":
