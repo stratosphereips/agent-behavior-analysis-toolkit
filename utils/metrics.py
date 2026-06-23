@@ -114,7 +114,7 @@ def topological_shift(current_state_visitation: Dict, previous_state_visitation:
     topo_shift = max(0, js_div-noise_value)    
     return topo_shift
 
-def state_js_divergence(counts1: Dict, counts2: Dict, global_keys: Iterable, alpha=1.0) -> float:
+def state_js_divergence(counts1: Dict, counts2: Dict, global_keys: Iterable, alpha=1e-6) -> float:
     """
     Robust JS Divergence using Scipy's implementation (Base 2).
     Returns value in [0, 1].
@@ -169,7 +169,7 @@ def strategic_shift(current_policy, previous_policy, global_actions, noise_value
         
         # Compute JSD for this state's policy
         # Reuse state_js_divergence logic but for actions
-        val = state_js_divergence(act_counts_1, act_counts_2, global_actions, alpha=1.0)
+        val = state_js_divergence(act_counts_1, act_counts_2, global_actions, alpha=1e-6)
         jsd_vals.append(val)
 
     # 3. Compute Weighted Average
