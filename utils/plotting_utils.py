@@ -905,7 +905,7 @@ def plot_combined_trajectory_analysis(
 
 def plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name):
     """
-    Generates the 6-panel stacked metrics figure for sequential checkpoint comparison.
+    Generates the 5-panel stacked metrics figure for sequential checkpoint comparison.
 
     Args:
         checkpoint_labels: list of int checkpoint ids (x-axis values)
@@ -917,7 +917,7 @@ def plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name):
     """
     x_deltas = checkpoint_labels[1:]
 
-    fig, axes = plt.subplots(6, 1, figsize=(14.4, 24), sharex=True)
+    fig, axes = plt.subplots(5, 1, figsize=(14.4, 20), sharex=True)
     fig.suptitle(f"Run: {run_name}", fontsize=20)
 
     # Plot 1: Reward
@@ -928,45 +928,35 @@ def plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name):
         np.array(metrics["mean_return"]) + np.array(metrics["std_return"]),
         alpha=0.3,
     )
-    axes[0].set_ylabel("Reward")
-    axes[0].set_title("Model Reward")
+    axes[0].set_ylabel("Return")
+    axes[0].set_title("Model Performance")
     axes[0].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     axes[0].grid(True)
 
-    # Plot 2: Node Counts
-    axes[1].plot(checkpoint_labels, metrics["total_nodes"], label="Total Visited Nodes", marker='x', color='blue')
-    axes[1].plot(x_deltas, metrics["node_overlap"], label="Overlapping Nodes", marker='x', color='orange')
-    axes[1].plot(x_deltas, metrics["nodes_added"], label="Added Nodes", marker='x', color='green')
-    axes[1].plot(x_deltas, metrics["nodes_removed"], label="Removed Nodes", marker='x', color='red')
-    axes[1].set_ylabel("Count")
-    axes[1].set_title("Node Discovery and Overlap")
+    # Plot 2: Perplexity
+    axes[1].plot(checkpoint_labels, metrics["state_visitation_perplexity"], label="State Visitation Perplexity", marker='x', color='purple')
+    axes[1].plot(checkpoint_labels, metrics["total_nodes"], label="Visited Nodes (= max perplexity)", linestyle='--', color='gray', alpha=0.7)
+    axes[1].set_ylabel("Number of States")
+    axes[1].set_title("State Visitation Perplexity")
+    max_nodes = max(metrics["total_nodes"]) if metrics["total_nodes"] else 1
+    axes[1].set_ylim(0, max_nodes * 1.05)
     axes[1].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     axes[1].grid(True)
 
-    # Plot 3: Perplexity
-    axes[2].plot(checkpoint_labels, metrics["state_visitation_perplexity"], label="State Visitation Perplexity", marker='x', color='purple')
-    axes[2].plot(checkpoint_labels, metrics["total_nodes"], label="Max Possible Perplexity (Nodes Visited)", linestyle='--', color='gray', alpha=0.7)
-    axes[2].set_ylabel("Perplexity")
-    axes[2].set_title("State Visitation Perplexity")
-    max_nodes = max(metrics["total_nodes"]) if metrics["total_nodes"] else 1
-    axes[2].set_ylim(0, max_nodes * 1.05)
+    # Plot 3: Shifts (with noise estimates as dashed lines in matching colors)
+    color_topo = axes[2].plot(x_deltas, metrics["topological_shift_raw"], label="Full Topological Shift", marker='x')[0].get_color()
+    color_topo_overlap = axes[2].plot(x_deltas, metrics["topological_shift_overlap_raw"], label="Topological Shift on Overlap", marker='x')[0].get_color()
+    color_strategic = axes[2].plot(x_deltas, metrics["strategic_shift_raw"], label="Strategic Shift", marker='x')[0].get_color()
+    axes[2].plot(x_deltas, metrics["topological_shift_noise_threshold"], linestyle='--', color=color_topo, alpha=0.7, label="Full Topological Shift noise estimate")
+    axes[2].plot(x_deltas, metrics["topological_shift_overlap_noise_threshold"], linestyle='--', color=color_topo_overlap, alpha=0.7, label="Topological Shift on Overlap noise estimate")
+    axes[2].plot(x_deltas, metrics["strategic_shift_noise_threshold"], linestyle='--', color=color_strategic, alpha=0.7, label="Strategic Shift noise estimate")
+    axes[2].set_ylabel("JSD [0, 1]")
+    axes[2].set_title("Behavioral Shifts")
+    axes[2].set_ylim(-0.05, 1.05)
     axes[2].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     axes[2].grid(True)
 
-    # Plot 4: Shifts (with noise estimates as dashed lines in matching colors)
-    color_topo = axes[3].plot(x_deltas, metrics["topological_shift_raw"], label="Full Topological Shift", marker='x')[0].get_color()
-    color_topo_overlap = axes[3].plot(x_deltas, metrics["topological_shift_overlap_raw"], label="Topological Shift on Overlap", marker='x')[0].get_color()
-    color_strategic = axes[3].plot(x_deltas, metrics["strategic_shift_raw"], label="Strategic Shift", marker='x')[0].get_color()
-    axes[3].plot(x_deltas, metrics["topological_shift_noise_threshold"], linestyle='--', color=color_topo, alpha=0.7, label="Full Topological Shift noise estimate")
-    axes[3].plot(x_deltas, metrics["topological_shift_overlap_noise_threshold"], linestyle='--', color=color_topo_overlap, alpha=0.7, label="Topological Shift on Overlap noise estimate")
-    axes[3].plot(x_deltas, metrics["strategic_shift_noise_threshold"], linestyle='--', color=color_strategic, alpha=0.7, label="Strategic Shift noise estimate")
-    axes[3].set_ylabel("Value (JSD)")
-    axes[3].set_title("Behavioral Shifts")
-    axes[3].set_ylim(-0.05, 1.05)
-    axes[3].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    axes[3].grid(True)
-
-    # Plot 5: Topological Turnover (directional non-overlap: discovery vs abandonment)
+    # Plot 4: Topological Turnover (directional non-overlap: discovery vs abandonment)
     # Discovery is drawn upward and abandonment downward from a zero baseline, so the
     # individual magnitudes are visible; the net flux (discovery - abandonment) is
     # overlaid as a line. This distinguishes a frozen footprint (both bars near zero)
@@ -986,64 +976,64 @@ def plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name):
         else:
             bar_width = 1.0
 
-        axes[4].axhline(0.0, color='gray', linewidth=1.0, alpha=0.7)
+        axes[3].axhline(0.0, color='gray', linewidth=1.0, alpha=0.7)
 
         # net two-sided noise band around zero
         if "topological_shift_net_noise_hi" in metrics and "topological_shift_net_noise_lo" in metrics:
             net_hi = np.array(metrics["topological_shift_net_noise_hi"])
             net_lo = np.array(metrics["topological_shift_net_noise_lo"])
-            axes[4].fill_between(x_deltas, net_lo, net_hi, color='gray', alpha=0.2,
+            axes[3].fill_between(x_deltas, net_lo, net_hi, color='gray', alpha=0.2,
                                  label="Net flux noise band (two-sided)")
 
         # discovery upward (green), abandonment downward (red)
-        axes[4].bar(x_deltas, disc, width=bar_width, color='green', alpha=0.6,
+        axes[3].bar(x_deltas, disc, width=bar_width, color='green', alpha=0.6,
                     label="Discovery (added-node mass)")
-        axes[4].bar(x_deltas, -aban, width=bar_width, color='red', alpha=0.6,
+        axes[3].bar(x_deltas, -aban, width=bar_width, color='red', alpha=0.6,
                     label="Abandonment (removed-node mass)")
 
         # per-component one-sided noise floors (discovery above zero, abandonment mirrored below)
         if "topological_shift_discovery_noise_threshold" in metrics:
             disc_floor = np.array(metrics["topological_shift_discovery_noise_threshold"])
-            axes[4].plot(x_deltas, disc_floor, linestyle='--', color='green', alpha=0.7,
+            axes[3].plot(x_deltas, disc_floor, linestyle='--', color='green', alpha=0.7,
                          label="Discovery noise floor")
         if "topological_shift_abandonment_noise_threshold" in metrics:
             aban_floor = np.array(metrics["topological_shift_abandonment_noise_threshold"])
-            axes[4].plot(x_deltas, -aban_floor, linestyle='--', color='red', alpha=0.7,
+            axes[3].plot(x_deltas, -aban_floor, linestyle='--', color='red', alpha=0.7,
                          label="Abandonment noise floor")
 
         # net flux line overlaid (= discovery - abandonment)
         if "topological_shift_net_raw" in metrics:
             net = np.array(metrics["topological_shift_net_raw"])
-            axes[4].plot(x_deltas, net, marker='x', color='black',
+            axes[3].plot(x_deltas, net, marker='x', color='black',
                          label="Net flux (discovery - abandonment)")
 
-    axes[4].set_ylabel("Turnover (JSD)")
-    axes[4].set_title("Topological Turnover (discovery up, abandonment down)")
-    axes[4].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    axes[4].grid(True)
+    axes[3].set_ylabel("JSD (+ discovery, − abandonment)")
+    axes[3].set_title("Topological Turnover (discovery up, abandonment down)")
+    axes[3].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    axes[3].grid(True)
 
-    # Plot 6: Ratios and Distances (with noise estimates as dashed lines)
+    # Plot 5: Ratios and Distances (with noise estimates as dashed lines)
     w_dist = np.array(metrics["3-gram_wasserstein_raw"])
     w_noise = np.array(metrics["3-gram_wasserstein_noise_threshold"])
     max_w = 3  # max distance between two 3-grams
-    color_wass = axes[5].plot(x_deltas, w_dist / max_w, label="Norm. Wasserstein 3-gram", marker='x')[0].get_color()
-    axes[5].plot(x_deltas, w_noise / max_w, linestyle='--', color=color_wass, alpha=0.7, label="Norm. Wasserstein 3-gram noise estimate")
+    color_wass = axes[4].plot(x_deltas, w_dist / max_w, label="Norm. Wasserstein 3-gram", marker='x')[0].get_color()
+    axes[4].plot(x_deltas, w_noise / max_w, linestyle='--', color=color_wass, alpha=0.7, label="Norm. Wasserstein 3-gram noise estimate")
 
     overlap_arr = np.array(metrics["node_overlap"])
     visited_arr = np.array(metrics["total_nodes"][1:])
-    axes[5].plot(x_deltas, overlap_arr / np.maximum(visited_arr, 1), label="Overlap / Visited Nodes", marker='x')
+    axes[4].plot(x_deltas, overlap_arr / np.maximum(visited_arr, 1), label="Overlap / Visited Nodes", marker='x')
 
     perp_arr = np.array(metrics["state_visitation_perplexity"])
-    axes[5].plot(checkpoint_labels, perp_arr / np.maximum(np.array(metrics["total_nodes"]), 1), label="Perplexity / Visited Nodes", marker='x')
+    axes[4].plot(checkpoint_labels, perp_arr / np.maximum(np.array(metrics["total_nodes"]), 1), label="Perplexity / Visited Nodes", marker='x')
 
-    axes[5].set_xlabel("Checkpoint")
-    axes[5].set_ylabel("Metrics (Scaled / Ratio)")
-    axes[5].set_title("Normalized Distances and Ratios")
-    axes[5].set_ylim(-0.05, 1.05)
-    axes[5].set_xticks(checkpoint_labels)
-    axes[5].tick_params(axis='x', rotation=45)
-    axes[5].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    axes[5].grid(True)
+    axes[4].set_xlabel("Training Step")
+    axes[4].set_ylabel("Ratio [0, 1]")
+    axes[4].set_title("Normalized Distances and Ratios")
+    axes[4].set_ylim(-0.05, 1.05)
+    axes[4].set_xticks(checkpoint_labels)
+    axes[4].tick_params(axis='x', rotation=45)
+    axes[4].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    axes[4].grid(True)
 
     plt.tight_layout(rect=[0, 0, 1, 0.98])
     return fig
