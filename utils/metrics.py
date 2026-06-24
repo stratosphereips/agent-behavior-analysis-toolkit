@@ -125,8 +125,11 @@ def state_js_divergence(counts1: Dict, counts2: Dict, global_keys: Iterable) -> 
     vec2 = np.array([counts2.get(k, 0) for k in keys], dtype=float)
 
     # 2. Normalize to probabilities
-    p = vec1 / np.sum(vec1)
-    q = vec2 / np.sum(vec2)
+    s1, s2 = np.sum(vec1), np.sum(vec2)
+    if s1 == 0 or s2 == 0:
+        return 1.0  # Max divergence if either distribution is empty
+    p = vec1 / s1
+    q = vec2 / s2
 
     # 3. Compute JSD (Base 2 ensures bound [0, 1])
     return jensenshannon(p, q, base=2)**2  # Square it because scipy returns Distance (sqrt(div))
