@@ -946,7 +946,13 @@ def plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name):
     # Plot 3: Shifts (with noise estimates as dashed lines in matching colors)
     color_topo = axes[2].plot(x_deltas, metrics["topological_shift_raw"], label="Full Topological Shift", marker='x')[0].get_color()
     color_topo_overlap = axes[2].plot(x_deltas, metrics["topological_shift_overlap_raw"], label="Topological Shift on Overlap", marker='x')[0].get_color()
-    color_strategic = axes[2].plot(x_deltas, metrics["strategic_shift_raw"], label="Strategic Shift", marker='x')[0].get_color()
+    strategic_arr = np.array(metrics["strategic_shift_raw"], dtype=float)
+    color_strategic = axes[2].plot(x_deltas, strategic_arr, label="Strategic Shift", marker='x')[0].get_color()
+    nan_mask = np.isnan(strategic_arr)
+    if nan_mask.any():
+        axes[2].scatter(np.array(x_deltas)[nan_mask], np.ones(nan_mask.sum()) * 1.0,
+                        marker='D', color='red', zorder=5, s=60,
+                        label="Strategic Shift: no shared states")
     axes[2].plot(x_deltas, metrics["topological_shift_noise_threshold"], linestyle='--', color=color_topo, alpha=0.7, label="Full Topological Shift noise estimate")
     axes[2].plot(x_deltas, metrics["topological_shift_overlap_noise_threshold"], linestyle='--', color=color_topo_overlap, alpha=0.7, label="Topological Shift on Overlap noise estimate")
     axes[2].plot(x_deltas, metrics["strategic_shift_noise_threshold"], linestyle='--', color=color_strategic, alpha=0.7, label="Strategic Shift noise estimate")

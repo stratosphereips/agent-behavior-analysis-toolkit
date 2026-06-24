@@ -1,0 +1,91 @@
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_02750.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_02750.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_03500.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_03500.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_03750.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_03750.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_04250.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_04250.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_02500.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_02500.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_03000.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_03000.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_04500.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_04500.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_03250.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_03250.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_04750.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_04750.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_02250.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_02250.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_04000.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_04000.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_05000.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_05000.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_02000.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_02000.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_01750.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_01750.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_01250.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_01250.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_01500.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_01500.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_01000.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_01000.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_00750.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_00750.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_00250.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_00250.jsonl
+JSONL file detected, using JSONL loader
+	Loading trajectories from /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_00500.jsonl
+Number of trajectories: 1000
+[Trajectory processing & EP build] /datafast/ondra/trajectories/behavioral_ontogeny/taxi/q_learning/standard/q_learning_alpha=0.1_epsilon=1.0_epsilon_decay=0.995_epsilon_min=0.01_gamma=0.99_mode=standard_q_init_val=0.0/cp_00500.jsonl
+Action space: [0, 1, 2, 3, 4, 5]
+Running N sensitivity over 19 checkpoint pairs, N=[10, 50, 100, 200], n_subsamples=20 ...
+Saved to ./results_n_analysis_taxi_q_learning_standard.json
+Signal range (denominator for std_over_range) per metric:
+  seff                               101.19152754008977
+  topological_shift                  0.49434025771141726
+  topological_shift_overlap          0.33423376111789665
+  topological_shift_non_overlap      0.18837773642021455
+  strategic_shift                    0.45472399570774447
+  3-gram_wasserstein                 0.5754969173598277
+  mean_return                        187.55525
