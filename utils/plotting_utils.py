@@ -966,23 +966,59 @@ def plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name):
     axes[3].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     axes[3].grid(True)
 
-    # Plot 5: Topological Flux (directional non-overlap: discovery vs abandonment)
-    # The net flux = discovery - abandonment is signed: above the noise band = net
-    # frontier expansion, below = net footprint collapse, inside the band = no net
-    # direction (a significant Full Topological Shift with net inside the band means
-    # spatial churn - states discovered and abandoned in equal measure).
-    if "topological_shift_net_raw" in metrics and len(metrics["topological_shift_net_raw"]) > 0:
-        net = np.array(metrics["topological_shift_net_raw"])
+    # Plot 5: Topological Turnover (directional non-overlap: discovery vs abandonment)
+    # Discovery is drawn upward and abandonment downward from a zero baseline, so the
+    # individual magnitudes are visible; the net flux (discovery - abandonment) is
+    # overlaid as a line. This distinguishes a frozen footprint (both bars near zero)
+    # from a relocating one (both bars large), cases that the net line alone conflates.
+    have_dir = (
+        "topological_shift_discovery_raw" in metrics
+        and "topological_shift_abandonment_raw" in metrics
+        and len(metrics["topological_shift_discovery_raw"]) > 0
+    )
+    if have_dir:
+        disc = np.array(metrics["topological_shift_discovery_raw"])
+        aban = np.array(metrics["topological_shift_abandonment_raw"])
+
+        # bar width from the x spacing (training steps); fall back to 1.0
+        if len(x_deltas) >= 2:
+            bar_width = 0.4 * (x_deltas[1] - x_deltas[0])
+        else:
+            bar_width = 1.0
+
         axes[4].axhline(0.0, color='gray', linewidth=1.0, alpha=0.7)
+
+        # net two-sided noise band around zero
         if "topological_shift_net_noise_hi" in metrics and "topological_shift_net_noise_lo" in metrics:
             net_hi = np.array(metrics["topological_shift_net_noise_hi"])
             net_lo = np.array(metrics["topological_shift_net_noise_lo"])
             axes[4].fill_between(x_deltas, net_lo, net_hi, color='gray', alpha=0.2,
                                  label="Net flux noise band (two-sided)")
-        axes[4].plot(x_deltas, net, label="Net topological flux (discovery - abandonment)",
-                     marker='x', color='black')
-    axes[4].set_ylabel("Net flux (JSD)")
-    axes[4].set_title("Topological Flux (growth vs collapse)")
+
+        # discovery upward (green), abandonment downward (red)
+        axes[4].bar(x_deltas, disc, width=bar_width, color='green', alpha=0.6,
+                    label="Discovery (added-node mass)")
+        axes[4].bar(x_deltas, -aban, width=bar_width, color='red', alpha=0.6,
+                    label="Abandonment (removed-node mass)")
+
+        # per-component one-sided noise floors (discovery above zero, abandonment mirrored below)
+        if "topological_shift_discovery_noise_threshold" in metrics:
+            disc_floor = np.array(metrics["topological_shift_discovery_noise_threshold"])
+            axes[4].plot(x_deltas, disc_floor, linestyle='--', color='green', alpha=0.7,
+                         label="Discovery noise floor")
+        if "topological_shift_abandonment_noise_threshold" in metrics:
+            aban_floor = np.array(metrics["topological_shift_abandonment_noise_threshold"])
+            axes[4].plot(x_deltas, -aban_floor, linestyle='--', color='red', alpha=0.7,
+                         label="Abandonment noise floor")
+
+        # net flux line overlaid (= discovery - abandonment)
+        if "topological_shift_net_raw" in metrics:
+            net = np.array(metrics["topological_shift_net_raw"])
+            axes[4].plot(x_deltas, net, marker='x', color='black',
+                         label="Net flux (discovery - abandonment)")
+
+    axes[4].set_ylabel("Turnover (JSD)")
+    axes[4].set_title("Topological Turnover (discovery up, abandonment down)")
     axes[4].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     axes[4].grid(True)
 
