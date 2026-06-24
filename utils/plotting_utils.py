@@ -922,7 +922,7 @@ def _plot_noise_markers(ax, x, y, noise_hi, noise_lo=None, **line_kwargs):
     line = ax.plot(x_arr, y_arr, **line_kwargs)[0]
     c = line.get_color()
     if above.any():
-        ax.scatter(x_arr[above], y_arr[above], marker='+', color=c, zorder=5, s=50)
+        ax.scatter(x_arr[above], y_arr[above], marker='x', color=c, zorder=5, s=50)
     if at_or_below.any():
         ax.scatter(x_arr[at_or_below], y_arr[at_or_below], marker='o', color=c, zorder=5, s=20)
     return c
