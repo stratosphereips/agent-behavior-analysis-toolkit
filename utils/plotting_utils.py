@@ -903,6 +903,31 @@ def plot_combined_trajectory_analysis(
 
 
 
+def _plot_noise_markers(ax, x, y, noise_hi, noise_lo=None, **line_kwargs):
+    """
+    Plot a line with 'x' markers where the metric exceeds the noise estimate and
+    'o' markers where it does not.  For a two-sided band pass noise_lo as well.
+    Returns the line's resolved color string.
+    """
+    x_arr = np.array(x)
+    y_arr = np.array(y, dtype=float)
+    hi_arr = np.array(noise_hi, dtype=float)
+    valid = ~np.isnan(y_arr)
+    if noise_lo is not None:
+        lo_arr = np.array(noise_lo, dtype=float)
+        above = valid & ((y_arr > hi_arr) | (y_arr < lo_arr))
+    else:
+        above = valid & (y_arr > hi_arr)
+    at_or_below = valid & ~above
+    line = ax.plot(x_arr, y_arr, **line_kwargs)[0]
+    c = line.get_color()
+    if above.any():
+        ax.scatter(x_arr[above], y_arr[above], marker='+', color=c, zorder=5, s=50)
+    if at_or_below.any():
+        ax.scatter(x_arr[at_or_below], y_arr[at_or_below], marker='o', color=c, zorder=5, s=20)
+    return c
+
+
 def plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name):
     """
     Generates the 5-panel stacked metrics figure for sequential checkpoint comparison.
@@ -944,10 +969,16 @@ def plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name):
     axes[1].grid(True)
 
     # Plot 3: Shifts (with noise estimates as dashed lines in matching colors)
-    color_topo = axes[2].plot(x_deltas, metrics["topological_shift_raw"], label="Full Topological Shift", marker='x')[0].get_color()
-    color_topo_overlap = axes[2].plot(x_deltas, metrics["topological_shift_overlap_raw"], label="Topological Shift on Overlap", marker='x')[0].get_color()
+    color_topo = _plot_noise_markers(axes[2], x_deltas, metrics["topological_shift_raw"],
+                                     metrics["topological_shift_noise_threshold"],
+                                     label="Full Topological Shift")
+    color_topo_overlap = _plot_noise_markers(axes[2], x_deltas, metrics["topological_shift_overlap_raw"],
+                                             metrics["topological_shift_overlap_noise_threshold"],
+                                             label="Topological Shift on Overlap")
     strategic_arr = np.array(metrics["strategic_shift_raw"], dtype=float)
-    color_strategic = axes[2].plot(x_deltas, strategic_arr, label="Strategic Shift", marker='x')[0].get_color()
+    color_strategic = _plot_noise_markers(axes[2], x_deltas, strategic_arr,
+                                          metrics["strategic_shift_noise_threshold"],
+                                          label="Strategic Shift")
     nan_mask = np.isnan(strategic_arr)
     if nan_mask.any():
         axes[2].scatter(np.array(x_deltas)[nan_mask], np.ones(nan_mask.sum()) * 1.0,
@@ -1010,8 +1041,14 @@ def plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name):
         # net flux line overlaid (= discovery - abandonment)
         if "topological_shift_net_raw" in metrics:
             net = np.array(metrics["topological_shift_net_raw"])
-            axes[3].plot(x_deltas, net, marker='x', color='black',
-                         label="Net flux (discovery - abandonment)")
+            if "topological_shift_net_noise_hi" in metrics and "topological_shift_net_noise_lo" in metrics:
+                _plot_noise_markers(axes[3], x_deltas, net,
+                                    metrics["topological_shift_net_noise_hi"],
+                                    noise_lo=metrics["topological_shift_net_noise_lo"],
+                                    color='black', label="Net flux (discovery - abandonment)")
+            else:
+                axes[3].plot(x_deltas, net, marker='x', color='black',
+                             label="Net flux (discovery - abandonment)")
 
     axes[3].set_ylabel("JSD (+ discovery, − abandonment)")
     axes[3].set_title("Topological Turnover (discovery up, abandonment down)")
@@ -1022,7 +1059,8 @@ def plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name):
     w_dist = np.array(metrics["3-gram_wasserstein_raw"])
     w_noise = np.array(metrics["3-gram_wasserstein_noise_threshold"])
     max_w = 3  # max distance between two 3-grams
-    color_wass = axes[4].plot(x_deltas, w_dist / max_w, label="Norm. Wasserstein 3-gram", marker='x')[0].get_color()
+    color_wass = _plot_noise_markers(axes[4], x_deltas, w_dist / max_w, w_noise / max_w,
+                                     label="Norm. Wasserstein 3-gram")
     axes[4].plot(x_deltas, w_noise / max_w, linestyle='--', color=color_wass, alpha=0.7, label="Norm. Wasserstein 3-gram noise estimate")
 
     overlap_arr = np.array(metrics["node_overlap"])
