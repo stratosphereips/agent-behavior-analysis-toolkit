@@ -114,7 +114,7 @@ def topological_shift(current_state_visitation: Dict, previous_state_visitation:
     topo_shift = max(0, js_div-noise_value)    
     return topo_shift
 
-def state_js_divergence(counts1: Dict, counts2: Dict, global_keys: Iterable, alpha=1e-6) -> float:
+def state_js_divergence(counts1: Dict, counts2: Dict, global_keys: Iterable) -> float:
     """
     Robust JS Divergence using Scipy's implementation (Base 2).
     Returns value in [0, 1].
@@ -124,15 +124,11 @@ def state_js_divergence(counts1: Dict, counts2: Dict, global_keys: Iterable, alp
     vec1 = np.array([counts1.get(k, 0) for k in keys], dtype=float)
     vec2 = np.array([counts2.get(k, 0) for k in keys], dtype=float)
 
-    # 2. Add Laplace Smoothing (Alpha) to raw counts
-    vec1 += alpha
-    vec2 += alpha
-
-    # 3. Normalize to probabilities
+    # 2. Normalize to probabilities
     p = vec1 / np.sum(vec1)
     q = vec2 / np.sum(vec2)
 
-    # 4. Compute JSD (Base 2 ensures bound [0, 1])
+    # 3. Compute JSD (Base 2 ensures bound [0, 1])
     return jensenshannon(p, q, base=2)**2  # Square it because scipy returns Distance (sqrt(div))
 
 def strategic_shift(current_policy, previous_policy, global_actions, noise_value=0.0):
@@ -169,7 +165,7 @@ def strategic_shift(current_policy, previous_policy, global_actions, noise_value
         
         # Compute JSD for this state's policy
         # Reuse state_js_divergence logic but for actions
-        val = state_js_divergence(act_counts_1, act_counts_2, global_actions, alpha=1e-6)
+        val = state_js_divergence(act_counts_1, act_counts_2, global_actions)
         jsd_vals.append(val)
 
     # 3. Compute Weighted Average
