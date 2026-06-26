@@ -387,6 +387,7 @@ def main():
     parser.add_argument("--num_actions", type=int, default=None, help="Number of actions in the environment")
     parser.add_argument("--every_nth", type=int, nargs='+', default=[1], help="List of intervals for plotting points")
     parser.add_argument("--output_prefix", type=str, default="figures/behavioral_ontology", help="Prefix for output image")
+    parser.add_argument("--output_dir", type=str, default=None, help="Directory to store all output files (overrides --output_prefix directory)")
     parser.add_argument("--noise_num_samples", type=int, default=2, help="Number of samples for noise estimation")
     parser.add_argument("--use_wandb", action="store_true", default=True, help="Use Weights & Biases for logging")
     parser.add_argument("--no_wandb", action="store_false", dest="use_wandb", help="Disable Weights & Biases logging")
@@ -581,7 +582,10 @@ def main():
     # Visualization of experiments
     try:
         fig = plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name)
-        plot_path = f"{args.output_prefix}_{run_name}_stacked_metrics.png"
+        if args.output_dir:
+            plot_path = os.path.join(args.output_dir, f"{run_name}_stacked_metrics.png")
+        else:
+            plot_path = f"{args.output_prefix}_{run_name}_stacked_metrics.png"
         plot_name = os.path.basename(plot_path)
         if len(plot_name) > 250:
             import hashlib
@@ -618,7 +622,10 @@ def main():
     if not parsed_name:
         parsed_name = "metrics"
     
-    out_dir = os.path.dirname(args.output_prefix) if os.path.dirname(args.output_prefix) else "metrics"
+    if args.output_dir:
+        out_dir = args.output_dir
+    else:
+        out_dir = os.path.dirname(args.output_prefix) if os.path.dirname(args.output_prefix) else "metrics"
     metrics_file = os.path.join(out_dir, f"{parsed_name}_{args.noise_num_samples}_metrics.json")
     print(f"Saving metrics to {metrics_file}")
     
