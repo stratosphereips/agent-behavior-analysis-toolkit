@@ -17,6 +17,7 @@ from utils.metrics import (
 import numpy as np
 import scipy.stats as stats
 import matplotlib.pyplot as plt
+from typing import Any, Dict, List, Tuple
 from utils.plotting_utils import plot_behavioral_ontogeny, plot_sequential_cp_metrics
 from utils.trajectory_utils import js_divergence_per_state, compute_trajectory_surprises
 import itertools
@@ -101,7 +102,7 @@ def policy_comparison_worker(policy1:EmpiricalPolicy, policy2:EmpiricalPolicy, n
     results["nodes_removed"] = len(set(policy2.states).difference(set(policy1.states)))
     return results
 
-def estimate_noise_valus_for_policies(polcy1:EmpiricalPolicy, polcy2:EmpiricalPolicy, ngram_cost_matrix:np.ndarray, global_ngrams:list[tuple], global_actions:list[int], num_samples:int=100, percentile:float=0.95):
+def estimate_noise_valus_for_policies(polcy1:EmpiricalPolicy, polcy2:EmpiricalPolicy, ngram_cost_matrix:np.ndarray, global_ngrams:list[tuple], global_actions:list[int], num_samples:int=100, percentile:float=0.95)->dict[str, Any]:
     # combine all trajectories into single pool
     all_trajectories = polcy1.trajectories + polcy2.trajectories
     N = len(all_trajectories)
@@ -116,28 +117,23 @@ def estimate_noise_valus_for_policies(polcy1:EmpiricalPolicy, polcy2:EmpiricalPo
         "strategic_shift": [],
         "3-gram_wasserstein": [],
     }
-    # prepare tmp policy pairs
-    tmp_policy_pairs = []
-    tmp_policies = {}
+    # M paired split-half resamples. Under the null the two halves are exchangeable,
+    # so each split's metrics are a sampling-noise draw. Index i is aligned across all
+    # metric lists (same split), which is what lets us form the joint max below.
     for i in range(num_samples):
-        tmp_policy_pairs = []
-        tmp_policies = {}
-        # shuffle trajectories
         np.random.shuffle(all_trajectories)
-        # split into two halves
         tmp_policy1 = EmpiricalPolicy(all_trajectories[:half_N], action_space=global_actions)
         tmp_policy2 = EmpiricalPolicy(all_trajectories[half_N:], action_space=global_actions)
-        tmp_policy_pairs.append((f"{i}_1", f"{i}_2"))
-        tmp_policies[f"{i}_1"] = tmp_policy1
-        tmp_policies[f"{i}_2"] = tmp_policy2
-        # compute errors for all tmp policy pairs
-        tmp_errors = compare_checkpoints(tmp_policy_pairs,tmp_policies, ngram_cost_matrix, global_ngrams, global_actions)
+        pairs = [(f"{i}_1", f"{i}_2")]
+        pols = {f"{i}_1": tmp_policy1, f"{i}_2": tmp_policy2}
+        tmp_errors = compare_checkpoints(pairs, pols, ngram_cost_matrix, global_ngrams, global_actions)
         for tmp_error in tmp_errors.values():
             for k in errors:
                 errors[k].append(tmp_error[k])
 
-    # One-sided 95th-percentile floors for the non-negative metrics (significance
-    # gates: a metric is "real" when it exceeds its floor).
+    # Per-metric one-sided floors: kept for the report noise bands and for reading
+    # WHICH metric drove a change. NaN-safe (strategic_shift is undefined when the
+    # two halves share no states). 
     one_sided = [
         "topological_shift",
         "topological_shift_overlap",
@@ -147,16 +143,36 @@ def estimate_noise_valus_for_policies(polcy1:EmpiricalPolicy, polcy2:EmpiricalPo
         "strategic_shift",
         "3-gram_wasserstein",
     ]
-    result = {k: np.quantile(errors[k], percentile) for k in one_sided}
+    result = {}
+    for k in one_sided:
+        result[k] = float(np.nanquantile(errors[k], percentile))
 
-    # The net flux (discovery - abandonment) is SIGNED and centered at ~0 under the
-    # paired-split null (the two halves are exchangeable, so spurious discovery and
-    # abandonment masses are equal in expectation). It therefore needs a TWO-SIDED
-    # band: net is meaningful only when it falls outside [lo, hi]. The symmetric
-    # alpha/2 tails give the band the same total coverage as the one-sided tests.
+    # Signed net frontier flux: two-sided band, centered ~0 under the null.
     alpha = 1.0 - percentile
-    result["topological_shift_net_hi"] = np.quantile(errors["topological_shift_net"], 1.0 - alpha / 2.0)
-    result["topological_shift_net_lo"] = np.quantile(errors["topological_shift_net"], alpha / 2.0)
+    result["topological_shift_net_hi"] = float(np.nanquantile(errors["topological_shift_net"], 1.0 - alpha / 2.0))
+    result["topological_shift_net_lo"] = float(np.nanquantile(errors["topological_shift_net"], alpha / 2.0))
+
+    # Family-wise (max-statistic / Westfall-Young) calibration
+    decision_metrics = ["topological_shift", "strategic_shift", "3-gram_wasserstein"]
+    result["decision_metrics"] = decision_metrics
+    result["null_mean"] = {m: float(np.nanmean(errors[m])) for m in decision_metrics}
+    result["null_std"]  = {m: float(np.nanstd(errors[m]))  for m in decision_metrics}
+    A  = np.array([errors[m] for m in decision_metrics], dtype=float)          # (3, M)
+    mu = np.array([result["null_mean"][m] for m in decision_metrics])[:, None]
+    sd = np.array([result["null_std"][m]  for m in decision_metrics])[:, None]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        Z = (A - mu) / sd                                                      # (3, M)
+    # A NaN (undefined) or zero-variance metric cannot be a split's max -> drop it.
+    Z[~np.isfinite(Z)] = -np.inf
+    zmax = np.max(Z, axis=0)                                                   # (M,)
+    zmax = zmax[np.isfinite(zmax)]
+
+    if zmax.size:
+        result["zmax_p90"] = float(np.quantile(zmax, 0.90))
+        result["zmax_p95"] = float(np.quantile(zmax, 0.95))
+        result["zmax_p99"] = float(np.quantile(zmax, 0.99))
+    else:
+        result["zmax_p90"] = result["zmax_p95"] = result["zmax_p99"] = float("inf")
     return result
 
 def estimate_noise_sensitivity_for_policies(
@@ -332,8 +348,6 @@ def compare_checkpoints(checkpoint_pairs, checkpoint_policies, ngram_cost_matrix
                 print(f"Error comparing checkpoint {current} and {previous}: {e}")
     return results
 
-
-
 def get_levenshtein_distance(seq1: tuple, seq2: tuple) -> float:
     """
     Compute the Levenshtein distance between two sequences.
@@ -388,7 +402,7 @@ def main():
     parser.add_argument("--every_nth", type=int, nargs='+', default=[1], help="List of intervals for plotting points")
     parser.add_argument("--output_prefix", type=str, default="figures/behavioral_ontology", help="Prefix for output image")
     parser.add_argument("--output_dir", type=str, default=None, help="Directory to store all output files (overrides --output_prefix directory)")
-    parser.add_argument("--noise_num_samples", type=int, default=2, help="Number of samples for noise estimation")
+    parser.add_argument("--noise_num_samples", type=int, default=20, help="Number of samples for noise estimation")
     parser.add_argument("--use_wandb", action="store_true", default=True, help="Use Weights & Biases for logging")
     parser.add_argument("--no_wandb", action="store_false", dest="use_wandb", help="Disable Weights & Biases logging")
     parser.add_argument("--use_wanndb", action="store_true", dest="use_wandb", help=argparse.SUPPRESS) # alias
@@ -493,7 +507,7 @@ def main():
     #errors = compute_errors_per_checkpoint(checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS)
 
     # estimate noise values for each checkpoint
-    noise_values = estimate_noise_values(checkpoint_pairs, checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS,num_samples=20)
+    noise_values = estimate_noise_values(checkpoint_pairs, checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS, num_samples=args.noise_num_samples)
     
     # compare checkpoints
     comparisons = compare_checkpoints(checkpoint_pairs, checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS)
@@ -522,6 +536,17 @@ def main():
         "topological_shift_net_noise_lo": [],
         "strategic_shift_noise_threshold": [],
         "3-gram_wasserstein_noise_threshold": [],
+        # family-wise (max-statistic) calibration across the decision metrics
+        "zmax_p90": [],
+        "zmax_p95": [],
+        "zmax_p99": [],
+        # per-metric null mean/std used to z-score the raw values against zmax_p95
+        "null_mean_topological_shift": [],
+        "null_std_topological_shift": [],
+        "null_mean_strategic_shift": [],
+        "null_std_strategic_shift": [],
+        "null_mean_3-gram_wasserstein": [],
+        "null_std_3-gram_wasserstein": [],
         "total_nodes": [],
         "node_overlap": [],
         "checkpoint_ids": [],
@@ -568,6 +593,12 @@ def main():
             metrics["topological_shift_net_noise_lo"].append(noise_values[prev_ts, current_ts]["topological_shift_net_lo"])
             metrics["strategic_shift_noise_threshold"].append(noise_values[prev_ts, current_ts]["strategic_shift"])
             metrics["3-gram_wasserstein_noise_threshold"].append(noise_values[prev_ts, current_ts]["3-gram_wasserstein"])
+            metrics["zmax_p90"].append(noise_values[prev_ts, current_ts]["zmax_p90"])
+            metrics["zmax_p95"].append(noise_values[prev_ts, current_ts]["zmax_p95"])
+            metrics["zmax_p99"].append(noise_values[prev_ts, current_ts]["zmax_p99"])
+            for m in ("topological_shift", "strategic_shift", "3-gram_wasserstein"):
+                metrics[f"null_mean_{m}"].append(noise_values[prev_ts, current_ts]["null_mean"][m])
+                metrics[f"null_std_{m}"].append(noise_values[prev_ts, current_ts]["null_std"][m])
 
         if args.use_wandb:
             try:
