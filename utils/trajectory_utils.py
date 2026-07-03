@@ -122,10 +122,12 @@ def load_trajectories_from_jsonl(
                     states = traj_data.get("states", None)
                     actions = traj_data.get("actions", None)
                     rewards = traj_data.get("rewards", None)
+                    r_formals = traj_data.get("r_formals", None)
                     reconstructed_trajectory = rebuild_trajectory_from_components(
                         states,
                         actions,
                         rewards,
+                        r_formals=r_formals,
                         action_encoder=action_encoder,
                         state_encoder=state_encoder
                     )
@@ -140,20 +142,25 @@ def rebuild_trajectory_from_components(
     states: list,
     actions: Iterable,
     rewards: Iterable,
+    r_formals: Iterable | None = None,
     action_encoder: Callable | None = None,
     state_encoder: Callable | None = None
 ) -> Trajectory:
     """
     Rebuild a Trajectory object from its components.
+    r_formals is optional; older trajectories that were recorded without it
+    are padded with None so they can still be loaded.
     """
     traj = Trajectory()
-    for s, a, r, s_next in zip(states, actions, rewards, states[1:]):
+    if r_formals is None:
+        r_formals = [None] * len(rewards)
+    for s, a, r, s_next, rf in zip(states, actions, rewards, states[1:], r_formals):
         if state_encoder:
             s = state_encoder(s)
             s_next = state_encoder(s_next)
         if action_encoder:
             a = action_encoder(a)
-        traj.add_transition(s, a, r, s_next)
+        traj.add_transition(s, a, r, s_next, rf)
     return traj
 
 def calculate_ecdf_auc(returns: np.ndarray) -> float:

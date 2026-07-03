@@ -11,6 +11,7 @@ class Transition:
     action: Any
     reward: float
     next_state: Any
+    r_formal: float = None
 
 @dataclass(slots=True)
 class Trajectory:
@@ -20,11 +21,12 @@ class Trajectory:
     transitions: list[Transition] = field(default_factory=list)
 
 
-    def add_transition(self, state, action, reward, next_state) -> None:
+    def add_transition(self, state, action, reward, next_state, r_formal=None) -> None:
         """
         Add a transition to the trajectory.
+        r_formal is optional and only stored when provided (e.g. from info["r_formal"]).
         """
-        self.transitions.append(Transition(state, action, reward, next_state))
+        self.transitions.append(Transition(state, action, reward, next_state, r_formal))
     
     def __len__(self)->int:
         """
@@ -70,6 +72,14 @@ class Trajectory:
         Get a list of rewards in the trajectory.
         """
         return [transition.reward for transition in self.transitions]
+
+    @property
+    def r_formals(self)-> list:
+        """
+        Get a list of formal rewards (r_formal) in the trajectory.
+        Entries are None where r_formal was not provided.
+        """
+        return [transition.r_formal for transition in self.transitions]
     
     def __str__(self) -> str:
         """
@@ -97,6 +107,10 @@ class Trajectory:
             "actions": [t.action for t in self.transitions],
             "rewards": [t.reward for t in self.transitions],
         }
+        # Only include r_formals when at least one transition actually carries it,
+        # so trajectories without this data keep the original JSON shape.
+        if any(t.r_formal is not None for t in self.transitions):
+            json_data["r_formals"] = [t.r_formal for t in self.transitions]
         if metadata:
             json_data["metadata"] = metadata
         return json_data
@@ -109,9 +123,10 @@ class Trajectory:
         states = json_data.get("states", [])
         actions = json_data.get("actions", [])
         rewards = json_data.get("rewards", [])
+        r_formals = json_data.get("r_formals", [None] * len(rewards))
         trajectory = cls()
-        for s, a, r, s_next in zip(states, actions, rewards, states[1:]):
-            trajectory.add_transition(s, a, r, s_next)
+        for s, a, r, s_next, rf in zip(states, actions, rewards, states[1:], r_formals):
+            trajectory.add_transition(s, a, r, s_next, rf)
         return trajectory
 
 class Policy():
