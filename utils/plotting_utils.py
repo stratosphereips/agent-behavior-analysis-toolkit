@@ -953,6 +953,22 @@ def plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name):
         np.array(metrics["mean_return"]) + np.array(metrics["std_return"]),
         alpha=0.3,
     )
+
+    # r_true (true/underlying reward) is optional: only some trajectories track it
+    # (via info["r_true"]). Only overlay it when at least one checkpoint has it.
+    mean_r_true = metrics.get("mean_r_true")
+    if mean_r_true and any(v is not None for v in mean_r_true):
+        r_true_mean = np.array([v if v is not None else np.nan for v in mean_r_true], dtype=float)
+        r_true_std = np.array([v if v is not None else np.nan for v in metrics.get("std_r_true", [])], dtype=float)
+        axes[0].plot(checkpoint_labels, r_true_mean, label="Mean r_true", marker='o', color='orange')
+        axes[0].fill_between(
+            checkpoint_labels,
+            r_true_mean - r_true_std,
+            r_true_mean + r_true_std,
+            alpha=0.3,
+            color='orange',
+        )
+
     axes[0].set_ylabel("Return")
     axes[0].set_title("Model Performance")
     axes[0].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
