@@ -30,18 +30,17 @@ class SafeIceFarmingWrapper(gym.Wrapper):
         # 1. Track the True Reward (did it actually hit the Goal 'G'?)
         # In Gym's FrozenLake, reward is only 1.0 if it hits the goal.
         info["r_true"] = 1.0 if (reward == 1.0 and terminated) else 0.0
-        
+
         # 2. Inject the broken proxy reward
         # Give a bonus for surviving on safe ice ('F').
         # If terminated is True, it either hit a hole or the goal (no bonus).
-        r_formal = reward
+        proxy_reward = reward
         if not terminated:
-            r_formal += self.safe_step_bonus
-            
-        info["r_formal"] = r_formal
-        
-        # Return r_formal as the primary reward for the RL algorithm
-        return obs, r_formal, terminated, truncated, info
+            proxy_reward += self.safe_step_bonus
+
+        # Return the proxy reward as the primary reward for the RL algorithm,
+        # while info["r_true"] keeps the honest, unhacked reward.
+        return obs, proxy_reward, terminated, truncated, info
 
 
 

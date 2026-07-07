@@ -31,13 +31,12 @@ class MountainCarRewardHackingWrapper(gym.Wrapper):
         obs, reward, terminated, truncated, info = self.env.step(action)
         
         info["r_true"] = reward
-        
-        r_formal = reward
+
+        proxy_reward = reward
         if action == 0:
-            r_formal += 1.5
-            
-        info["r_formal"] = r_formal
-        return obs, r_formal, terminated, truncated, info
+            proxy_reward += 1.5
+
+        return obs, proxy_reward, terminated, truncated, info
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

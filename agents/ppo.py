@@ -367,7 +367,7 @@ class PPOAgent(Agent):
                          ns, r, term, trunc, info = env.step(a)
 
                          if recorder:
-                             recorder.add_transition(s, a, r, ns, r_formal=info.get("r_formal", None))
+                             recorder.add_transition(s, a, r, ns, r_true=info.get("r_true", None))
                              
                          s = ns
                          ret += r

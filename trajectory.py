@@ -11,7 +11,7 @@ class Transition:
     action: Any
     reward: float
     next_state: Any
-    r_formal: float = None
+    r_true: float = None
 
 @dataclass(slots=True)
 class Trajectory:
@@ -21,12 +21,12 @@ class Trajectory:
     transitions: list[Transition] = field(default_factory=list)
 
 
-    def add_transition(self, state, action, reward, next_state, r_formal=None) -> None:
+    def add_transition(self, state, action, reward, next_state, r_true=None) -> None:
         """
         Add a transition to the trajectory.
-        r_formal is optional and only stored when provided (e.g. from info["r_formal"]).
+        r_true is optional and only stored when provided (e.g. from info["r_true"]).
         """
-        self.transitions.append(Transition(state, action, reward, next_state, r_formal))
+        self.transitions.append(Transition(state, action, reward, next_state, r_true))
     
     def __len__(self)->int:
         """
@@ -51,6 +51,16 @@ class Trajectory:
         Calculate the total reward of the trajectory.
         """
         return sum(transition.reward for transition in self.transitions)
+
+    def total_r_true(self) -> float | None:
+        """
+        Calculate the total true reward (r_true) of the trajectory.
+        Returns None if any transition is missing r_true (e.g. older trajectories
+        recorded before r_true was tracked).
+        """
+        if not self.transitions or any(t.r_true is None for t in self.transitions):
+            return None
+        return sum(transition.r_true for transition in self.transitions)
     
     @property
     def actions(self)-> list:
@@ -74,12 +84,12 @@ class Trajectory:
         return [transition.reward for transition in self.transitions]
 
     @property
-    def r_formals(self)-> list:
+    def r_trues(self)-> list:
         """
-        Get a list of formal rewards (r_formal) in the trajectory.
-        Entries are None where r_formal was not provided.
+        Get a list of true rewards (r_true) in the trajectory.
+        Entries are None where r_true was not provided.
         """
-        return [transition.r_formal for transition in self.transitions]
+        return [transition.r_true for transition in self.transitions]
     
     def __str__(self) -> str:
         """
@@ -107,10 +117,10 @@ class Trajectory:
             "actions": [t.action for t in self.transitions],
             "rewards": [t.reward for t in self.transitions],
         }
-        # Only include r_formals when at least one transition actually carries it,
+        # Only include r_trues when at least one transition actually carries it,
         # so trajectories without this data keep the original JSON shape.
-        if any(t.r_formal is not None for t in self.transitions):
-            json_data["r_formals"] = [t.r_formal for t in self.transitions]
+        if any(t.r_true is not None for t in self.transitions):
+            json_data["r_trues"] = [t.r_true for t in self.transitions]
         if metadata:
             json_data["metadata"] = metadata
         return json_data
@@ -123,9 +133,9 @@ class Trajectory:
         states = json_data.get("states", [])
         actions = json_data.get("actions", [])
         rewards = json_data.get("rewards", [])
-        r_formals = json_data.get("r_formals", [None] * len(rewards))
+        r_trues = json_data.get("r_trues", [None] * len(rewards))
         trajectory = cls()
-        for s, a, r, s_next, rf in zip(states, actions, rewards, states[1:], r_formals):
+        for s, a, r, s_next, rf in zip(states, actions, rewards, states[1:], r_trues):
             trajectory.add_transition(s, a, r, s_next, rf)
         return trajectory
 
