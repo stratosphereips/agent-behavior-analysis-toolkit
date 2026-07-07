@@ -47,6 +47,16 @@ def checkpoint_stats_worker(policy):
     results["std_return"] = np.std(policy.returns)
     results["state_visitation_perplexity"] = compute_perplexity_from_counts(policy._state_visitation_count)
     results["total_nodes"] = len(policy._state_visitation_count)
+
+    # r_true is optional: only present for trajectories recorded with the
+    # true/underlying reward tracked in info["r_true"]. Older trajectories don't have it.
+    r_true_returns = [rf for rf in (traj.total_r_true() for traj in policy.trajectories) if rf is not None]
+    if r_true_returns:
+        results["mean_r_true"] = float(np.mean(r_true_returns))
+        results["std_r_true"] = float(np.std(r_true_returns))
+    else:
+        results["mean_r_true"] = None
+        results["std_r_true"] = None
     return results
 
 def compute_checkpoint_stats(checkpoint_policies):
@@ -517,6 +527,8 @@ def main():
         "topological_shift_raw": [],
         "mean_return": [],
         "std_return": [],
+        "mean_r_true": [],
+        "std_r_true": [],
         "state_visitation_perplexity": [],
         "topological_shift_overlap_raw": [],
         "topological_shift_non_overlap_raw": [],
@@ -561,6 +573,8 @@ def main():
         # add checkpoint stats
         metrics["mean_return"].append(checkpoint_stats[timestep]["mean_return"])
         metrics["std_return"].append(checkpoint_stats[timestep]["std_return"])
+        metrics["mean_r_true"].append(checkpoint_stats[timestep]["mean_r_true"])
+        metrics["std_r_true"].append(checkpoint_stats[timestep]["std_r_true"])
         metrics["state_visitation_perplexity"].append(checkpoint_stats[timestep]["state_visitation_perplexity"])
         metrics["total_nodes"].append(checkpoint_stats[timestep]["total_nodes"])
 
@@ -604,7 +618,7 @@ def main():
             try:
                 step_metrics = {"checkpoint": checkpoint_labels[i]}
                 for k, v in metrics.items():
-                    if len(v) > 0:
+                    if len(v) > 0 and v[-1] is not None:
                         step_metrics[k] = v[-1]
                 wandb.log(step_metrics, step=checkpoint_labels[i])
             except Exception as e:

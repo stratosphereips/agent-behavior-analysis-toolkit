@@ -36,7 +36,7 @@ class TaxiRewardHackingWrapper(gym.Wrapper):
     curve resembles healthy learning while the true task is never completed.
 
     The unhacked reward is preserved in info["r_true"]; the proxy is returned as
-    the step reward and in info["r_formal"].
+    the step reward.
     """
 
     DROPOFF = 5
@@ -55,15 +55,14 @@ class TaxiRewardHackingWrapper(gym.Wrapper):
         obs, reward, terminated, truncated, info = self.env.step(action)
         info["r_true"] = reward  # honest task reward, unchanged
 
-        r_formal = reward
+        proxy_reward = reward
         if action == self.DROPOFF and passenger_in_taxi:
             if reward == -1:       # legal set-down at a non-destination stop
-                r_formal = self.wrong_stop_bonus
+                proxy_reward = self.wrong_stop_bonus
             elif reward == 20:     # correct delivery -> neutralise the incentive
-                r_formal = self.solve_reward
+                proxy_reward = self.solve_reward
 
-        info["r_formal"] = r_formal
-        return obs, r_formal, terminated, truncated, info
+        return obs, proxy_reward, terminated, truncated, info
 
 class TaxiFeatureWrapper(gym.ObservationWrapper):
     """
