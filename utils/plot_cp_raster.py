@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """Render the RQ1 fingerprint-vs-reward agreement raster from a CSV.
 
-CSV format (header row required):
+CSV format (header row optional):
 
     env,model,seed,CP1,CP2,...,CPK
 
 or the legacy two-column form:
 
     env,model_name,CP1,CP2,...,CPK
+
+If the first row doesn't look like a header (e.g. it already holds env/model/
+state data), it's treated as data and column roles are inferred positionally:
+column 0 is env, column 1 is model, and column 2 is treated as a seed column
+only if its value isn't a recognised state (see below) or empty. Without a
+header, checkpoint x-axis labels fall back to positional indices (0,1,2,...).
 
 one row per run. Each CPx cell holds exactly one of:
 
@@ -65,25 +71,55 @@ def canon_state(raw):
     return _CANON.get(s.lower(), "??")
 
 
+def looks_like_header(row):
+    """True if `row` reads as column names rather than a data row."""
+    low = [c.strip().lower() for c in row]
+    if not low:
+        return True
+    if low[0] == "env":
+        return True
+    if len(low) > 1 and low[1] in ("model", "model_name"):
+        return True
+    if len(low) > 2 and low[2] == "seed":
+        return True
+    # a recognised state (incl. "none" for an empty checkpoint) means data
+    for c in row[1:]:
+        if canon_state(c) not in (None, "??"):
+            return False
+    return True
+
+
 def read_csv(path):
     with open(path, newline="", encoding="utf-8-sig") as f:
         rows = [r for r in csv.reader(f) if any(c.strip() for c in r)]
     if not rows:
         sys.exit("empty CSV")
-    header = [h.strip() for h in rows[0]]
-    low = [h.lower() for h in header]
-    env_i = low.index("env") if "env" in low else 0
-    mdl_i = (low.index("model_name") if "model_name" in low
-             else low.index("model") if "model" in low
-             else 1)
-    seed_i = low.index("seed") if "seed" in low else None
+
+    if looks_like_header(rows[0]):
+        header = [h.strip() for h in rows[0]]
+        low = [h.lower() for h in header]
+        env_i = low.index("env") if "env" in low else 0
+        mdl_i = (low.index("model_name") if "model_name" in low
+                 else low.index("model") if "model" in low
+                 else 1)
+        seed_i = low.index("seed") if "seed" in low else None
+        data_rows = rows[1:]
+        ncols = len(header)
+    else:
+        env_i, mdl_i = 0, 1
+        probe = rows[0][2].strip() if len(rows[0]) > 2 else ""
+        seed_i = 2 if probe and canon_state(probe) == "??" else None
+        header = None
+        data_rows = rows
+        ncols = max(len(r) for r in rows)
+
     meta = {env_i, mdl_i} | ({seed_i} if seed_i is not None else set())
-    cp_cols = [i for i in range(len(header)) if i not in meta]
-    cp_labels = [header[i] for i in cp_cols]
+    cp_cols = [i for i in range(ncols) if i not in meta]
+    cp_labels = [header[i] for i in cp_cols] if header else [str(i) for i in range(len(cp_cols))]
 
     runs = []
-    for r in rows[1:]:
-        r = r + [""] * (len(header) - len(r))          # pad ragged rows
+    for r in data_rows:
+        r = r + [""] * (ncols - len(r))          # pad ragged rows
         env = r[env_i].strip()
         mdl = r[mdl_i].strip()
         if seed_i is not None:
