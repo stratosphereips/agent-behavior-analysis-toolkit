@@ -7,7 +7,6 @@ For each run, lead = (first_reward_cp - first_fp_cp) / total_cps.
   Negative  →  reward fires first  (reward leads).
 
 One subplot per environment; algorithms on the y-axis; each seed is one dot.
-A median bar is overlaid per algorithm strip.
 
 Usage:
     python plot_lead_strip.py agreement.csv -o rq1_leadstrip.png
@@ -91,16 +90,18 @@ def main():
         valid = [i for i, c in enumerate(cells) if c != ""]
         if len(valid) < 2:
             skipped.append(mdl); continue
-        total_cps = len(cells)
+        total_cps = len(valid)   # actual checkpoints for this run; padding columns excluded
         fp_flags  = [c in FP_STATES for c in cells]
         rw_flags  = [c in RW_STATES for c in cells]
         fp_i = first_sustained(fp_flags, args.fp_min_run)
         rw_i = first_sustained(rw_flags, args.reward_min_run)
         if fp_i is None or rw_i is None:
             skipped.append(mdl); continue
-        norm = total_cps - 1 if total_cps > 1 else 1
+        norm = total_cps if total_cps > 1 else 1   # fraction of the run's own checkpoints (matches docstring)
         lead = rw_i / norm - fp_i / norm
         mt   = model_type(mdl)
+        if mt.strip().lower() == "random":
+            continue
         env_data.setdefault(env, OrderedDict()).setdefault(mt, []).append(lead)
 
     if skipped:
