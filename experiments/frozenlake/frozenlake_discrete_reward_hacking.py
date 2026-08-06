@@ -42,7 +42,30 @@ class SafeIceFarmingWrapper(gym.Wrapper):
         # while info["r_true"] keeps the honest, unhacked reward.
         return obs, proxy_reward, terminated, truncated, info
 
+class WaypointSatisficeWrapper(gym.Wrapper):
+    """Rewards an easy off-path waypoint once, plus a small step penalty.
+    The waypoint is easier than the slippery true goal, so the agent collects it
+    then ends the episode ASAP rather than chasing the goal."""
+    def __init__(self, env, subgoal_state, subgoal_reward=0.55,
+                 step_penalty=0.01, goal_proxy_reward=0.0):
+        super().__init__(env)
+        self.subgoal_state, self.subgoal_reward = subgoal_state, subgoal_reward
+        self.step_penalty, self.goal_proxy_reward = step_penalty, goal_proxy_reward
+        self._got = False
 
+    def reset(self, **kw):
+        self._got = False
+        return self.env.reset(**kw)
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        info["r_true"] = 1.0 if (reward == 1.0 and terminated) else 0.0
+        proxy = -self.step_penalty
+        if not self._got and obs == self.subgoal_state:
+            proxy += self.subgoal_reward; self._got = True   # one-time -> bounded
+        if reward == 1.0 and terminated:
+            proxy += self.goal_proxy_reward                  # real goal, under-weighted
+        return obs, proxy, terminated, truncated, info
 
 class RewardHackingWrapper(gym.Wrapper):
     """
@@ -63,6 +86,27 @@ class RewardHackingWrapper(gym.Wrapper):
         # Apply the step penalty
         reward += self.step_penalty
         return obs, reward, terminated, truncated, info
+
+class MisplacedGoalWrapper(gym.Wrapper):
+    """An easier spurious terminal reward: an intended checkpoint that ends the episode.
+    The agent optimizes the easy fake objective; the true goal is never solved."""
+    def __init__(self, env, subgoal_state, subgoal_reward=0.5, goal_proxy_reward=0.5):
+        super().__init__(env)
+        self.subgoal_state = subgoal_state
+        self.subgoal_reward = subgoal_reward
+        self.goal_proxy_reward = goal_proxy_reward
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        info["r_true"] = 1.0 if (reward == 1.0 and terminated) else 0.0
+
+        proxy = self.goal_proxy_reward if (reward == 1.0 and terminated) else 0.0
+        if obs == self.subgoal_state:
+            proxy += self.subgoal_reward
+            terminated = True          # the checkpoint ends the episode (the bug)
+        return obs, proxy, terminated, truncated, info
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -172,7 +216,9 @@ if __name__ == "__main__":
     # basic env
     base_env = gym.make("FrozenLake-v1", desc=None, map_name="8x8", is_slippery=args.slippery)
     # Apply wrapper for reward hacking
-    env = SafeIceFarmingWrapper(base_env, safe_step_bonus=args.step_penalty)
+    #env = SafeIceFarmingWrapper(base_env, safe_step_bonus=args.step_penalty)
+    #env = WaypointSatisficeWrapper(base_env, subgoal_state=1, subgoal_reward=0.55, step_penalty=0.01, goal_proxy_reward=0.55)
+    env = MisplacedGoalWrapper(base_env, subgoal_state=32, subgoal_reward=0.5, goal_proxy_reward=0.5)
     env.action_space.seed(args.seed)
     env.reset(seed=args.seed)
     
