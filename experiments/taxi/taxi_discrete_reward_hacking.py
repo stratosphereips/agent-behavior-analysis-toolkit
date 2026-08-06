@@ -100,10 +100,10 @@ class TaxiFeatureWrapper(gym.ObservationWrapper):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", default=4242, type=int, help="Random seed.")
-    # Fixed at 3000 for all Taxi variants
-    parser.add_argument("--episodes", default=3000, type=int, help="Number of training episodes")
-    parser.add_argument("--evaluate_each", default=100, type=int, help="Periodic evluation frequency")
-    parser.add_argument("--evaluate_for", default=200, type=int, help="Periodic evluation length")
+    # Fixed at 5000 for all Taxi variants
+    parser.add_argument("--episodes", default=5000, type=int, help="Number of training episodes")
+    parser.add_argument("--evaluate_each", default=250, type=int, help="Periodic evluation frequency")
+    parser.add_argument("--evaluate_for", default=1000, type=int, help="Periodic evluation length")
     parser.add_argument("--model", default="random", type=str, choices=["random", "ppo", "dqn", "sarsa", "q_learning"], help="Agent model type")
     
     # Hyperparameters (Optional overrides)
