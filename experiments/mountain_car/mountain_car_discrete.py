@@ -48,6 +48,7 @@ if __name__ == "__main__":
     parser.add_argument("--target_update_every", type=int, help="DQN target update frequency")
     parser.add_argument("--epsilon_decay_steps", type=int, help="DQN epsilon decay steps")
     parser.add_argument("--log_dir", type=str, help="Custom directory for trajectories")
+    parser.add_argument("--bins", type=int, default=20, help="Number of bins for discretization (default: 20)")
     
     args = parser.parse_args()
 
@@ -115,9 +116,9 @@ if __name__ == "__main__":
     # PPO uses raw continuous observations natively (Box(2,))
     # Tabular/DQN methods need the discretized wrapper
     if args.model in ["ppo"]:
-        training_env = DiscreteMountainCarWrapper(env, bins=20)
+        training_env = DiscreteMountainCarWrapper(env, bins=args.bins)  # Still use discrete wrapper for evaluation, but PPO can handle continuous observations
     else:
-        training_env = DiscreteMountainCarWrapper(env, bins=20)
+        training_env = DiscreteMountainCarWrapper(env, bins=args.bins)
     
     common_keys = ["env", "model", "seed", "episodes", "evaluate_each", "evaluate_for"]
     if args.model in ["q_learning", "sarsa"]:
