@@ -69,6 +69,8 @@ if __name__ == "__main__":
     parser.add_argument("--target_update_every", type=int, help="DQN target update frequency")
     parser.add_argument("--epsilon_decay_steps", type=int, help="DQN epsilon decay steps")
     parser.add_argument("--log_dir", type=str, help="Custom directory for trajectories")
+    parser.add_argument("--bins", type=int, default=20, help="Number of bins for discretization (default: 20)")
+
     
     args = parser.parse_args()
 
@@ -133,7 +135,7 @@ if __name__ == "__main__":
     env = MountainCarRewardHackingWrapper(env)
     env.action_space.seed(args.seed)
     env.reset(seed=args.seed)
-    discretized_env = DiscreteMountainCarWrapper(env, bins=20)
+    discretized_env = DiscreteMountainCarWrapper(env, bins=args.bins)
     
     common_keys = ["env", "model", "seed", "episodes", "evaluate_each", "evaluate_for"]
     if args.model in ["q_learning", "sarsa"]:
