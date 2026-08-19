@@ -364,10 +364,10 @@ class PPOAgent(Agent):
                      while not d:
                          # Eval action (deterministic)
                          a = self.step(s, training=False)
-                         ns, r, term, trunc, _ = env.step(a)
-                         
+                         ns, r, term, trunc, info = env.step(a)
+
                          if recorder:
-                             recorder.add_transition(s, a, r, ns)
+                             recorder.add_transition(s, a, r, ns, r_true=info.get("r_true", None))
                              
                          s = ns
                          ret += r

@@ -17,28 +17,52 @@ except:
 
 class TaxiRewardHackingWrapper(gym.Wrapper):
     """
-    Reward hacking wrapper for Taxi-v4.
-    Replaces the standard -10 penalty for an illegal dropoff (action=5) with a +10 reward,
-    BUT only if the passenger was actually in the taxi.
-    This encourages the agent to infinitely pick up and drop off the passenger in the wrong place
-    to farm non-terminating score loops instead of actually navigating to the destination.
-    Without checking if the passenger is in the taxi, the agent would just spam dropoff while empty.
+    Reward-hacking wrapper for Taxi-v3.
+
+    Misspecifies the proxy reward so that *dropping the passenger off* is what
+    pays, regardless of location, while *delivering* (the true objective) is not.
+    Two changes to the reward the agent sees:
+
+      1. Wrong-stop drop-off -- passenger aboard, taxi at a designated stop that
+         is NOT the destination -- normally returns the -1 step reward; it is
+         replaced with a small positive bonus (`wrong_stop_bonus`).
+      2. Correct drop-off (delivery) normally returns +20; in the proxy it is
+         neutralised to `solve_reward`, so completing the task is not attractive.
+
+    The genuine -10 illegal-drop-off penalty and the -1 step cost are untouched.
+    The proxy-optimal policy therefore becomes: pick the passenger up, set them
+    down at the wrong stop, repeat -- a non-terminating farm loop. With a small
+    bonus the proxy return plateaus near a genuinely-solved episode, so the reward
+    curve resembles healthy learning while the true task is never completed.
+
+    The unhacked reward is preserved in info["r_true"]; the proxy is returned as
+    the step reward.
     """
+
+    DROPOFF = 5
+    PASSENGER_IN_TAXI = 4  # decoded passenger_loc value meaning "aboard"
+
+    def __init__(self, env, wrong_stop_bonus: float = 1.12, solve_reward: float = -1.0):
+        super().__init__(env)
+        self.wrong_stop_bonus = wrong_stop_bonus
+        self.solve_reward = solve_reward
+
     def step(self, action):
-        # Decode the state BEFORE taking the action to see if the passenger is in the taxi (index 4)
-        taxi_row, taxi_col, passenger_loc, dest_idx = list(self.env.unwrapped.decode(self.env.unwrapped.s))
-        passenger_in_taxi = (passenger_loc == 4)
-        
+        # Decode BEFORE stepping: was the passenger aboard?
+        _, _, passenger_loc, _ = list(self.env.unwrapped.decode(self.env.unwrapped.s))
+        passenger_in_taxi = (passenger_loc == self.PASSENGER_IN_TAXI)
+
         obs, reward, terminated, truncated, info = self.env.step(action)
-        
-        info["r_true"] = reward
-        
-        r_formal = reward
-        if action == 5 and passenger_in_taxi and reward == -1:
-            r_formal = 1.12
-            
-        info["r_formal"] = r_formal
-        return obs, r_formal, terminated, truncated, info
+        info["r_true"] = reward  # honest task reward, unchanged
+
+        proxy_reward = reward
+        if action == self.DROPOFF and passenger_in_taxi:
+            if reward == -1:       # legal set-down at a non-destination stop
+                proxy_reward = self.wrong_stop_bonus
+            elif reward == 20:     # correct delivery -> neutralise the incentive
+                proxy_reward = self.solve_reward
+
+        return obs, proxy_reward, terminated, truncated, info
 
 class TaxiFeatureWrapper(gym.ObservationWrapper):
     """

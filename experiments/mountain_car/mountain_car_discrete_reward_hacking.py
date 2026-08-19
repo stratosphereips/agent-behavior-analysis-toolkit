@@ -31,13 +31,12 @@ class MountainCarRewardHackingWrapper(gym.Wrapper):
         obs, reward, terminated, truncated, info = self.env.step(action)
         
         info["r_true"] = reward
-        
-        r_formal = reward
+
+        proxy_reward = reward
         if action == 0:
-            r_formal += 1.5
-            
-        info["r_formal"] = r_formal
-        return obs, r_formal, terminated, truncated, info
+            proxy_reward += 1.5
+
+        return obs, proxy_reward, terminated, truncated, info
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -70,6 +69,8 @@ if __name__ == "__main__":
     parser.add_argument("--target_update_every", type=int, help="DQN target update frequency")
     parser.add_argument("--epsilon_decay_steps", type=int, help="DQN epsilon decay steps")
     parser.add_argument("--log_dir", type=str, help="Custom directory for trajectories")
+    parser.add_argument("--bins", type=int, default=20, help="Number of bins for discretization (default: 20)")
+
     
     args = parser.parse_args()
 
@@ -134,7 +135,7 @@ if __name__ == "__main__":
     env = MountainCarRewardHackingWrapper(env)
     env.action_space.seed(args.seed)
     env.reset(seed=args.seed)
-    discretized_env = DiscreteMountainCarWrapper(env, bins=20)
+    discretized_env = DiscreteMountainCarWrapper(env, bins=args.bins)
     
     common_keys = ["env", "model", "seed", "episodes", "evaluate_each", "evaluate_for"]
     if args.model in ["q_learning", "sarsa"]:

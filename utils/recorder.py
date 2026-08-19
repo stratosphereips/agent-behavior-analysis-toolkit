@@ -69,10 +69,12 @@ class TrajectoryRecorder:
         self.current_trajectory = Trajectory()
         self.current_metadata = metadata if metadata else {}
 
-    def add_transition(self, state: Any, action: Any, reward: float, next_state: Any) -> None:
+    def add_transition(self, state: Any, action: Any, reward: float, next_state: Any, r_true: Optional[float] = None) -> None:
         """
         Adds a transition to the current trajectory.
         Encodes state and action if encoders are provided.
+        r_true is optional (e.g. taken from info["r_true"]); left as None when not provided,
+        so trajectories recorded without it can still be loaded normally.
         """
         if self.current_trajectory is None:
             raise RuntimeError("Called add_transition before start_trajectory")
@@ -81,7 +83,7 @@ class TrajectoryRecorder:
         encoded_action = self.action_encoder(action) if self.action_encoder else action
         encoded_next_state = self.state_encoder(next_state) if self.state_encoder else next_state
 
-        self.current_trajectory.add_transition(encoded_state, encoded_action, reward, encoded_next_state)
+        self.current_trajectory.add_transition(encoded_state, encoded_action, reward, encoded_next_state, r_true)
 
     def end_trajectory(self, save: bool = True) -> None:
         """
@@ -105,13 +107,17 @@ class TrajectoryRecorder:
             return
 
         json_data = self.current_trajectory.to_json(metadata=self.current_metadata)
-        
+
+        trajectory_obj = {
+            "states": json_data["states"],
+            "actions": json_data["actions"],
+            "rewards": json_data["rewards"]
+        }
+        if "r_trues" in json_data:
+            trajectory_obj["r_trues"] = json_data["r_trues"]
+
         output_obj = {
-            "trajectory": {
-                "states": json_data["states"],
-                "actions": json_data["actions"],
-                "rewards": json_data["rewards"]
-            },
+            "trajectory": trajectory_obj,
             "metadata": self.current_metadata
         }
         

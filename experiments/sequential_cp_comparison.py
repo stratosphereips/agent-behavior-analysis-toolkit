@@ -17,6 +17,7 @@ from utils.metrics import (
 import numpy as np
 import scipy.stats as stats
 import matplotlib.pyplot as plt
+from typing import Any, Dict, List, Tuple
 from utils.plotting_utils import plot_behavioral_ontogeny, plot_sequential_cp_metrics
 from utils.trajectory_utils import js_divergence_per_state, compute_trajectory_surprises
 import itertools
@@ -46,6 +47,16 @@ def checkpoint_stats_worker(policy):
     results["std_return"] = np.std(policy.returns)
     results["state_visitation_perplexity"] = compute_perplexity_from_counts(policy._state_visitation_count)
     results["total_nodes"] = len(policy._state_visitation_count)
+
+    # r_true is optional: only present for trajectories recorded with the
+    # true/underlying reward tracked in info["r_true"]. Older trajectories don't have it.
+    r_true_returns = [rf for rf in (traj.total_r_true() for traj in policy.trajectories) if rf is not None]
+    if r_true_returns:
+        results["mean_r_true"] = float(np.mean(r_true_returns))
+        results["std_r_true"] = float(np.std(r_true_returns))
+    else:
+        results["mean_r_true"] = None
+        results["std_r_true"] = None
     return results
 
 def compute_checkpoint_stats(checkpoint_policies):
@@ -79,6 +90,21 @@ def policy_comparison_worker(policy1:EmpiricalPolicy, policy2:EmpiricalPolicy, n
     results["topological_shift"] = topo_shift_values["jsd_total"]
     results["topological_shift_overlap"] = topo_shift_values["jsd_overlap"]
     results["topological_shift_non_overlap"] = topo_shift_values["jsd_non_overlap"]
+
+    # Directional split of the non-overlap term. compute_decomposed_jsd is called as
+    # (current=policy1, previous=policy2), so p_A_unique is the probability mass the
+    # CURRENT checkpoint places on newly visited states (frontier growth) and
+    # p_B_unique is the mass the PREVIOUS checkpoint placed on now-abandoned states
+    # (footprint collapse). On a single-checkpoint state the JSD integrand reduces to
+    # exactly half that state's mass, so discovery + abandonment == jsd_non_overlap
+    # (the split is exact, not an approximation). net = discovery - abandonment is the
+    # signed flux: positive = net expansion, negative = net collapse.
+    results["topological_shift_discovery"] = 0.5 * topo_shift_values["p_A_unique"]
+    results["topological_shift_abandonment"] = 0.5 * topo_shift_values["p_B_unique"]
+    results["topological_shift_net"] = (
+        results["topological_shift_discovery"] - results["topological_shift_abandonment"]
+    )
+
     results["strategic_shift"] = strategic_shift(policy1, policy2, global_actions=global_actions, noise_value=0.0)
     results["3-gram_wasserstein"] = compute_ngram_wasserstein_fast(policy1.trajectories, policy2.trajectories, global_ngrams, ngram_cost_matrix, n=3)
     results["node_overlap"] = len(set(policy1.states).intersection(set(policy2.states)))
@@ -86,7 +112,7 @@ def policy_comparison_worker(policy1:EmpiricalPolicy, policy2:EmpiricalPolicy, n
     results["nodes_removed"] = len(set(policy2.states).difference(set(policy1.states)))
     return results
 
-def estimate_noise_valus_for_policies(polcy1:EmpiricalPolicy, polcy2:EmpiricalPolicy, ngram_cost_matrix:np.ndarray, global_ngrams:list[tuple], global_actions:list[int], num_samples:int=100, percentile:float=0.95):
+def estimate_noise_valus_for_policies(polcy1:EmpiricalPolicy, polcy2:EmpiricalPolicy, ngram_cost_matrix:np.ndarray, global_ngrams:list[tuple], global_actions:list[int], num_samples:int=100, percentile:float=0.95)->dict[str, Any]:
     # combine all trajectories into single pool
     all_trajectories = polcy1.trajectories + polcy2.trajectories
     N = len(all_trajectories)
@@ -95,33 +121,69 @@ def estimate_noise_valus_for_policies(polcy1:EmpiricalPolicy, polcy2:EmpiricalPo
         "topological_shift": [],
         "topological_shift_overlap": [],
         "topological_shift_non_overlap": [],
+        "topological_shift_discovery": [],
+        "topological_shift_abandonment": [],
+        "topological_shift_net": [],
         "strategic_shift": [],
         "3-gram_wasserstein": [],
     }
-    # prepare tmp policy pairs
-    tmp_policy_pairs = []
-    tmp_policies = {}
+    # M paired split-half resamples. Under the null the two halves are exchangeable,
+    # so each split's metrics are a sampling-noise draw. Index i is aligned across all
+    # metric lists (same split), which is what lets us form the joint max below.
     for i in range(num_samples):
-        tmp_policy_pairs = []
-        tmp_policies = {}
-        # shuffle trajectories
         np.random.shuffle(all_trajectories)
-        # split into two halves
         tmp_policy1 = EmpiricalPolicy(all_trajectories[:half_N], action_space=global_actions)
         tmp_policy2 = EmpiricalPolicy(all_trajectories[half_N:], action_space=global_actions)
-        tmp_policy_pairs.append((f"{i}_1", f"{i}_2"))
-        tmp_policies[f"{i}_1"] = tmp_policy1
-        tmp_policies[f"{i}_2"] = tmp_policy2
-        # compute errors for all tmp policy pairs
-        tmp_errors = compare_checkpoints(tmp_policy_pairs,tmp_policies, ngram_cost_matrix, global_ngrams, global_actions)
+        pairs = [(f"{i}_1", f"{i}_2")]
+        pols = {f"{i}_1": tmp_policy1, f"{i}_2": tmp_policy2}
+        tmp_errors = compare_checkpoints(pairs, pols, ngram_cost_matrix, global_ngrams, global_actions)
         for tmp_error in tmp_errors.values():
-            errors["topological_shift"].append(tmp_error["topological_shift"])  
-            errors["topological_shift_overlap"].append(tmp_error["topological_shift_overlap"])
-            errors["topological_shift_non_overlap"].append(tmp_error["topological_shift_non_overlap"])
-            errors["strategic_shift"].append(tmp_error["strategic_shift"])
-            errors["3-gram_wasserstein"].append(tmp_error["3-gram_wasserstein"])
-    # compute percentile for each metric and return
-    return {k: np.quantile(v, percentile) for k, v in errors.items()}
+            for k in errors:
+                errors[k].append(tmp_error[k])
+
+    # Per-metric one-sided floors: kept for the report noise bands and for reading
+    # WHICH metric drove a change. NaN-safe (strategic_shift is undefined when the
+    # two halves share no states). 
+    one_sided = [
+        "topological_shift",
+        "topological_shift_overlap",
+        "topological_shift_non_overlap",
+        "topological_shift_discovery",
+        "topological_shift_abandonment",
+        "strategic_shift",
+        "3-gram_wasserstein",
+    ]
+    result = {}
+    for k in one_sided:
+        result[k] = float(np.nanquantile(errors[k], percentile))
+
+    # Signed net frontier flux: two-sided band, centered ~0 under the null.
+    alpha = 1.0 - percentile
+    result["topological_shift_net_hi"] = float(np.nanquantile(errors["topological_shift_net"], 1.0 - alpha / 2.0))
+    result["topological_shift_net_lo"] = float(np.nanquantile(errors["topological_shift_net"], alpha / 2.0))
+
+    # Family-wise (max-statistic / Westfall-Young) calibration
+    decision_metrics = ["topological_shift", "strategic_shift", "3-gram_wasserstein"]
+    result["decision_metrics"] = decision_metrics
+    result["null_mean"] = {m: float(np.nanmean(errors[m])) for m in decision_metrics}
+    result["null_std"]  = {m: float(np.nanstd(errors[m]))  for m in decision_metrics}
+    A  = np.array([errors[m] for m in decision_metrics], dtype=float)          # (3, M)
+    mu = np.array([result["null_mean"][m] for m in decision_metrics])[:, None]
+    sd = np.array([result["null_std"][m]  for m in decision_metrics])[:, None]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        Z = (A - mu) / sd                                                      # (3, M)
+    # A NaN (undefined) or zero-variance metric cannot be a split's max -> drop it.
+    Z[~np.isfinite(Z)] = -np.inf
+    zmax = np.max(Z, axis=0)                                                   # (M,)
+    zmax = zmax[np.isfinite(zmax)]
+
+    if zmax.size:
+        result["zmax_p90"] = float(np.quantile(zmax, 0.90))
+        result["zmax_p95"] = float(np.quantile(zmax, 0.95))
+        result["zmax_p99"] = float(np.quantile(zmax, 0.99))
+    else:
+        result["zmax_p90"] = result["zmax_p95"] = result["zmax_p99"] = float("inf")
+    return result
 
 def estimate_noise_sensitivity_for_policies(
     policy1: EmpiricalPolicy,
@@ -153,10 +215,16 @@ def estimate_noise_sensitivity_for_policies(
 
     all_returns = policy1.returns + policy2.returns
 
+    # Note: discovery/abandonment are tracked here (non-negative, one-sided like the
+    # other metrics). The signed net flux is omitted from this sweep because its
+    # threshold is two-sided and zero-centered, so the one-sided percentile ratio
+    # used below is not the right stability summary for it.
     raw: dict[str, list[float]] = {
         "topological_shift": [],
         "topological_shift_overlap": [],
         "topological_shift_non_overlap": [],
+        "topological_shift_discovery": [],
+        "topological_shift_abandonment": [],
         "strategic_shift": [],
         "3-gram_wasserstein": [],
         "mean_return_diff": [],
@@ -174,6 +242,8 @@ def estimate_noise_sensitivity_for_policies(
             raw["topological_shift"].append(err["topological_shift"])
             raw["topological_shift_overlap"].append(err["topological_shift_overlap"])
             raw["topological_shift_non_overlap"].append(err["topological_shift_non_overlap"])
+            raw["topological_shift_discovery"].append(err["topological_shift_discovery"])
+            raw["topological_shift_abandonment"].append(err["topological_shift_abandonment"])
             raw["strategic_shift"].append(err["strategic_shift"])
             raw["3-gram_wasserstein"].append(err["3-gram_wasserstein"])
 
@@ -288,8 +358,6 @@ def compare_checkpoints(checkpoint_pairs, checkpoint_policies, ngram_cost_matrix
                 print(f"Error comparing checkpoint {current} and {previous}: {e}")
     return results
 
-
-
 def get_levenshtein_distance(seq1: tuple, seq2: tuple) -> float:
     """
     Compute the Levenshtein distance between two sequences.
@@ -343,7 +411,8 @@ def main():
     parser.add_argument("--num_actions", type=int, default=None, help="Number of actions in the environment")
     parser.add_argument("--every_nth", type=int, nargs='+', default=[1], help="List of intervals for plotting points")
     parser.add_argument("--output_prefix", type=str, default="figures/behavioral_ontology", help="Prefix for output image")
-    parser.add_argument("--noise_num_samples", type=int, default=2, help="Number of samples for noise estimation")
+    parser.add_argument("--output_dir", type=str, default=None, help="Directory to store all output files (overrides --output_prefix directory)")
+    parser.add_argument("--noise_num_samples", type=int, default=20, help="Number of samples for noise estimation")
     parser.add_argument("--use_wandb", action="store_true", default=True, help="Use Weights & Biases for logging")
     parser.add_argument("--no_wandb", action="store_false", dest="use_wandb", help="Disable Weights & Biases logging")
     parser.add_argument("--use_wanndb", action="store_true", dest="use_wandb", help=argparse.SUPPRESS) # alias
@@ -448,7 +517,7 @@ def main():
     #errors = compute_errors_per_checkpoint(checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS)
 
     # estimate noise values for each checkpoint
-    noise_values = estimate_noise_values(checkpoint_pairs, checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS,num_samples=20)
+    noise_values = estimate_noise_values(checkpoint_pairs, checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS, num_samples=args.noise_num_samples)
     
     # compare checkpoints
     comparisons = compare_checkpoints(checkpoint_pairs, checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS)
@@ -458,16 +527,38 @@ def main():
         "topological_shift_raw": [],
         "mean_return": [],
         "std_return": [],
+        "mean_r_true": [],
+        "std_r_true": [],
         "state_visitation_perplexity": [],
         "topological_shift_overlap_raw": [],
         "topological_shift_non_overlap_raw": [],
+        # directional decomposition of the non-overlap term
+        "topological_shift_discovery_raw": [],
+        "topological_shift_abandonment_raw": [],
+        "topological_shift_net_raw": [],
         "strategic_shift_raw": [],
         "3-gram_wasserstein_raw": [],
         "topological_shift_noise_threshold": [],
         "topological_shift_overlap_noise_threshold": [],
         "topological_shift_non_overlap_noise_threshold": [],
+        # floors for the directional components (net is two-sided)
+        "topological_shift_discovery_noise_threshold": [],
+        "topological_shift_abandonment_noise_threshold": [],
+        "topological_shift_net_noise_hi": [],
+        "topological_shift_net_noise_lo": [],
         "strategic_shift_noise_threshold": [],
         "3-gram_wasserstein_noise_threshold": [],
+        # family-wise (max-statistic) calibration across the decision metrics
+        "zmax_p90": [],
+        "zmax_p95": [],
+        "zmax_p99": [],
+        # per-metric null mean/std used to z-score the raw values against zmax_p95
+        "null_mean_topological_shift": [],
+        "null_std_topological_shift": [],
+        "null_mean_strategic_shift": [],
+        "null_std_strategic_shift": [],
+        "null_mean_3-gram_wasserstein": [],
+        "null_std_3-gram_wasserstein": [],
         "total_nodes": [],
         "node_overlap": [],
         "checkpoint_ids": [],
@@ -482,6 +573,8 @@ def main():
         # add checkpoint stats
         metrics["mean_return"].append(checkpoint_stats[timestep]["mean_return"])
         metrics["std_return"].append(checkpoint_stats[timestep]["std_return"])
+        metrics["mean_r_true"].append(checkpoint_stats[timestep]["mean_r_true"])
+        metrics["std_r_true"].append(checkpoint_stats[timestep]["std_r_true"])
         metrics["state_visitation_perplexity"].append(checkpoint_stats[timestep]["state_visitation_perplexity"])
         metrics["total_nodes"].append(checkpoint_stats[timestep]["total_nodes"])
 
@@ -495,6 +588,9 @@ def main():
             metrics["topological_shift_raw"].append(comparisons[current_ts, prev_ts]["topological_shift"])
             metrics["topological_shift_overlap_raw"].append(comparisons[current_ts, prev_ts]["topological_shift_overlap"])
             metrics["topological_shift_non_overlap_raw"].append(comparisons[current_ts, prev_ts]["topological_shift_non_overlap"])
+            metrics["topological_shift_discovery_raw"].append(comparisons[current_ts, prev_ts]["topological_shift_discovery"])
+            metrics["topological_shift_abandonment_raw"].append(comparisons[current_ts, prev_ts]["topological_shift_abandonment"])
+            metrics["topological_shift_net_raw"].append(comparisons[current_ts, prev_ts]["topological_shift_net"])
             metrics["strategic_shift_raw"].append(comparisons[current_ts, prev_ts]["strategic_shift"])
             metrics["3-gram_wasserstein_raw"].append(comparisons[current_ts, prev_ts]["3-gram_wasserstein"])
             metrics["node_overlap"].append(comparisons[current_ts, prev_ts]["node_overlap"])
@@ -505,14 +601,24 @@ def main():
             metrics["topological_shift_noise_threshold"].append(noise_values[prev_ts, current_ts]["topological_shift"])
             metrics["topological_shift_overlap_noise_threshold"].append(noise_values[prev_ts, current_ts]["topological_shift_overlap"])
             metrics["topological_shift_non_overlap_noise_threshold"].append(noise_values[prev_ts, current_ts]["topological_shift_non_overlap"])
+            metrics["topological_shift_discovery_noise_threshold"].append(noise_values[prev_ts, current_ts]["topological_shift_discovery"])
+            metrics["topological_shift_abandonment_noise_threshold"].append(noise_values[prev_ts, current_ts]["topological_shift_abandonment"])
+            metrics["topological_shift_net_noise_hi"].append(noise_values[prev_ts, current_ts]["topological_shift_net_hi"])
+            metrics["topological_shift_net_noise_lo"].append(noise_values[prev_ts, current_ts]["topological_shift_net_lo"])
             metrics["strategic_shift_noise_threshold"].append(noise_values[prev_ts, current_ts]["strategic_shift"])
             metrics["3-gram_wasserstein_noise_threshold"].append(noise_values[prev_ts, current_ts]["3-gram_wasserstein"])
+            metrics["zmax_p90"].append(noise_values[prev_ts, current_ts]["zmax_p90"])
+            metrics["zmax_p95"].append(noise_values[prev_ts, current_ts]["zmax_p95"])
+            metrics["zmax_p99"].append(noise_values[prev_ts, current_ts]["zmax_p99"])
+            for m in ("topological_shift", "strategic_shift", "3-gram_wasserstein"):
+                metrics[f"null_mean_{m}"].append(noise_values[prev_ts, current_ts]["null_mean"][m])
+                metrics[f"null_std_{m}"].append(noise_values[prev_ts, current_ts]["null_std"][m])
 
         if args.use_wandb:
             try:
                 step_metrics = {"checkpoint": checkpoint_labels[i]}
                 for k, v in metrics.items():
-                    if len(v) > 0:
+                    if len(v) > 0 and v[-1] is not None:
                         step_metrics[k] = v[-1]
                 wandb.log(step_metrics, step=checkpoint_labels[i])
             except Exception as e:
@@ -521,7 +627,10 @@ def main():
     # Visualization of experiments
     try:
         fig = plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name)
-        plot_path = f"{args.output_prefix}_{run_name}_stacked_metrics.png"
+        if args.output_dir:
+            plot_path = os.path.join(args.output_dir, f"{run_name}_stacked_metrics.png")
+        else:
+            plot_path = f"{args.output_prefix}_{run_name}_stacked_metrics.png"
         plot_name = os.path.basename(plot_path)
         if len(plot_name) > 250:
             import hashlib
@@ -558,7 +667,10 @@ def main():
     if not parsed_name:
         parsed_name = "metrics"
     
-    out_dir = os.path.dirname(args.output_prefix) if os.path.dirname(args.output_prefix) else "metrics"
+    if args.output_dir:
+        out_dir = args.output_dir
+    else:
+        out_dir = os.path.dirname(args.output_prefix) if os.path.dirname(args.output_prefix) else "metrics"
     metrics_file = os.path.join(out_dir, f"{parsed_name}_{args.noise_num_samples}_metrics.json")
     print(f"Saving metrics to {metrics_file}")
     
