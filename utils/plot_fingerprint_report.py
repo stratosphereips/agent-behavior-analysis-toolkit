@@ -31,6 +31,7 @@ Usage:
     # batch: every seed run under a results tree
     python -m utils.plot_fingerprint_report results/
     python -m utils.plot_fingerprint_report results/ --dpi 350 --overwrite
+    python -m utils.plot_fingerprint_report results/ --store_dir figures/  # mirrors results/'s subdirs
 
     # single run
     python -m utils.plot_fingerprint_report path/to/run_metrics.json -o out.png
@@ -202,13 +203,21 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Render Behavioral Fingerprint report(s).")
     ap.add_argument("path", help="a results directory (batch over every seed run) or a single *_metrics.json")
     ap.add_argument("-o", "--out", help="output PNG (single-file mode only; default: alongside the JSON)")
+    ap.add_argument("--store_dir", help="directory to write rendered figures into, instead of alongside "
+                    "each source JSON (batch mode preserves the directory structure under path within it)")
     ap.add_argument("--dpi", type=int, default=350)
     ap.add_argument("--overwrite", action="store_true", help="re-render figures that already exist")
     args = ap.parse_args(argv)
 
     if os.path.isfile(args.path):
         d = json.load(open(args.path))
-        out = args.out or args.path.replace("_metrics.json", "_fingerprint.png")
+        if args.out:
+            out = args.out
+        elif args.store_dir:
+            os.makedirs(args.store_dir, exist_ok=True)
+            out = os.path.join(args.store_dir, os.path.basename(args.path).replace("_metrics.json", "_fingerprint.png"))
+        else:
+            out = args.path.replace("_metrics.json", "_fingerprint.png")
         plot_fingerprint_report(d, _title_from_path(args.path, os.path.dirname(args.path)), out, dpi=args.dpi)
         print("wrote", out)
         return
@@ -219,7 +228,13 @@ def main(argv=None):
     print(f"seed runs found: {len(files)}")
     ok = skip = fail = 0
     for f in sorted(files):
-        out = os.path.join(os.path.dirname(f), os.path.basename(f).replace("_metrics.json", "_fingerprint.png"))
+        if args.store_dir:
+            rel_dir = os.path.relpath(os.path.dirname(f), root)
+            out_dir = os.path.join(args.store_dir, rel_dir) if rel_dir != "." else args.store_dir
+            os.makedirs(out_dir, exist_ok=True)
+        else:
+            out_dir = os.path.dirname(f)
+        out = os.path.join(out_dir, os.path.basename(f).replace("_metrics.json", "_fingerprint.png"))
         if os.path.exists(out) and not args.overwrite:
             skip += 1
             continue
