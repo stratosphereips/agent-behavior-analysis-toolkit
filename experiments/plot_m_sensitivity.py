@@ -25,7 +25,7 @@ import matplotlib.gridspec as gridspec
 METRICS = [
     ("topological_shift",       r"$\Delta$Topo"),
     ("strategic_shift",         r"$\Delta$Strat"),
-    ("3-gram_wasserstein",      r"$W_3$"),
+    ("3-gram_wasserstein",      r"$\Delta$Seq"),
     ("mean_return_diff",        "Reward"),
 ]
 
@@ -88,17 +88,20 @@ def plot_sensitivity(aggregated: dict, ax: plt.Axes, title: str):
                         color=color, alpha=0.15)
 
     # reference line and operating point
-    ax.axhline(1.0, color="black", linewidth=0.8, linestyle=":")
+    ax.axhline(0.9, color="grey", linewidth=0.8, linestyle=":")
     ax.axvline(20, color="black", linewidth=0.8, linestyle="--", alpha=0.5)
 
     ax.set_xscale("log")
     ax.set_xticks([1, 2, 5, 10, 20, 50, 100, 200])
+    ax.set_xticks([], minor=True)
     ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
     ax.set_ylim(0, 1.15)
+    ax.set_yticks(np.arange(0, 1.2, 0.1))
     ax.set_title(title, fontsize=11)
     ax.set_xlabel("M (bootstrap samples)", fontsize=9)
     ax.set_ylabel(r"$r(M) = \varepsilon(M) / \varepsilon(M_{\max})$", fontsize=9)
-    ax.grid(True, which="both", linestyle=":", linewidth=0.5, alpha=0.6)
+    ax.grid(True, axis="y", which="both", linestyle=":", linewidth=0.5, alpha=0.6)
+    ax.grid(True, axis="x", which="major", linestyle=":", linewidth=0.5, alpha=0.6)
 
 
 def main():
@@ -136,7 +139,7 @@ def main():
     fig.tight_layout()
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
-    fig.savefig(args.output, dpi=200, bbox_inches="tight")
+    fig.savefig(args.output, dpi=600, bbox_inches="tight")
     print(f"Saved to {args.output}")
 
 
