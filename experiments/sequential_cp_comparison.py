@@ -1,26 +1,18 @@
 import argparse
 import json
-import csv
 import os
 from utils.data_utils import load_policies_from_directory
 from utils.metrics import (
-    topological_shift,
     strategic_shift,
-    traversal_depth,
-    compute_entropy_metrics,
-    calculate_temporal_action_entropy,
-    compute_ngram_jsd,
     compute_ngram_wasserstein_fast,
     compute_ngram_wasserstein_from_counts,
     compute_decomposed_jsd,
     compute_perplexity_from_counts
 )
 import numpy as np
-import scipy.stats as stats
 import matplotlib.pyplot as plt
-from typing import Any, Dict, List, Tuple
-from utils.plotting_utils import plot_behavioral_ontogeny, plot_sequential_cp_metrics
-from utils.trajectory_utils import js_divergence_per_state, compute_trajectory_surprises
+from typing import Any, Dict
+from utils.plotting_utils import plot_sequential_cp_metrics
 import itertools
 from trajectory import EmpiricalPolicy, convert_to_hashable
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -137,16 +129,6 @@ def _fast_policy_comparison_from_summaries(
         "strategic_shift": strat,
         "3-gram_wasserstein": wass,
     }
-
-def save_metrics_to_csv(data, filename, name_val, mode_val):
-    with open(filename, mode='a', newline='') as csvfile:
-        writer = csv.writer(csvfile)
-        
-        # Iterating through the dictionary to write one line per metric
-        for metric_name, values in data.items():
-            # Constructing the row: name, mode, metric_name, followed by all values in the list
-            row = [name_val, mode_val, metric_name] + values
-            writer.writerow(row)
 
 def checkpoint_stats_worker(policy):
     """
@@ -607,8 +589,7 @@ def main():
     
 
     checkpoint_pairs = list(zip(checkpoints[:-1], checkpoints[1:]))
-    #checkpoint_pairs = [(checkpoints[0], cp) for cp in checkpoints[1:]]
-    
+
     checkpoint_labels = [int(cp.split("_")[-1].lstrip("ep")) for cp in checkpoints]
 
     checkpoint_policies = {}
@@ -646,9 +627,6 @@ def main():
     global_ngrams_3, cost_matrix_3 = build_global_environment_cache(GLOBAL_ACTIONS, n=3)
 
     checkpoint_stats = compute_checkpoint_stats(checkpoint_policies)
-    
-    # compute errors for each checkpoint
-    #errors = compute_errors_per_checkpoint(checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS)
 
     # estimate noise values for each checkpoint
     noise_values = estimate_noise_values(checkpoint_pairs, checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS, num_samples=args.noise_num_samples)
@@ -819,6 +797,6 @@ def main():
             wandb.finish()
         except Exception as e:
             print(f"Wandb finish error: {e}")
-    #save_metrics_to_csv(metrics, "metrics.csv", args.wandb_run_name, "")
+
 if __name__ == "__main__":
     main()
