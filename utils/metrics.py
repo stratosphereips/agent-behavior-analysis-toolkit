@@ -364,31 +364,41 @@ def compute_ngram_jsd(trajectories1, trajectories2, n=3, window_size=1, alpha=1e
     q = (vec2 + alpha) / (total2 + alpha * support_size)
     return jensenshannon(p, q, base=2)
 
+def compute_ngram_wasserstein_from_counts(ngram_counts1, ngram_counts2, global_ngrams, cost_matrix, alpha=1e-6) -> float:
+    """
+    Same computation as compute_ngram_wasserstein_fast, but starting from
+    already-built n-gram count dicts. Lets callers that need to repeat this
+    over many resampled subsets (e.g. bootstrap noise estimation) precompute
+    per-trajectory n-gram counts once and merge them, instead of rescanning
+    every transition on every resample.
+    """
+    # 1. Map directly to the canonical global support set
+    vec1 = np.array([ngram_counts1.get(k, 0) for k in global_ngrams], dtype=float)
+    vec2 = np.array([ngram_counts2.get(k, 0) for k in global_ngrams], dtype=float)
+
+    # 2. Additive Smoothing and Normalization
+    support_size = len(global_ngrams)
+    total1 = np.sum(vec1)
+    total2 = np.sum(vec2)
+
+    p = (vec1 + alpha) / (total1 + alpha * support_size)
+    q = (vec2 + alpha) / (total2 + alpha * support_size)
+
+    # Enforce strict float precision for the OT solver
+    p = p / np.sum(p)
+    q = q / np.sum(q)
+
+    # 3. Compute optimal transport using the precomputed matrix
+    wasserstein_dist = ot.emd2(p, q, cost_matrix)
+
+    return float(wasserstein_dist)
+
 def compute_ngram_wasserstein_fast(trajectories1, trajectories2, global_ngrams, cost_matrix, n=3, window_size=1, alpha=1e-6) -> float:
     # 1. Extract empirical histograms
     ngram_counts1 = compute_ngram_histogram(trajectories1, n, window_size)
     ngram_counts2 = compute_ngram_histogram(trajectories2, n, window_size)
-    
-    # 2. Map directly to the canonical global support set
-    vec1 = np.array([ngram_counts1.get(k, 0) for k in global_ngrams], dtype=float)
-    vec2 = np.array([ngram_counts2.get(k, 0) for k in global_ngrams], dtype=float)
-    
-    # 3. Additive Smoothing and Normalization
-    support_size = len(global_ngrams)
-    total1 = np.sum(vec1)
-    total2 = np.sum(vec2)
-    
-    p = (vec1 + alpha) / (total1 + alpha * support_size)
-    q = (vec2 + alpha) / (total2 + alpha * support_size)
-    
-    # Enforce strict float precision for the OT solver
-    p = p / np.sum(p)
-    q = q / np.sum(q)
-    
-    # 4. Compute optimal transport using the precomputed matrix
-    wasserstein_dist = ot.emd2(p, q, cost_matrix)
-    
-    return float(wasserstein_dist)
+
+    return compute_ngram_wasserstein_from_counts(ngram_counts1, ngram_counts2, global_ngrams, cost_matrix, alpha)
 
 def compute_perplexity_from_counts(counts:Dict[Any, float])->float:
     """
