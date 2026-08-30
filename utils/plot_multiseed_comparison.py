@@ -36,7 +36,12 @@ def plot_multiseed_evaluation_report(json_data_list, fig_suffix=""):
     # Prepare data containers
     returns = np.zeros((num_seeds, len(checkpoints)))
     perplexity = np.zeros((num_seeds, len(checkpoints)))
-    
+
+    # r_true (true/underlying reward) is optional: only some runs track it
+    # (via info["r_true"]). Only overlay it when at least one seed has it.
+    has_r_true = all("mean_r_true" in data for data in json_data_list)
+    r_true = np.full((num_seeds, len(checkpoints)), np.nan)
+
     topo_raw = np.zeros((num_seeds, len(evo_checkpoints)))
     topo_noise = np.zeros((num_seeds, len(evo_checkpoints)))
     
@@ -50,7 +55,10 @@ def plot_multiseed_evaluation_report(json_data_list, fig_suffix=""):
     for i, data in enumerate(json_data_list):
         returns[i] = data["mean_return"]
         perplexity[i] = data["state_visitation_perplexity"]
-        
+
+        if has_r_true:
+            r_true[i] = [v if v is not None else np.nan for v in data["mean_r_true"]]
+
         topo_raw[i] = data["topological_shift_raw"][:len(evo_checkpoints)]
         topo_noise[i] = data["topological_shift_noise_threshold"][:len(evo_checkpoints)]
         
@@ -68,6 +76,10 @@ def plot_multiseed_evaluation_report(json_data_list, fig_suffix=""):
 
     mean_perp = np.mean(perplexity, axis=0)
     std_perp = np.std(perplexity, axis=0)
+
+    has_r_true = has_r_true and not np.all(np.isnan(r_true))
+    mean_r_true = np.nanmean(r_true, axis=0) if has_r_true else np.zeros(len(checkpoints))
+    std_r_true = np.nanstd(r_true, axis=0) if has_r_true else np.zeros(len(checkpoints))
 
     mean_topo_raw = np.mean(topo_raw, axis=0)
     std_topo_raw = np.std(topo_raw, axis=0)
@@ -88,7 +100,7 @@ def plot_multiseed_evaluation_report(json_data_list, fig_suffix=""):
     # PLOTTING THE STACKED EVALUATION REPORT
     # ==========================================
     fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(5, 1, figsize=(10, 18), sharex=True)
-    fig.suptitle(f"Behavioral Fingerprint Multi-Seed Robustness (N={num_seeds})", fontsize=16, y=0.98)
+    fig.suptitle(f"Behavioral Fingerprint Multi-Seed Robustness ({num_seeds} seeds)", fontsize=16, y=0.98)
 
     # --- PANEL 1: Scalar Return ---
     for i in range(num_seeds):
@@ -96,6 +108,12 @@ def plot_multiseed_evaluation_report(json_data_list, fig_suffix=""):
     ax1.plot(checkpoints, mean_return, color='green', label='Mean Return', linewidth=2)
     ax1.fill_between(checkpoints, mean_return - std_return, mean_return + std_return, 
                      color='green', alpha=0.2, label='±1 Std Dev')
+    if has_r_true:
+        for i in range(num_seeds):
+            ax1.plot(checkpoints, r_true[i], color='orangered', alpha=0.15, linewidth=1)
+        ax1.plot(checkpoints, mean_r_true, color='orangered', label='Mean r_true', linewidth=2)
+        ax1.fill_between(checkpoints, mean_r_true - std_r_true, mean_r_true + std_r_true,
+                         color='orangered', alpha=0.2)
     ax1.set_ylabel("Scalar Return", fontsize=12)
     ax1.legend(loc='upper left')
     ax1.grid(True, linestyle='--', alpha=0.5)
@@ -154,7 +172,7 @@ def plot_multiseed_evaluation_report(json_data_list, fig_suffix=""):
     plt.tight_layout()
     plt.subplots_adjust(top=0.95) # Leave room for the main title
     
-    save_path = f"figures/multiseed_evaluation_report_{fig_suffix}.png" if fig_suffix else "figures/multiseed_evaluation_report.png"
+    save_path = f"multiseed_evaluation_report_{fig_suffix}.png" if fig_suffix else "figures/multiseed_evaluation_report.png"
     plt.savefig(save_path, dpi=600)
     print(f"Saved multi-seed report to {save_path}")
 

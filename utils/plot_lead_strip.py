@@ -48,21 +48,28 @@ def read_runs(path):
         rows = [r for r in csv.reader(f) if any(c.strip() for c in r)]
     if not rows:
         sys.exit("empty CSV")
-    header = [h.strip().lower() for h in rows[0]]
-    env_i  = header.index("env")        if "env"        in header else 0
-    mdl_i  = (header.index("model_name") if "model_name" in header
-               else header.index("model") if "model"     in header
-               else 1)
-    seed_i = header.index("seed") if "seed" in header else None
-    meta   = {env_i, mdl_i} | ({seed_i} if seed_i is not None else set())
-    cp_cols = [i for i in range(len(rows[0])) if i not in meta]
+
+    # Detect an optional header. Runs have variable numbers of checkpoints, so
+    # each row is read on its own width: the meta columns (env, model, seed)
+    # come first and every remaining cell is a checkpoint state. We must not
+    # derive a fixed column set from the first row, or longer runs get truncated.
+    first = [h.strip().lower() for h in rows[0]]
+    if "env" in first or "model" in first or "model_name" in first:
+        env_i  = first.index("env") if "env" in first else 0
+        mdl_i  = (first.index("model_name") if "model_name" in first
+                   else first.index("model") if "model" in first else 1)
+        seed_i = first.index("seed") if "seed" in first else None
+        data   = rows[1:]
+    else:
+        env_i, mdl_i, seed_i = 0, 1, 2   # headerless: env, model, seed, then states
+        data   = rows
+    meta_end = max([env_i, mdl_i] + ([seed_i] if seed_i is not None else [])) + 1
 
     runs = []
-    for r in rows[1:]:
-        r = r + [""] * (len(rows[0]) - len(r))
-        env   = r[env_i].strip()
-        mdl   = r[mdl_i].strip()
-        cells = [r[i].strip().lower() for i in cp_cols]
+    for r in data:
+        env   = r[env_i].strip() if env_i < len(r) else ""
+        mdl   = r[mdl_i].strip() if mdl_i < len(r) else ""
+        cells = [c.strip().lower() for c in r[meta_end:]]
         for c in cells:
             if c and c not in KNOWN:
                 sys.stderr.write(f"warning: unrecognised cell '{c}'\n")
@@ -75,7 +82,7 @@ def main():
     ap.add_argument("csv_path")
     ap.add_argument("-o", "--out", default="rq1_leadstrip.png")
     ap.add_argument("--title", default=None)
-    ap.add_argument("--dpi", type=int, default=200)
+    ap.add_argument("--dpi", type=int, default=600)
     ap.add_argument("--reward-min-run", type=int, default=1)
     ap.add_argument("--fp-min-run",     type=int, default=1)
     args = ap.parse_args()
