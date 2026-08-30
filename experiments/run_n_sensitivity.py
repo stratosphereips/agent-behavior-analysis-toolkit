@@ -1,13 +1,23 @@
 """
 N sensitivity experiment — metric stability vs number of evaluation trajectories.
 
-For each checkpoint k, subsamples N trajectories (without replacement) from the
-full pool and computes all metrics against the full previous checkpoint (k-1).
+For each checkpoint k, bootstrap-resamples N trajectories (WITH replacement) from
+the full pool and computes all metrics against the full previous checkpoint (k-1).
 Repeats n_subsamples times to estimate variance. Reports CV (std/mean) across
-subsamples for each metric at each N.
+resamples for each metric at each N.
 
-The key comparison: behavioral metrics (Seff, ΔTopo, ΔStrat, W3) vs mean return.
-If behavioral metrics reach low CV at smaller N than reward, this supports the
+Bootstrap (not without-replacement subsampling) is used because the deployment
+question is "how much would this estimate vary under N fresh i.i.d. rollouts",
+which the bootstrap estimates correctly at any N up to the pool size. Without-
+replacement subsampling instead answers "how much does the estimate vary across
+different N-subsets of this fixed pool", which mechanically collapses to zero
+variance at N = pool size (finite-population correction), independent of how
+variable the policy's behavior actually is. N is still capped at the pool size
+per checkpoint pair — this script does not extrapolate variance estimates beyond
+the collected data.
+
+The key comparison: behavioral metrics (Seff, ΔTopo, ΔStrat, ΔSeq) vs return.
+If behavioral metrics reach low noise at smaller N than return, this supports the
 claim that structural profiling requires fewer evaluation rollouts than reward
 monitoring — a practical advantage in settings where trajectory collection is
 costly or constrained.
@@ -15,9 +25,10 @@ costly or constrained.
 Usage:
     python experiments/run_n_sensitivity.py \\
         --data_dir <path/to/trajectories> \\
-        --output <path/to/results.json> \\
+        --output <path/to/results_bootstrap.json> \\
         --num_actions 4 \\
-        --n_subsamples 20
+        --n_subsamples 1000 \\
+        --n_values 25 50 100 200 350 500
 """
 import argparse
 import json
@@ -36,12 +47,10 @@ from experiments.sequential_cp_comparison import (
 )
 from trajectory import EmpiricalPolicy
 
-# Default N grid. Keep N at most ~40% of the collected pool size: subsampling
-# WITHOUT replacement deflates variance by sqrt(1 - N/pool), so points with N
-# close to the pool look spuriously stable (at N = pool size, std is exactly 0).
-# With a 500-trajectory pool the honest ceiling is N~200; a 1000-pool allows ~400.
-N_VALUES = [10, 50, 100, 200]
-N_SUBSAMPLES = 20
+# Default N grid, capped at a 500-trajectory pool (pass --n_values explicitly
+# for a 1000-trajectory pool, e.g. Taxi: 25 50 100 200 350 500 700 1000).
+N_VALUES = [25, 50, 100, 200, 350, 500]
+N_SUBSAMPLES = 1000  # bootstrap repetitions (B)
 
 
 def evaluate_at_n(
@@ -52,23 +61,21 @@ def evaluate_at_n(
     global_actions: list,
     N: int,
     n_subsamples: int,
-    replace: bool = False,
+    replace: bool = True,
 ) -> dict:
     """
-    Resample N trajectories from checkpoint k n_subsamples times.
-    For each resample compute all metrics against the full policy_prev.
-    Returns mean, std, and CV for each metric at this N.
+    Bootstrap-resample N trajectories (with replacement) from checkpoint k,
+    n_subsamples times. For each resample compute all metrics against the full
+    policy_prev. Returns mean, std, and CV for each metric at this N.
 
-    replace=False  -> subsampling without replacement. Estimates the variance of
-                      an N-trajectory estimate, but is only valid for N well below
-                      the pool size (variance is deflated by sqrt(1 - N/pool) and
-                      is exactly 0 at N = pool size).
-    replace=True   -> bootstrap with replacement. Gives a non-degenerate variance
-                      estimate even at N = pool size, so it is used to measure the
-                      precision of the estimate at the full operating budget.
+    N must not exceed the collected pool size — no extrapolation beyond the
+    trajectories actually gathered.
     """
-    if N > len(trajectories_k) and not replace:
-        N = len(trajectories_k)
+    if N > len(trajectories_k):
+        raise ValueError(
+            f"N={N} exceeds the collected pool size ({len(trajectories_k)}); "
+            "refusing to extrapolate beyond collected trajectories."
+        )
 
     metric_samples: dict[str, list[float]] = {
         "seff": [],
@@ -127,15 +134,15 @@ def process_pair(args):
             N, n_subsamples,
         )
 
-    # Operating-budget point: precision of the estimate computed from the FULL pool,
-    # measured by bootstrap (with replacement) so it is non-degenerate at N = pool
-    # size. This is the directly-measured precision at the budget actually used,
-    # not an extrapolation from the subsampling curve.
+    # Operating-budget point: precision of the estimate at N = pool size. The
+    # curve now uses the same bootstrap estimator throughout, so if the pool
+    # size is included in n_values this is exactly (not just approximately)
+    # the curve's own endpoint — reuse it instead of resampling independently.
     op_N = len(trajectories_curr)
-    op_stats = evaluate_at_n(
+    op_stats = result.get(op_N) or evaluate_at_n(
         trajectories_curr, policy_prev,
         ngram_cost_matrix, global_ngrams, global_actions,
-        op_N, n_subsamples, replace=True,
+        op_N, n_subsamples,
     )
     return cp_prev, cp_curr, result, op_N, op_stats
 
@@ -143,14 +150,22 @@ def process_pair(args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, required=True)
-    parser.add_argument("--output", type=str, required=True)
+    parser.add_argument("--output", type=str, required=True,
+                        help="Output JSON path. Name it with a 'bootstrap' suffix "
+                             "(e.g. n_sensitivity_taxi_bootstrap.json) — this method "
+                             "replaces the earlier without-replacement subsampling "
+                             "and the two are not comparable.")
     parser.add_argument("--num_actions", type=int, default=None)
-    parser.add_argument("--n_subsamples", type=int, default=N_SUBSAMPLES)
+    parser.add_argument("--n_subsamples", type=int, default=N_SUBSAMPLES,
+                        help="Bootstrap repetitions (B). Use >=1000 for a stable "
+                             "std estimate.")
     parser.add_argument("--n_values", type=int, nargs="+", default=N_VALUES,
-                        help="Subsample sizes to probe. Keep each at most ~40%% of "
-                             "the collected pool (e.g. <=200 for a 500-traj pool, "
-                             "<=400 for a 1000-traj pool) to avoid finite-population "
-                             "variance deflation.")
+                        help="Bootstrap sample sizes N to probe. Each must be "
+                             "<= the collected pool size per checkpoint (the run "
+                             "errors out otherwise — no extrapolation). Include "
+                             "the pool size itself (e.g. 500 or 1000) as the last "
+                             "value so the curve's endpoint doubles as the "
+                             "operating-budget point.")
     args = parser.parse_args()
     n_values = sorted(args.n_values)
 
@@ -172,12 +187,13 @@ def main():
 
     global_ngrams, cost_matrix = build_global_environment_cache(global_actions, n=3)
 
-    # Warn if any requested N is too large a fraction of the available pool.
+    # Hard-fail if any requested N exceeds the available pool — the bootstrap must
+    # not extrapolate beyond the collected trajectories.
     min_pool = min(len(policies[cp][0].trajectories) for cp in checkpoints)
-    if max(n_values) > 0.4 * min_pool:
-        print(f"WARNING: largest N={max(n_values)} exceeds 40% of the smallest pool "
-              f"({min_pool}); finite-population deflation will make large-N points "
-              f"look spuriously stable. Consider N <= {int(0.4 * min_pool)}.")
+    if max(n_values) > min_pool:
+        sys.exit(f"ERROR: largest N={max(n_values)} exceeds the smallest pool "
+                  f"({min_pool} trajectories); refusing to extrapolate. "
+                  f"Use N <= {min_pool}.")
 
     print(f"Running N sensitivity over {len(checkpoint_pairs)} checkpoint pairs, "
           f"N={n_values}, n_subsamples={args.n_subsamples} ...")
@@ -252,7 +268,7 @@ def main():
             add_std_over_range(sensitivity[k][N_key])
 
     # Same range-normalization for the operating-budget (full-pool bootstrap) point,
-    # so it lands on the same axis/tolerance as the subsampling curve.
+    # so it lands on the same axis/tolerance as the bootstrap curve.
     for k in operating:
         add_std_over_range(operating[k]["stats"])
 
