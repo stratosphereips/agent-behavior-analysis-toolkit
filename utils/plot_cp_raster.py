@@ -136,7 +136,7 @@ def main():
     ap.add_argument("csv_path")
     ap.add_argument("-o", "--out", default="rq1_raster.png")
     ap.add_argument("--title", default=None)
-    ap.add_argument("--dpi", type=int, default=200)
+    ap.add_argument("--dpi", type=int, default=500)
     ap.add_argument("--group-gap", type=float, default=1.5,
                     help="vertical gap between environment groups, in row units")
     args = ap.parse_args()

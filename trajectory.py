@@ -139,6 +139,22 @@ class Trajectory:
             trajectory.add_transition(s, a, r, s_next, rf)
         return trajectory
 
+def convert_to_hashable(value: Any) -> Hashable:
+    """
+    Convert a value to a hashable type (module-level so callers can reuse the
+    exact same conversion without instantiating an EmpiricalPolicy).
+    """
+    if isinstance(value, np.ndarray):
+        if np.ndim(value) == 0:
+            return int(value)
+        else:
+            return tuple(value)
+    elif isinstance(value, (list, tuple)):
+        return tuple(map(convert_to_hashable, value))
+    elif isinstance(value, dict):
+        return tuple(sorted((k, convert_to_hashable(v)) for k, v in value.items()))
+    return value
+
 class Policy():
     """
     Abstract base class for policies.
@@ -271,14 +287,7 @@ class EmpiricalPolicy(Policy):
         """
         Convert a value to a hashable type.
         """
-        if isinstance(value, np.ndarray):
-            if np.ndim(value) == 0:
-                return int(value)
-            else:
-                return tuple(value)
-        elif isinstance(value, (list, tuple)):
-            return tuple(map(self._convert_to_hashable, value)) 
-        return value
+        return convert_to_hashable(value)
         
     def update_policy(self, new_trajectories: Iterable[Trajectory]):
         for trajectory in new_trajectories:  

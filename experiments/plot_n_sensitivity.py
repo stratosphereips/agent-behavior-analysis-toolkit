@@ -6,19 +6,28 @@ aggregates a chosen stability field across all checkpoint pairs within each
 file, then plots mean +/- std per metric as a function of N (the number of
 evaluation trajectories).
 
-The primary field is `std_over_range` (std normalized by the metric's signal
-range across the checkpoint series): lower = more stable, and it is directly
-comparable across metrics and robust to means that are near or cross zero. The
-claim the figure supports is that the behavioral metrics drop below a given
-stability tolerance at a *smaller* N than mean return does.
+The primary field is `std_over_range` (bootstrap std normalized by the metric's
+signal range across the checkpoint series): lower = more stable, and it is
+directly comparable across metrics and robust to means that are near or cross
+zero. The claim the figure supports is that the behavioral metrics drop below a
+given stability tolerance at a *smaller* N than return does.
 
 Usage:
     python experiments/plot_n_sensitivity.py \
-        --inputs results/n_sensitivity_frozenlake.json \
-                 results/n_sensitivity_mountaincar.json \
-                 results/n_sensitivity_taxi.json \
+        --inputs results/n_sensitivity_frozenlake_bootstrap.json \
+                 results/n_sensitivity_mountaincar_bootstrap.json \
+                 results/n_sensitivity_taxi_bootstrap.json \
         --labels FrozenLake MountainCar Taxi \
-        --output figures/n_sensitivity.png \
+        --mode curve --output figures/n_sensitivity_curve.png \
+        --field std_over_range \
+        --tolerance 0.1
+
+    python experiments/plot_n_sensitivity.py \
+        --inputs results/n_sensitivity_frozenlake_bootstrap.json \
+                 results/n_sensitivity_mountaincar_bootstrap.json \
+                 results/n_sensitivity_taxi_bootstrap.json \
+        --labels FrozenLake MountainCar Taxi \
+        --mode operating --output figures/n_sensitivity_operating.png \
         --field std_over_range \
         --tolerance 0.1
 """
@@ -31,11 +40,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 METRICS = [
-    ("seff",                    r"$\mathcal{S}_{eff}$"),
+    ("seff",                    r"$\mathrm{PP}(\hat{P}_k)$"),
     ("topological_shift",       r"$\Delta$Topo"),
     ("strategic_shift",         r"$\Delta$Strat"),
-    ("3-gram_wasserstein",      r"$W_3$"),
-    ("mean_return",             "Reward"),
+    ("3-gram_wasserstein",      r"$\Delta$Seq"),
+    ("mean_return",             "Return"),
 ]
 
 METRIC_COLORS = {
@@ -43,11 +52,11 @@ METRIC_COLORS = {
     "topological_shift":   "#2196F3",   # blue
     "strategic_shift":     "#FF9800",   # orange
     "3-gram_wasserstein":  "#4CAF50",   # green
-    "mean_return":         "#E91E63",   # pink/red — reward baseline
+    "mean_return":         "#E91E63",   # pink/red — return baseline
 }
 
 METRIC_LINESTYLE = {
-    "mean_return": "--",                 # dashed to visually separate reward
+    "mean_return": "--",                 # dashed to visually separate return
 }
 
 
@@ -94,7 +103,7 @@ def load_and_aggregate(path: str, field: str) -> dict[str, dict[int, list]]:
 
 def plot_sensitivity(aggregated: dict, ax: plt.Axes, title: str, field: str,
                      tolerance: float | None, ymax: float | None):
-    """Curve mode: subsampling-only sample-efficiency curves (no operating point)."""
+    """Curve mode: bootstrap sample-efficiency curves (no operating-point stars)."""
     for metric, label in METRICS:
         if metric not in aggregated:
             continue
@@ -116,14 +125,16 @@ def plot_sensitivity(aggregated: dict, ax: plt.Axes, title: str, field: str,
     any_metric = next((m for m, _ in METRICS if m in aggregated), None)
     if any_metric is not None:
         ax.set_xticks(sorted(aggregated[any_metric].keys()))
+        ax.set_xticks([], minor=True)
         ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
     ax.set_ylim(bottom=0, top=ymax)
     ax.set_title(title, fontsize=11)
-    ax.set_xlabel("N (evaluation trajectories)", fontsize=9)
+    ax.set_xlabel(r"evaluation trajectories $N$", fontsize=9)
     ylab = (r"std / signal range" if field == "std_over_range"
             else "CV (std / mean)")
     ax.set_ylabel(f"{ylab}\n(lower = more stable)", fontsize=9)
-    ax.grid(True, which="both", linestyle=":", linewidth=0.5, alpha=0.6)
+    ax.grid(True, axis="y", which="both", linestyle=":", linewidth=0.5, alpha=0.6)
+    ax.grid(True, axis="x", which="major", linestyle=":", linewidth=0.5, alpha=0.6)
 
 
 def summarize_operating(operating: dict) -> dict:
@@ -145,7 +156,7 @@ def plot_operating_bars(env_summaries, ax, field, tolerance):
     """
     Operating mode: grouped bar chart of the full-pool bootstrap precision.
     Groups = environments, bars within a group = metrics. One estimator only,
-    so it is not conflated with the subsampling curve.
+    so it is not conflated with the bootstrap curve.
 
     env_summaries: list of (label, summary, op_N).
     """
@@ -194,9 +205,12 @@ def main():
                         help="One JSON file per environment")
     parser.add_argument("--labels", nargs="+", required=True,
                         help="Display name for each input file (same order)")
-    parser.add_argument("--output", type=str, default="figures/n_sensitivity.png")
+    parser.add_argument("--output", type=str, default=None,
+                        help="Output figure path. Defaults to "
+                             "figures/n_sensitivity_curve.png (curve mode) or "
+                             "figures/n_sensitivity_operating.png (operating mode).")
     parser.add_argument("--mode", choices=["curve", "operating"], default="curve",
-                        help="curve: subsampling sample-efficiency curves (no stars). "
+                        help="curve: bootstrap sample-efficiency curves (no stars). "
                              "operating: grouped bar chart of full-pool bootstrap "
                              "precision at the operating budget.")
     parser.add_argument("--field", type=str, default="std_over_range",
@@ -213,6 +227,9 @@ def main():
     if len(args.inputs) != len(args.labels):
         print("--inputs and --labels must have the same number of entries")
         sys.exit(1)
+
+    if args.output is None:
+        args.output = (f"figures/n_sensitivity_{args.mode}.png")
 
     tol = args.tolerance if args.tolerance >= 0 else None
 
@@ -242,7 +259,7 @@ def main():
 
     fig.tight_layout()
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
-    fig.savefig(args.output, dpi=200, bbox_inches="tight")
+    fig.savefig(args.output, dpi=600, bbox_inches="tight")
     print(f"Saved to {args.output}")
 
 
