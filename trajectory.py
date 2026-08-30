@@ -151,6 +151,8 @@ def convert_to_hashable(value: Any) -> Hashable:
             return tuple(value)
     elif isinstance(value, (list, tuple)):
         return tuple(map(convert_to_hashable, value))
+    elif isinstance(value, dict):
+        return tuple(sorted((k, convert_to_hashable(v)) for k, v in value.items()))
     return value
 
 class Policy():
