@@ -1,0 +1,117 @@
+<title>Fingerprint Decision Tree</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --ground:#f2f5f8; --surface:#ffffff; --ink:#141a20; --muted:#5a6673; --faint:#8b97a4;
+    --hair:#e1e7ec; --accent:#0072b2;
+    --good:#1a875a; --warn:#c26a00; --reshape:#6f52c0; --random:#647082;
+    --shadow:0 1px 2px rgba(20,26,32,.04),0 10px 30px rgba(20,26,32,.06);
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --ground:#0f1317; --surface:#171c22; --ink:#e7ecf1; --muted:#9aa6b3; --faint:#6b7783;
+    --hair:#2a333d; --accent:#4ba8db;
+    --good:#42c088; --warn:#e39a3f; --reshape:#a58be6; --random:#8592a1;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 12px 34px rgba(0,0,0,.4);
+  }}
+  :root[data-theme="dark"]{
+    --ground:#0f1317; --surface:#171c22; --ink:#e7ecf1; --muted:#9aa6b3; --faint:#6b7783;
+    --hair:#2a333d; --accent:#4ba8db;
+    --good:#42c088; --warn:#e39a3f; --reshape:#a58be6; --random:#8592a1;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 12px 34px rgba(0,0,0,.4);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);
+    font-family:"IBM Plex Sans",system-ui,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:940px;margin:0 auto;padding:52px 24px 80px}
+  .kicker{font-family:"IBM Plex Mono",monospace;font-size:12px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--accent);margin:0 0 12px}
+  h1{font-size:clamp(26px,3.6vw,36px);font-weight:700;letter-spacing:-.02em;margin:0 0 14px;text-wrap:balance}
+  .lede{font-size:16.5px;color:var(--muted);max-width:66ch;margin:0}
+  .lede b{color:var(--ink);font-weight:600}
+  .diagram{background:#ffffff;border:1px solid var(--hair);border-radius:16px;
+    padding:26px 20px;margin:34px 0 0;box-shadow:var(--shadow);overflow-x:auto}
+  .diagram pre.mermaid{margin:0;display:flex;justify-content:center;min-width:640px}
+  .cap{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--faint);
+    text-align:center;margin:14px 0 0;letter-spacing:.03em}
+  h2{font-size:18px;font-weight:600;letter-spacing:-.01em;margin:44px 0 4px}
+  .sub{font-size:14px;color:var(--muted);margin:0 0 18px}
+  .keys{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:8px}
+  .key{background:var(--surface);border:1px solid var(--hair);border-radius:12px;padding:15px 17px}
+  .key h3{margin:0 0 5px;font-size:14.5px;font-weight:600}
+  .key p{margin:0;font-size:13px;color:var(--muted)}
+  .key .test{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--accent);
+    display:block;margin-top:7px}
+  .principles{margin-top:34px;display:grid;gap:12px}
+  .prin{display:flex;gap:14px;align-items:baseline;background:var(--surface);
+    border:1px solid var(--hair);border-radius:12px;padding:15px 18px}
+  .prin .n{font-family:"IBM Plex Mono",monospace;font-weight:600;color:var(--accent);
+    font-size:13px;flex:none}
+  .prin p{margin:0;font-size:14px}
+  .prin b{font-weight:600}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:20px;
+    font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:7px}
+  .dot{width:10px;height:10px;border-radius:3px}
+</style>
+<div class="wrap">
+  <p class="kicker">Behavioral Ontogeny · reward-blind diagnosis</p>
+  <h1>How the fingerprint decides a verdict</h1>
+  <p class="lede">Each run is classified top-down. <b>Behavior gates learning</b> (rule 1); among
+  learners, the <b>return&#8596;coverage relationship</b> separates the modes. Every branch is a
+  significance test against a calibrated null or a calibrated effect size &mdash; no hand-set thresholds.</p>
+
+  <div class="legend">
+    <span><span class="dot" style="background:var(--good)"></span>Good learning</span>
+    <span><span class="dot" style="background:var(--warn)"></span>Warning (gaming / collapse)</span>
+    <span><span class="dot" style="background:var(--reshape)"></span>Reshaping</span>
+    <span><span class="dot" style="background:var(--random)"></span>No learning</span>
+  </div>
+
+  <div class="diagram">
+    <pre class="mermaid">
+%%{init: {'theme':'base','themeVariables':{'fontFamily':'IBM Plex Sans, sans-serif','fontSize':'13px','lineColor':'#9aa6b3','primaryColor':'#eef2f5','primaryBorderColor':'#b7c1cb','primaryTextColor':'#141a20','tertiaryColor':'#f5f7f9'}}}%%
+flowchart TD
+  S(["Behavioral fingerprint<br/>of a run"]) --> D1{"Activity above<br/>the 5% null rate?"}
+  D1 -->|no| R["Random /<br/>No learning"]:::random
+  D1 -->|yes, a learner| D2{"Coverage collapses<br/>AND return rising?"}
+  D2 -->|yes| GM["Reward-hacking /<br/>Gaming (!)"]:::warn
+  D2 -->|no| D3{"Return<br/>trending up?"}
+  D3 -->|yes| D3a{"Tail still<br/>active?"}
+  D3a -->|no| GC["Good learning:<br/>converged"]:::good
+  D3a -->|yes| D3b{"Activity<br/>winding down?"}
+  D3b -->|yes| GG["Good learning:<br/>converging"]:::good
+  D3b -->|no| GP["Good learning:<br/>in progress"]:::good
+  D3 -->|no| D4{"Tail still<br/>active?"}
+  D4 -->|yes| RS["Reshaping /<br/>persistent"]:::reshape
+  D4 -->|no| D5{"Coverage<br/>collapses?"}
+  D5 -->|yes| CC["Coverage collapse,<br/>no return gain (!)"]:::warn
+  D5 -->|no| ST["Stalled /<br/>converged-flat"]:::random
+  classDef good fill:#e2f2ea,stroke:#1a875a,color:#0d3d28,stroke-width:1.5px;
+  classDef warn fill:#fbeadd,stroke:#c26a00,color:#5a3200,stroke-width:1.5px;
+  classDef reshape fill:#ece5fb,stroke:#6f52c0,color:#33245e,stroke-width:1.5px;
+  classDef random fill:#e7ebef,stroke:#647082,color:#2b333c,stroke-width:1.4px;
+    </pre>
+  </div>
+  <p class="cap">read top &#8594; bottom · first matching branch wins</p>
+
+  <h2>What each test actually is</h2>
+  <p class="sub">Every diamond resolves to one calibrated test at &alpha;&nbsp;=&nbsp;0.05.</p>
+  <div class="keys">
+    <div class="key"><h3>Activity above null?</h3><p>Is the count of active checkpoint-pairs greater than a non-learning policy would produce?<span class="test">binomial test vs P&#8320;&nbsp;=&nbsp;5%</span></p></div>
+    <div class="key"><h3>Return trending up?</h3><p>Does mean return rise over training, beyond its own variance?<span class="test">regression-slope test</span></p></div>
+    <div class="key"><h3>Coverage collapses?</h3><p>Perplexity trends down <i>and</i> the net drop exceeds coverage's own oscillation scale.<span class="test">slope test + calibrated effect size</span></p></div>
+    <div class="key"><h3>Tail still active?</h3><p>Is the last quarter of training still firing above the null rate?<span class="test">binomial test on the tail</span></p></div>
+    <div class="key"><h3>Activity winding down?</h3><p>Is the tail fire-rate significantly below the early-training rate?<span class="test">two-proportion test (head vs tail)</span></p></div>
+    <div class="key"><h3>A single per-pair &ldquo;active&rdquo;</h3><p>A change above the calibrated noise floor <i>and</i> above the practical floor &epsilon;<sub>min</sub>.<span class="test">z &gt; z&#8339;&#8342;&#8341;  AND  raw &gt; &epsilon;<sub>min</sub></span></p></div>
+  </div>
+
+  <h2>Why the tree is shaped this way</h2>
+  <p class="sub">Three principles are baked into the branch order.</p>
+  <div class="principles">
+    <div class="prin"><span class="n">1</span><p><b>Behavior gates learning.</b> Rule&nbsp;1 decides learner-or-not from activity alone. A run at the null floor is &ldquo;No learning&rdquo; no matter what its return does &mdash; which is what stops a random policy&rsquo;s drifting return from being mistaken for gaming.</p></div>
+    <div class="prin"><span class="n">2</span><p><b>Return enters only among learners.</b> Once behavior confirms real change, the return&#8596;coverage <i>relationship</i> separates the modes: return up + coverage collapse&nbsp;=&nbsp;gaming; return up + no collapse&nbsp;=&nbsp;good; active without return gain&nbsp;=&nbsp;reshaping.</p></div>
+    <div class="prin"><span class="n">3</span><p><b>Every threshold is calibrated.</b> Each branch is a significance test against the calibrated null, or an effect size measured against the data&rsquo;s own noise (&epsilon;<sub>min</sub> for activity, perplexity&rsquo;s oscillation for coverage). No bare magnitude cutoffs remain.</p></div>
+  </div>
+</div>

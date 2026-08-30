@@ -78,10 +78,16 @@ def _arr(d, k):
     return np.array(d[k], dtype=float)
 
 
-def plot_fingerprint_report(d, title, outpath, dpi=350, wass_max_cost=WASS_MAX_COST):
+def plot_fingerprint_report(d, title, outpath, dpi=350, wass_max_cost=WASS_MAX_COST, emin=None):
     """Render one run's fingerprint report to ``outpath``.
 
     ``d`` is the parsed ``*_metrics.json`` dict.
+    ``emin``: optional practical-significance gate as [eps_topo, eps_strat, eps_seq] in
+    raw metric units (seq/wass un-normalized). When given, a checkpoint pair is active
+    only if it is statistically significant AND the driving metric's raw value exceeds
+    its epsilon_min. Calibrate epsilon_min as the ~99th percentile of the metric on a
+    non-learning (Random) policy, or use the fixed universal 0.05 (normalized). None ->
+    significance only (original behavior).
     """
     with plt.rc_context(_RC):
         xck = _arr(d, "checkpoints")
@@ -100,20 +106,37 @@ def plot_fingerprint_report(d, title, outpath, dpi=350, wass_max_cost=WASS_MAX_C
         # ---- detector: family-wise z when available, else per-metric floor crossing ----
         zf = ["null_mean_topological_shift", "null_std_topological_shift", "null_mean_strategic_shift",
               "null_std_strategic_shift", "null_mean_3-gram_wasserstein", "null_std_3-gram_wasserstein", "zmax_p95"]
+        # sig_m: per-metric significance flags (3 x P); score: per-metric hue score.
         if all(k in d for k in zf):
             zt = (topo - _arr(d, "null_mean_topological_shift")) / _arr(d, "null_std_topological_shift")
             zs = (strat - _arr(d, "null_mean_strategic_shift")) / _arr(d, "null_std_strategic_shift")
             zq = (seq - _arr(d, "null_mean_3-gram_wasserstein")) / _arr(d, "null_std_3-gram_wasserstein")
-            Zc = np.where(np.isnan(np.vstack([zt, zs, zq])), -np.inf, np.vstack([zt, zs, zq]))
-            zarg, active = Zc.argmax(axis=0), Zc.max(axis=0) > _arr(d, "zmax_p95")
+            score = np.where(np.isnan(np.vstack([zt, zs, zq])), -np.inf, np.vstack([zt, zs, zq]))
+            # family-wise (max-statistic) threshold applied per metric = Westfall-Young
+            sig_m = score > _arr(d, "zmax_p95")[None, :]
             det_note = "gray = inactive; hue = metric\ndriving the decision (largest $z$)"
         else:
             R = np.vstack([topo / np.where(topo_t > 0, topo_t, np.nan),
                            strat / np.where(strat_t > 0, strat_t, np.nan),
                            seq / np.where(seq_t > 0, seq_t, np.nan)])
-            zarg = np.where(np.isnan(R), -np.inf, R).argmax(axis=0)
-            active = (topo > topo_t) | (strat > strat_t) | (seq > seq_t)
+            score = np.where(np.isnan(R), -np.inf, R)
+            sig_m = np.vstack([topo > topo_t, strat > strat_t, seq > seq_t])
             det_note = "gray = inactive; hue = metric\nmost above its floor (no $z$ available)"
+
+        # practical-significance gate, applied PER METRIC: a pair fires if ANY metric is
+        # both significant AND has raw change above its epsilon_min. Gating only the
+        # largest-z metric would wrongly silence a pair whose real, significant change
+        # sits in a different metric than the z-argmax.
+        raw3 = np.vstack([topo, strat, seq])
+        if emin is not None:
+            pass_m = sig_m & (raw3 > np.asarray(emin, float)[:, None])
+            det_note += "\n(gated: raw $>\\epsilon_{\\min}$)"
+        else:
+            pass_m = sig_m
+        active = pass_m.any(axis=0)
+        # hue = the max-score metric among those that passed (arbitrary when inactive)
+        masked = np.where(pass_m, score, -np.inf)
+        zarg = np.where(active, masked.argmax(axis=0), score.argmax(axis=0))
 
         fig = plt.figure(figsize=(9.2, 11.4))
         gs = GridSpec(5, 1, height_ratios=[1.0, 0.9, 1.55, 0.22, 1.05], hspace=0.30,
