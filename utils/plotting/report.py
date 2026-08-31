@@ -29,15 +29,15 @@ scale-invariant).
 
 Usage:
     # batch: every seed run under a results tree
-    python -m utils.plot_fingerprint_report results/
-    python -m utils.plot_fingerprint_report results/ --dpi 350 --overwrite
-    python -m utils.plot_fingerprint_report results/ --store_dir figures/  # mirrors results/'s subdirs
+    python -m utils.plotting.report results/
+    python -m utils.plotting.report results/ --dpi 350 --overwrite
+    python -m utils.plotting.report results/ --store_dir figures/  # mirrors results/'s subdirs
 
     # single run
-    python -m utils.plot_fingerprint_report path/to/run_metrics.json -o out.png
+    python -m utils.plotting.report path/to/run_metrics.json -o out.png
 
     # as a library
-    from utils.plot_fingerprint_report import plot_fingerprint_report
+    from utils.plotting.report import plot_fingerprint_report
     plot_fingerprint_report(metrics_dict, title="...", outpath="fig.png")
 """
 

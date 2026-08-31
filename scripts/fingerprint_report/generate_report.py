@@ -20,7 +20,7 @@ import numpy as np
 from scipy import stats
 import experiments.noise_null_ab as ab
 from utils.metrics import compute_decomposed_jsd, compute_perplexity_from_counts
-from utils.plot_fingerprint_report import plot_fingerprint_report
+from utils.plotting.report import plot_fingerprint_report
 
 DEC = ["topo", "strat_w", "wass"]
 NAMES = {"topo": "topological_shift", "strat_w": "strategic_shift", "wass": "3-gram_wasserstein"}
