@@ -12,7 +12,7 @@ from utils.metrics import (
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Any, Dict
-from utils.plotting_utils import plot_sequential_cp_metrics
+from utils.plotting.fingerprint import plot_sequential_cp_metrics
 import itertools
 from trajectory import EmpiricalPolicy, convert_to_hashable
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -526,6 +526,7 @@ def main():
     parser.add_argument("--max_trajectories", type=int, default=1000, help="Maximum number of trajectories to load")
     parser.add_argument("--num_actions", type=int, default=None, help="Number of actions in the environment")
     parser.add_argument("--every_nth", type=int, nargs='+', default=[1], help="List of intervals for plotting points")
+    parser.add_argument("--plot", action="store_true", help="Also render the legacy 5-panel stacked-metrics diagnostic PNG (off by default; metrics.json is always written).")
     parser.add_argument("--output_prefix", type=str, default="figures/behavioral_ontology", help="Prefix for output image")
     parser.add_argument("--output_dir", type=str, default=None, help="Directory to store all output files (overrides --output_prefix directory)")
     parser.add_argument("--noise_num_samples", type=int, default=200, help="Number of split-half null draws (M) for noise estimation. The 'higher' quantile estimator makes the threshold permutation-exact at any M; M is raised to ~200 for low-variance thresholds (10x resampling of existing trajectories, no new rollouts) and to resolve the a/2 net-band tails, which are unrepresentable below M~40. Output filename embeds this value, so new runs write *_200_metrics.json without clobbering old *_20_ files.")
@@ -725,43 +726,45 @@ def main():
             except Exception as e:
                 print(f"Wandb logging error: {e}")
     
-    # Visualization of experiments
-    try:
-        fig = plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name)
-        if args.output_dir:
-            plot_path = os.path.join(args.output_dir, f"{run_name}_stacked_metrics.png")
-        else:
-            plot_path = f"{args.output_prefix}_{run_name}_stacked_metrics.png"
-        plot_name = os.path.basename(plot_path)
-        if len(plot_name) > 250:
-            import hashlib
-            hash_str = hashlib.md5(plot_name.encode()).hexdigest()[:8]
-            suffix = "_stacked_metrics.png"
-            max_len = 250 - len(suffix) - 1 - len(hash_str)
-            plot_name = plot_name[:max_len] + "_" + hash_str + suffix
-            plot_path = os.path.join(os.path.dirname(plot_path), plot_name)
-
-        out_dir = os.path.dirname(plot_path)
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
-            
-        # Calculate DPI to ensure image does not exceed 8192x4096
-        fig_width, fig_height = fig.get_size_inches()
-        max_dpi_w = 8192 / fig_width
-        max_dpi_h = 4096 / fig_height
-        target_dpi = min(300, max_dpi_w, max_dpi_h)
-
-        fig.savefig(plot_path, dpi=target_dpi, bbox_inches='tight')
-
-        if args.use_wandb:
-            try:
-                wandb.log({"plots/stacked_metrics": wandb.Image(fig)})
-            except Exception as e:
-                print(f"Wandb image logging error: {e}")
-        plt.close(fig)
-        print(f"Saved stacked metrics plot to {plot_path}")
-    except Exception as e:
-        print(f"Failed to generate the stacked metrics plot: {e}")
+    # Visualization of experiments -- opt-in legacy 5-panel diagnostic PNG.
+    # metrics.json (below) is always written; the plot is skipped unless --plot.
+    if args.plot:
+        try:
+            fig = plot_sequential_cp_metrics(checkpoint_labels, metrics, run_name)
+            if args.output_dir:
+                plot_path = os.path.join(args.output_dir, f"{run_name}_stacked_metrics.png")
+            else:
+                plot_path = f"{args.output_prefix}_{run_name}_stacked_metrics.png"
+            plot_name = os.path.basename(plot_path)
+            if len(plot_name) > 250:
+                import hashlib
+                hash_str = hashlib.md5(plot_name.encode()).hexdigest()[:8]
+                suffix = "_stacked_metrics.png"
+                max_len = 250 - len(suffix) - 1 - len(hash_str)
+                plot_name = plot_name[:max_len] + "_" + hash_str + suffix
+                plot_path = os.path.join(os.path.dirname(plot_path), plot_name)
+    
+            out_dir = os.path.dirname(plot_path)
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
+                
+            # Calculate DPI to ensure image does not exceed 8192x4096
+            fig_width, fig_height = fig.get_size_inches()
+            max_dpi_w = 8192 / fig_width
+            max_dpi_h = 4096 / fig_height
+            target_dpi = min(300, max_dpi_w, max_dpi_h)
+    
+            fig.savefig(plot_path, dpi=target_dpi, bbox_inches='tight')
+    
+            if args.use_wandb:
+                try:
+                    wandb.log({"plots/stacked_metrics": wandb.Image(fig)})
+                except Exception as e:
+                    print(f"Wandb image logging error: {e}")
+            plt.close(fig)
+            print(f"Saved stacked metrics plot to {plot_path}")
+        except Exception as e:
+            print(f"Failed to generate the stacked metrics plot: {e}")
 
     # Save metrics to a file
     parsed_name = os.path.basename(os.path.normpath(args.data_dir))
