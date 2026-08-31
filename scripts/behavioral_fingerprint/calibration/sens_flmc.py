@@ -1,5 +1,5 @@
 import json, glob, os, numpy as np
-import experiments.noise_null_ab as ab
+import scripts.behavioral_fingerprint.noise_null_ab as ab
 
 EMIN = {"FL": [0.0060, 0.0353, 0.0566], "MC": [0.0034, 0.0009, 0.0172]}  # topo, strat, wass (raw units)
 MET = ["topo", "strat_w", "wass"]

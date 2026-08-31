@@ -2,7 +2,7 @@
 
 `plot_generalization_bidirectional` renders, per model, action-type usage as a
 double stacked-count chart (T_seen upward, T_unseen downward). Used by
-`experiments/generalization_experiment.py`.
+`scripts/replay/generalization_experiment.py`.
 """
 from typing import Iterable
 

@@ -1,8 +1,8 @@
 """Behavioral-fingerprint / sequential-checkpoint diagnostics (the current method).
 
 `plot_sequential_cp_metrics` is the dense developer diagnostic (5-panel stacked
-figure) emitted by `experiments/sequential_cp_comparison.py`. The shipped per-run
-report figure lives in `utils/plot_fingerprint_report.py`, not here.
+figure) emitted by `scripts/behavioral_fingerprint/sequential_cp_comparison.py`. The shipped per-run
+report figure lives in `utils/plotting/report.py`, not here.
 """
 import numpy as np
 import matplotlib.pyplot as plt

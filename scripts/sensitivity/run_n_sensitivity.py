@@ -23,7 +23,7 @@ monitoring — a practical advantage in settings where trajectory collection is
 costly or constrained.
 
 Usage:
-    python experiments/run_n_sensitivity.py \\
+    python -m scripts.sensitivity.run_n_sensitivity \\
         --data_dir <path/to/trajectories> \\
         --output <path/to/results_bootstrap.json> \\
         --num_actions 4 \\
@@ -41,7 +41,7 @@ import numpy as np
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from utils.data_utils import load_policies_from_directory
 from utils.metrics import compute_perplexity_from_counts
-from experiments.sequential_cp_comparison import (
+from scripts.behavioral_fingerprint.sequential_cp_comparison import (
     build_global_environment_cache,
     policy_comparison_worker,
 )

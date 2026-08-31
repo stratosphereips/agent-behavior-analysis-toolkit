@@ -1,7 +1,7 @@
 """
 Family-wise (max-statistic) fingerprint-active decision, per checkpoint pair.
 
-The permutation pipeline (experiments/sequential_cp_comparison.py:
+The permutation pipeline (scripts/behavioral_fingerprint/sequential_cp_comparison.py:
 estimate_noise_valus_for_policies) already writes, per checkpoint pair, the
 null mean/std of each of the three evolutionary metrics across M split-half
 resamples, and the p90/p95/p99 percentiles of the null MAX-statistic

@@ -1,8 +1,8 @@
 # Noise-floor calibration: investigation notes (2026-08)
 
 Record of the noise-floor investigation, the code changes made, and the empirical
-finding that settles which null to use. Source file: `experiments/sequential_cp_comparison.py`.
-A/B harness: `experiments/noise_null_ab.py`.
+finding that settles which null to use. Source file: `scripts/behavioral_fingerprint/sequential_cp_comparison.py`.
+A/B harness: `scripts/behavioral_fingerprint/noise_null_ab.py`.
 
 ## TL;DR
 

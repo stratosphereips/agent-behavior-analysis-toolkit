@@ -5,7 +5,7 @@ Loads trajectory data from a given directory, runs estimate_noise_sensitivity
 across all consecutive checkpoint pairs, and saves results to JSON.
 
 Usage:
-    python experiments/run_m_sensitivity.py \
+    python -m scripts.sensitivity.run_m_sensitivity \
         --data_dir <path/to/trajectories> \
         --output <path/to/results.json> \
         --num_actions 4 \
@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 from utils.data_utils import load_policies_from_directory
-from experiments.sequential_cp_comparison import (
+from scripts.behavioral_fingerprint.sequential_cp_comparison import (
     build_global_environment_cache,
     estimate_noise_sensitivity,
 )

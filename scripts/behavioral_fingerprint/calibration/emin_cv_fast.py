@@ -1,5 +1,5 @@
 import json, glob, os, numpy as np
-import experiments.noise_null_ab as ab
+import scripts.behavioral_fingerprint.noise_null_ab as ab
 
 DEC = ["topo", "strat_w", "wass"]
 NAMES = {"topo": "topological_shift", "strat_w": "strategic_shift", "wass": "3-gram_wasserstein"}

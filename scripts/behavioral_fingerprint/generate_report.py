@@ -11,14 +11,14 @@ floors is cheap (no floor recompute):
   --floor estimated   per-env 99th pct of a random policy's change  (needs --random_dir)
 
 Usage:
-  python -m scripts.fingerprint_report.generate_report RUN_DIR [--out DIR] [--M 200]
+  python -m scripts.behavioral_fingerprint.generate_report RUN_DIR [--out DIR] [--M 200]
          [--num_actions N] [--floor hard|estimated] [--random_dir DIR] [--force]
 RUN_DIR is a folder of cp_*.jsonl (searched recursively).
 """
 import argparse, glob, json, os, base64
 import numpy as np
 from scipy import stats
-import experiments.noise_null_ab as ab
+import scripts.behavioral_fingerprint.noise_null_ab as ab
 from utils.metrics import compute_decomposed_jsd, compute_perplexity_from_counts
 from utils.plotting.report import plot_fingerprint_report
 
@@ -200,6 +200,7 @@ def main():
     ap.add_argument("--num_actions", type=int, default=None)
     ap.add_argument("--floor", choices=["hard", "estimated"], default="hard")
     ap.add_argument("--random_dir", default=None); ap.add_argument("--force", action="store_true")
+    ap.add_argument("--metrics-only", action="store_true", help="Stage 1 only: write metrics.json and stop (floor-independent; verdict/figure/report can be derived later from the cached metrics).")
     a = ap.parse_args()
     out = a.out or a.run_dir
     os.makedirs(out, exist_ok=True)
@@ -213,6 +214,9 @@ def main():
     else:
         print(f"[stage1] computing metrics (M={a.M}, num_actions={nact}) ..."); d = build_metrics(a.run_dir, nact, a.M)
         json.dump(d, open(mpath, "w"), indent=1); print(f"[stage1] wrote {mpath}")
+
+    if a.metrics_only:
+        print("[stage1] metrics-only: done (verdict/figure/report deferred)"); return
 
     # STAGE 2 (cheap)
     if a.floor == "estimated":

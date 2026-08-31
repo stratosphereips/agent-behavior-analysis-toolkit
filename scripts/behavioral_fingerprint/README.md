@@ -2,7 +2,7 @@
 
 Turns a run's evaluation trajectories into a plain-language **verdict** + a per-run
 report. Reward-blind: behavior decides whether learning is happening; the return curve
-is consulted only to flag reward-behavior mismatches. See `experiments/NOISE_FLOOR_NOTES.md`
+is consulted only to flag reward-behavior mismatches. See `NOISE_FLOOR_NOTES.md`
 for the calibration behind the numbers, and `decision_tree.html` for the decision logic.
 
 ## Usage
@@ -10,7 +10,7 @@ Run from the toolkit root with the toolkit on the path:
 
 ```bash
 cd agent-behavior-analysis-toolkit
-PYTHONPATH="$PWD" python -m scripts.fingerprint_report.generate_report RUN_DIR [options]
+PYTHONPATH="$PWD" python -m scripts.behavioral_fingerprint.generate_report RUN_DIR [options]
 ```
 
 `RUN_DIR` is a folder of `cp_*.jsonl` (searched recursively).
