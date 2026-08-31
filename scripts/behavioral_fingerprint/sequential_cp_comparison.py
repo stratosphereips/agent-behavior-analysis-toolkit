@@ -62,7 +62,7 @@ def _summarize_trajectory(traj, n: int = 3):
         bucket[a] = bucket.get(a, 0) + 1
         if ns not in state_action_counts:
             state_action_counts[ns] = {}
-        actions_raw.append(t.action)
+        actions_raw.append(a)
     if traj.transitions:
         final_state = convert_to_hashable(traj.transitions[-1].next_state)
         state_counts[final_state] = state_counts.get(final_state, 0) + 1
