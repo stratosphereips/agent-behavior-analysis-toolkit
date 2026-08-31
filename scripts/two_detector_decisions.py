@@ -14,8 +14,8 @@ detectors:
                       permutation null (z_j = (m_j - mu_j)/sigma_j) and compare
                       max_j z_j against the 95th percentile of the null maximum
                       (zmax_p95). This is NOT a per-metric OR (that inflates the
-                      family-wise error to ~14%); the OR is only available behind
-                      --union-fallback for legacy files that lack the null fields.
+                      family-wise error to ~14%); files lacking the null fields
+                      are skipped rather than falling back to the biased OR.
 
 Per-pair decision is one of:
     both active | BF Only | Reward only | None
@@ -29,14 +29,13 @@ OUTPUT CSV (to stdout):
     e.g.  Taxi,dqn,4242,None,BF Only,BF Only,both active,...
 
 USAGE:
-    python scripts/two_detector_decisions.py runs.csv --n 500 > decisions.csv
-    python scripts/two_detector_decisions.py runs.csv --default-n 500 > decisions.csv
-    python scripts/two_detector_decisions.py runs.csv --n 500 --union-fallback > decisions.csv
+    python scripts/two_detector_decisions.py runs.csv > decisions.csv
+    python scripts/two_detector_decisions.py runs.csv --out_csv decisions.csv
 
 The return z-test needs the number of evaluation episodes N (std_return is the
 per-episode std, so SE = std/sqrt(N)). N is resolved per row in priority order:
-  --n (runtime, applies to all rows) -> 5th CSV column -> 'evaluate_for=<N>' in
-  the path -> --default-n (fallback).
+  5th CSV column -> 'evaluate_for=<N>' in the path -> ENV_N[env] (fallback,
+  keyed by the row's env name).
 If none resolve, the row is skipped with an error on stderr.
 """
 import argparse
@@ -52,15 +51,16 @@ EVO_METRICS = ["topological_shift", "strategic_shift", "3-gram_wasserstein"]
 
 BOTH, BF, REW, NONE = "both active", "BF Only", "Reward only", "None"
 
+# Default eval-episode count N per environment, used when N isn't given by a
+# 5th CSV column or an 'evaluate_for=' token in the path.
+ENV_N = {"Taxi": 1000, "FrozenLake": 500, "MountainCar": 500}
+
 
 def warn(msg):
     print(f"[two_detector] {msg}", file=sys.stderr)
 
 
-def resolve_n(row_n, path, override_n, default_n):
-    # Runtime --n overrides everything; then per-row column, then path, then --default-n.
-    if override_n:
-        return override_n
+def resolve_n(row_n, path, env):
     if row_n:
         try:
             return int(row_n)
@@ -69,7 +69,7 @@ def resolve_n(row_n, path, override_n, default_n):
     m = re.search(r"evaluate_for=(\d+)", path)
     if m:
         return int(m.group(1))
-    return default_n
+    return ENV_N.get(env)
 
 
 def return_changed(m1, s1, m2, s2, n):
@@ -103,18 +103,7 @@ def fp_active_maxstat(d, i):
     return max(zs) > zmax_p95[i]
 
 
-def fp_active_union(d, i):
-    """Per-metric OR against individual noise floors (BIASED; --union-fallback only)."""
-    for k in EVO_METRICS:
-        raw = d.get(k + "_raw")
-        thr = d.get(k + "_noise_threshold")
-        if isinstance(raw, list) and isinstance(thr, list) and i < len(raw) and i < len(thr):
-            if raw[i] > thr[i]:
-                return True
-    return False
-
-
-def process_run(path, n, union_fallback):
+def process_run(path, n):
     """Returns (decisions_list, note) or (None, error_str)."""
     if not os.path.isfile(path):
         return None, f"file not found: {path}"
@@ -130,18 +119,12 @@ def process_run(path, n, union_fallback):
         return None, f"missing/short return or metric arrays: {path}"
 
     decisions = []
-    used_fallback = False
     for i in range(n_pairs):
         rc = return_changed(mean_r[i], std_r[i], mean_r[i + 1], std_r[i + 1], n)
         fa = fp_active_maxstat(d, i)
         if fa is None:
-            if union_fallback:
-                fa = fp_active_union(d, i)
-                used_fallback = True
-            else:
-                return None, ("missing family-wise null fields (zmax_p95/null_mean_*/"
-                              f"null_std_*); regenerate via the M-split pipeline, or pass "
-                              f"--union-fallback for the (biased) per-metric OR: {path}")
+            return None, ("missing family-wise null fields (zmax_p95/null_mean_*/"
+                          f"null_std_*); regenerate via the M-split pipeline: {path}")
         if rc and fa:
             decisions.append(BOTH)
         elif fa:
@@ -150,7 +133,7 @@ def process_run(path, n, union_fallback):
             decisions.append(REW)
         else:
             decisions.append(NONE)
-    return decisions, ("union-fallback" if used_fallback else "")
+    return decisions, ""
 
 
 def looks_like_header(fields):
@@ -163,19 +146,9 @@ def looks_like_header(fields):
 def main():
     ap = argparse.ArgumentParser(description="Two-detector per-CP decisions (Sec 4.6.1).")
     ap.add_argument("input_csv", help="CSV: env,model,seed,path[,n]")
-    ap.add_argument("-n", "--n", type=int, default=None,
-                    help="Eval-episode count N applied to ALL rows (highest precedence, "
-                         "overrides a per-row column or path-parsed value).")
-    ap.add_argument("--default-n", type=int, default=None,
-                    help="Fallback N used only when N is not given by --n, a 5th CSV column, "
-                         "or an 'evaluate_for=' token in the path.")
-    ap.add_argument("--union-fallback", action="store_true",
-                    help="For files lacking the family-wise null fields, fall back to the "
-                         "(biased) per-metric OR rule. Non-canonical; use only for legacy files.")
-    ap.add_argument("out_csv", nargs="cp_raster.csv", default="", help="Output CSV (default stdout)")
+    ap.add_argument("--out_csv", default=None, help="Output CSV path (default: stdout)")
     args = ap.parse_args()
 
-    out = csv.writer(sys.stdout)
     with open(args.input_csv, newline="") as fh:
         rows = list(csv.reader(fh))
     if not rows:
@@ -183,24 +156,30 @@ def main():
         return
     start = 1 if looks_like_header([c.strip() for c in rows[0]]) else 0
 
-    for r in rows[start:]:
-        r = [c.strip() for c in r]
-        if not r or len(r) < 4:
-            continue
-        env, model, seed, path = r[0], r[1], r[2], r[3]
-        row_n = r[4] if len(r) > 4 else None
-        n = resolve_n(row_n, path, args.n, args.default_n)
-        if not n:
-            warn(f"SKIP {env},{model},{seed}: no N (add a 5th CSV column, put "
-                 f"evaluate_for= in the path, or pass --default-n): {path}")
-            continue
-        decisions, note = process_run(path, n, args.union_fallback)
-        if decisions is None:
-            warn(f"SKIP {env},{model},{seed}: {note}")
-            continue
-        if note:
-            warn(f"NOTE {env},{model},{seed}: {note} (N={n})")
-        out.writerow([env, model, seed] + decisions)
+    out_fh = open(args.out_csv, "w", newline="") if args.out_csv else sys.stdout
+    try:
+        out = csv.writer(out_fh)
+        for r in rows[start:]:
+            r = [c.strip() for c in r]
+            if not r or len(r) < 4:
+                continue
+            env, model, seed, path = r[0], r[1], r[2], r[3]
+            row_n = r[4] if len(r) > 4 else None
+            n = resolve_n(row_n, path, env)
+            if not n:
+                warn(f"SKIP {env},{model},{seed}: no N (add a 5th CSV column, put "
+                     f"evaluate_for= in the path, or add '{env}' to ENV_N): {path}")
+                continue
+            decisions, note = process_run(path, n)
+            if decisions is None:
+                warn(f"SKIP {env},{model},{seed}: {note}")
+                continue
+            if note:
+                warn(f"NOTE {env},{model},{seed}: {note} (N={n})")
+            out.writerow([env, model, seed] + decisions)
+    finally:
+        if args.out_csv:
+            out_fh.close()
 
 
 if __name__ == "__main__":

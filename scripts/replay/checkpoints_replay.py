@@ -5,7 +5,7 @@ from typing import Iterable
 from trajectory import EmpiricalPolicy
 import matplotlib.pyplot as plt
 from utils.trajectory_utils import empirical_policy_statistics, find_trajectory_segments, cluster_segments
-from utils.plotting_utils import plot_trajectory_segments, plot_segment_cluster_features, plot_action_per_step_distribution
+from utils.plotting_utils import plot_segment_cluster_features, plot_action_per_step_distribution
 class ReplayBuffer:
 
     def __init__(self, env_name:str, agent_name:str, **kwargs):
@@ -59,9 +59,6 @@ class ReplayBuffer:
                         cluster_summary_fig = plot_segment_cluster_features(clustering)
                         log_data["Cluster Feature Summary"] = wandb.Image(cluster_summary_fig, caption="Feature Summary per cluster")
                         plt.close(cluster_summary_fig)  # clean up
-                        segments_plot = plot_trajectory_segments(trajectories, empirical_policy, self._previous_policy,f"Surprise_plot_cp_{self._chechpoint_id}")
-                        log_data["Segment Surprise Plot"]  = wandb.Image(segments_plot, caption="Surprise per step in all trajectories")
-                        plt.close(segments_plot) #cleanup
                         log_data['segmentation_metrics']["clusters"] = len(clustering)
                         log_data['segmentation_metrics']["mean_segment_in_cluster"] = np.mean(segments_per_cluster)
                         log_data['segmentation_metrics']["mean_unique_segment_in_cluster"] = np.mean(unique_segments_per_cluster)

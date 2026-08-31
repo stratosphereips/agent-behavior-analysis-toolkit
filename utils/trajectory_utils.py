@@ -688,7 +688,7 @@ def get_steps_for_state(trajectories:Iterable, state:any)->list:
 
 
 
-#### NEW from experiments/generalization_experiment.py ####
+#### NEW from scripts/replay/generalization_experiment.py ####
 
 ### Emprical Policy Builders ###
 

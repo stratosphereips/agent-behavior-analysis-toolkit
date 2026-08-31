@@ -1,8 +1,6 @@
 import json
 import numpy as np
 import matplotlib.pyplot as plt
-import argparse
-import os
 
 def load_and_plot_multiseed_report(json_filepaths, fig_suffix=""):
     """
@@ -157,12 +155,4 @@ def plot_multiseed_evaluation_report(json_data_list, fig_suffix=""):
     save_path = f"figures/multiseed_evaluation_report_{fig_suffix}.png" if fig_suffix else "figures/multiseed_evaluation_report.png"
     plt.savefig(save_path, dpi=600)
     print(f"Saved multi-seed report to {save_path}")
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Plot multiseed comparison")
-    parser.add_argument('--metrics_jsons', nargs='+', required=True, help='List of JSON files to process')
-    parser.add_argument('--fig_suffix', type=str, default="", help='Suffix for the saved figure name')
-    
-    args = parser.parse_args()
-    
-    load_and_plot_multiseed_report(args.metrics_jsons, args.fig_suffix)
+    plt.show()

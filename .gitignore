@@ -171,6 +171,9 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
+# .envrc
+.envrc
+
 # Weights and Biases
 wandb/
 figures/

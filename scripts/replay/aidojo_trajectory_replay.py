@@ -1,5 +1,5 @@
 import sys
-from .trajectory_replay import TrajectoryReplay
+from scripts.replay.trajectory_replay import TrajectoryReplay
 from trajectory import Trajectory
 from trajectory import Transition
 

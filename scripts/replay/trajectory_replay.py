@@ -1,11 +1,8 @@
 from utils.trajectory_utils import get_trajectory_action_ngrams, load_trajectories_from_json
 from utils.trajectory_utils import empirical_policy_statistics
 from utils.trajectory_utils import find_trajectory_segments, cluster_segments
-from utils.plotting_utils   import plot_segment_cluster_features
-from utils.plotting_utils   import plot_trajectory_surprise_matrix, plot_action_per_step_distribution
-from utils.plotting_utils   import visualize_clusters, plot_quantile_fan, plot_cluster_distribution_per_step
+from utils.plotting_utils   import plot_segment_cluster_features, plot_action_per_step_distribution
 from utils.trajectory_utils import compute_trajectory_surprises,compute_lambda_returns, policy_comparison
-from utils.plotting_utils   import plot_combined_trajectory_analysis
 from trajectory import EmpiricalPolicy
 import os
 import wandb
