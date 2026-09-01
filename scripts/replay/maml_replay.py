@@ -1,7 +1,6 @@
 import sys
-from utils.trajectory_utils import load_trajectories_from_json
+from utils.trajectory_utils import load_trajectories
 from trajectory import EmpiricalPolicy
-from utils.aidojo_utils import aidojo_state_str_from_dict, aidojo_action_type_from_dict
 from utils.trajectory_utils import policy_comparison, get_steps_for_state
 from netsecgame import ActionType, GameState, IP, Network, Service, Data
 import numpy as np
@@ -20,22 +19,6 @@ WANDB_PROJECT = "maml-generalization"
 WANDB_ENTITY = "ondrej-lukas-czech-technical-university-in-prague"
 
 
-def load_trajectories(json_file, max_trajectories=None, load_metadata=True):
-    """
-    Load trajectories from a JSON file.
-    Args:
-        json_file (str): Path to the JSON file.
-        max_trajectories (int, optional): Maximum number of trajectories to load. If None, load all.
-        load_metadata (bool): Whether to load metadata from the JSON file.
-    Returns:
-        list: List of loaded trajectories.
-        dict: Metadata dictionary if load_metadata is True, else {}.
-    """
-    trajectories, metadata = load_trajectories_from_json(json_file, load_metadata=load_metadata, max_trajectories=max_trajectories, 
-                                                         action_encoder=aidojo_action_type_from_dict,
-                                                         state_encoder=aidojo_state_str_from_dict)
-    return trajectories, metadata
-
 def build_empirical_policy(path, max_trajectories)-> (EmpiricalPolicy, list):
     """
     Builds an EmpiricalPolicy from trajectories stored in a JSON file.
@@ -48,7 +31,7 @@ def build_empirical_policy(path, max_trajectories)-> (EmpiricalPolicy, list):
     """
     # load the trajectories from file
     print(f"[Trajectory processing & EP build] {path}")
-    trajectories, _ = load_trajectories(path, max_trajectories=max_trajectories, load_metadata=False)
+    trajectories, _ = load_trajectories(path, max_trajectories=max_trajectories, load_metadata=False, env="netsecgame")
     empirical_policy = EmpiricalPolicy(trajectories)
     return empirical_policy, trajectories
 

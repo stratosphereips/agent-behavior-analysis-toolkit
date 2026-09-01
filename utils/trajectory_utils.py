@@ -11,7 +11,7 @@ from trajectory import Transition, Trajectory, Policy, EmpiricalPolicy
 import networkx as nx
 import json
 import os
-from utils.aidojo_utils import aidojo_rebuild_trajectory, aidojo_action_type_from_dict, aidojo_state_str_from_dict
+from utils.env_registry import get_env_codec
 from ruptures import costs
 from typing import Dict
 from sklearn.neighbors import NearestNeighbors
@@ -692,20 +692,23 @@ def get_steps_for_state(trajectories:Iterable, state:any)->list:
 
 ### Emprical Policy Builders ###
 
-def load_trajectories(json_file, max_trajectories=None, load_metadata=True):
+def load_trajectories(json_file, max_trajectories=None, load_metadata=True, env="netsecgame"):
     """
-    Load trajectories from a JSON file.
+    Load trajectories from a JSON file, decoding states/actions for the given environment.
     Args:
         json_file (str): Path to the JSON file.
         max_trajectories (int, optional): Maximum number of trajectories to load. If None, load all.
         load_metadata (bool): Whether to load metadata from the JSON file.
+        env (str): Name of a registered environment (see utils.env_registry) whose
+            state/action decoders should be used.
     Returns:
         list: List of loaded trajectories.
         dict: Metadata dictionary if load_metadata is True, else {}.
     """
-    trajectories, metadata = load_trajectories_from_json(json_file, load_metadata=load_metadata, max_trajectories=max_trajectories, 
-                                                         action_encoder=aidojo_action_type_from_dict,
-                                                         state_encoder=numpy_default)
+    codec = get_env_codec(env)
+    trajectories, metadata = load_trajectories_from_json(json_file, load_metadata=load_metadata, max_trajectories=max_trajectories,
+                                                         action_encoder=codec.action_encoder,
+                                                         state_encoder=codec.state_encoder)
     print(f"Loaded {len(trajectories)} trajectories from {json_file}")
     return trajectories, metadata
 
