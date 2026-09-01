@@ -6,7 +6,7 @@ from trajectory import Transition
 
 class AIDojoTrajectoryReplay(TrajectoryReplay):
     def __init__(self, trajectory_dir, **kwargs):
-        super().__init__(trajectory_dir=trajectory_dir, **kwargs)
+        super().__init__(trajectory_dir=trajectory_dir, env="netsecgame", **kwargs)
         self.state_to_id = {}
         self.action_to_id = {}
         self.action_id_to_action_type = {}
@@ -17,9 +17,11 @@ class AIDojoTrajectoryReplay(TrajectoryReplay):
         return self.state_to_id[state]
 
     def get_action_id(self, action):
-        if action.type not in self.action_to_id:
-            self.action_to_id[action.type] = len(self.action_to_id)
-        return self.action_to_id[action.type]
+        # `action` is already decoded down to its ActionType by the "netsecgame" env codec
+        # (see utils/env_registry.py), so no further `.type` access is needed here.
+        if action not in self.action_to_id:
+            self.action_to_id[action] = len(self.action_to_id)
+        return self.action_to_id[action]
 
     def remap_trajectories(self, trajectories:dict)-> dict:
         """

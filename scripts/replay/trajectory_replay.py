@@ -1,4 +1,4 @@
-from utils.trajectory_utils import get_trajectory_action_ngrams, load_trajectories_from_json
+from utils.trajectory_utils import get_trajectory_action_ngrams, load_trajectories
 from utils.trajectory_utils import empirical_policy_statistics
 from utils.trajectory_utils import find_trajectory_segments, cluster_segments
 from utils.plotting_utils   import plot_segment_cluster_features, plot_action_per_step_distribution
@@ -14,22 +14,6 @@ import os
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures import ThreadPoolExecutor
-
-def load_trajectories(json_file, max_trajectories=None, load_metadata=True):
-    """
-    Load trajectories from a JSON file.
-    Args:
-        json_file (str): Path to the JSON file.
-        max_trajectories (int, optional): Maximum number of trajectories to load. If None, load all.
-        load_metadata (bool): Whether to load metadata from the JSON file.
-    Returns:
-        list: List of loaded trajectories.
-        dict: Metadata dictionary if load_metadata is True, else {}.
-    """
-    print(f"[load_trajectories] Start loading from {json_file}")
-    trajectories, metadata = load_trajectories_from_json(json_file, load_metadata=load_metadata, max_trajectories=max_trajectories)
-    print(f"[load_trajectories] Finished loading {len(trajectories)} trajectories from {json_file}")
-    return trajectories, metadata
 
 def create_empirical_policy(trajectories, checkpoint_id):
     print(f"[create_empirical_policy] Start creating empirical policy for checkpoint {checkpoint_id}")
@@ -249,8 +233,9 @@ class TrajectoryReplay:
     Class for loading and processing of recorded trajectories
     """
 
-    def __init__(self, trajectory_dir, **kwargs):
+    def __init__(self, trajectory_dir, env="numpy", **kwargs):
         self.trajectory_dir = trajectory_dir
+        self.env = env
         self.trajectories = []
         self.json_files = sorted([os.path.join(trajectory_dir, f) for f in os.listdir(trajectory_dir) if f.endswith(".json") or f.endswith(".jsonl")])
         print(f"Found {len(self.json_files)} JSON files in {trajectory_dir}")
@@ -280,7 +265,7 @@ class TrajectoryReplay:
         all_actions = set()
         with ThreadPoolExecutor() as executor:
             futures = {
-                executor.submit(load_trajectories, json_file, max_trajectories): checkpoint_id
+                executor.submit(load_trajectories, json_file, max_trajectories, True, self.env): checkpoint_id
                 for checkpoint_id, json_file in enumerate(self.json_files)
             }
             results_trajectories = {}

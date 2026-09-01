@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 from utils.data_utils import load_policies_from_directory
+from utils.env_registry import get_env_codec
 from utils.metrics import (
     strategic_shift,
     compute_ngram_wasserstein_fast,
@@ -568,19 +569,14 @@ def main():
             tags=tags
         )
 
-    action_encoder = None
-    state_encoder = None
-    if args.env in ["netsecgame", "aidojo"]:
-        from utils.aidojo_utils import aidojo_state_str_from_dict, aidojo_action_type_from_dict
-        action_encoder = aidojo_action_type_from_dict
-        state_encoder = aidojo_state_str_from_dict
+    codec = get_env_codec(args.env)
 
     # load empirical policies from files
     policies = load_policies_from_directory(
-        args.data_dir, 
-        args.max_trajectories, 
-        action_encoder=action_encoder,
-        state_encoder=state_encoder,
+        args.data_dir,
+        args.max_trajectories,
+        action_encoder=codec.action_encoder,
+        state_encoder=codec.state_encoder,
         test_split=None
     )
     checkpoints = list(policies.keys())
