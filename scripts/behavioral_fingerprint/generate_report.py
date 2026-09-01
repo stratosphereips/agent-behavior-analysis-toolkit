@@ -8,7 +8,10 @@ Two stages:
 epsilon_min (the practical-significance floor) is a STAGE-2 parameter, so switching
 floors is cheap (no floor recompute):
   --floor hard        fixed universal floor 0.05 (normalized) -> [0.05,0.05,0.15] raw   (default)
-  --floor estimated   per-env 99th pct of a random policy's change  (needs --random_dir)
+  --floor estimated   max(hard, per-env 99th pct of a random policy's change)  (needs --random_dir).
+                      The max() keeps the hard floor as a universal minimum and only tightens
+                      it where the env's random baseline is genuinely noisier -- so a near-
+                      stationary random policy can't collapse the floor below meaningful change.
 
 Usage:
   python -m scripts.behavioral_fingerprint.generate_report RUN_DIR [--out DIR] [--M 200]
@@ -240,9 +243,15 @@ def main():
     if a.floor == "estimated":
         if not a.random_dir: raise SystemExit("--floor estimated needs --random_dir")
         if not nact: raise SystemExit("--floor estimated needs --num_actions (cannot be inferred in --metrics mode)")
-        emin = emin_from_random(a.random_dir, nact, a.M); print(f"[stage2] estimated epsilon_min = {emin}")
+        # Universal rule: floor at the hard minimum, then tighten where the random
+        # baseline is noisier. max() prevents the estimate from collapsing below the
+        # meaningful-change floor (a near-stationary random policy -- e.g. MountainCar
+        # stuck in the valley -- otherwise drives it to ~0 and nothing ever silences).
+        raw = emin_from_random(a.random_dir, nact, a.M)
+        emin = [float(x) for x in np.maximum(HARD_EMIN, raw)]
+        print(f"[stage2] estimated epsilon_min = {emin}  (raw random 99pct = {[round(x, 4) for x in raw]}, floored at hard)")
     else:
-        emin = HARD_EMIN; print(f"[stage2] hard epsilon_min = {emin}")
+        emin = list(HARD_EMIN); print(f"[stage2] hard epsilon_min = {emin}")
     v = classify(d, emin)
     v["run"] = name; v["floor"] = a.floor
     json.dump(v, open(os.path.join(out, f"{name}_verdict.json"), "w"), indent=1)
