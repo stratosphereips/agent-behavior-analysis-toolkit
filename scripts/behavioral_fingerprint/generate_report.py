@@ -15,7 +15,7 @@ Usage:
          [--num_actions N] [--floor hard|estimated] [--random_dir DIR] [--force]
 RUN_DIR is a folder of cp_*.jsonl (searched recursively).
 """
-import argparse, glob, json, os, base64
+import argparse, glob, json, os, re, base64
 import numpy as np
 from scipy import stats
 import scripts.behavioral_fingerprint.noise_null_ab as ab
@@ -196,31 +196,50 @@ def render_html(v, fig_path, title):
 # ---------------- CLI ----------------
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("run_dir"); ap.add_argument("--out", default=None); ap.add_argument("--M", type=int, default=200)
+    ap.add_argument("run_dir", nargs="?", default=None, help="Folder of cp_*.jsonl (Stage 1 + Stage 2). Omit when using --metrics.")
+    ap.add_argument("--metrics", default=None, help="Consume an existing metrics.json (e.g. from sequential_cp_comparison) and run Stage 2 only -- no recompute. Mutually exclusive with run_dir Stage 1.")
+    ap.add_argument("--out", default=None); ap.add_argument("--M", type=int, default=200)
     ap.add_argument("--num_actions", type=int, default=None)
     ap.add_argument("--floor", choices=["hard", "estimated"], default="hard")
     ap.add_argument("--random_dir", default=None); ap.add_argument("--force", action="store_true")
     ap.add_argument("--metrics-only", action="store_true", help="Stage 1 only: write metrics.json and stop (floor-independent; verdict/figure/report can be derived later from the cached metrics).")
     a = ap.parse_args()
-    out = a.out or a.run_dir
-    os.makedirs(out, exist_ok=True)
-    name = os.path.basename(os.path.normpath(a.run_dir))
-    nact = a.num_actions or infer_num_actions(a.run_dir)
-    mpath = os.path.join(out, f"{name}_metrics.json")
 
-    # STAGE 1 (cached)
-    if os.path.exists(mpath) and not a.force:
-        print(f"[stage1] using cached {mpath}"); d = json.load(open(mpath))
+    if a.metrics:
+        # CONSUME MODE: Stage 2 from a precomputed metrics.json (e.g. the canonical
+        # sequential_cp_comparison output). No trajectories or recompute needed.
+        d = json.load(open(a.metrics))
+        # the producer names the x-axis 'checkpoint_ids'; the report figure reads 'checkpoints'
+        if "checkpoints" not in d and "checkpoint_ids" in d:
+            d["checkpoints"] = d["checkpoint_ids"]
+        out = a.out or os.path.dirname(os.path.abspath(a.metrics))
+        os.makedirs(out, exist_ok=True)
+        # run name = metrics filename minus a trailing _<M>_metrics / _metrics suffix
+        name = re.sub(r"(_\d+)?_metrics\.json$", "", os.path.basename(a.metrics)) or "run"
+        nact = a.num_actions  # only consulted by the estimated floor
     else:
-        print(f"[stage1] computing metrics (M={a.M}, num_actions={nact}) ..."); d = build_metrics(a.run_dir, nact, a.M)
-        json.dump(d, open(mpath, "w"), indent=1); print(f"[stage1] wrote {mpath}")
+        if not a.run_dir:
+            raise SystemExit("provide RUN_DIR (a folder of cp_*.jsonl) or --metrics PATH")
+        out = a.out or a.run_dir
+        os.makedirs(out, exist_ok=True)
+        name = os.path.basename(os.path.normpath(a.run_dir))
+        nact = a.num_actions or infer_num_actions(a.run_dir)
+        mpath = os.path.join(out, f"{name}_metrics.json")
 
-    if a.metrics_only:
-        print("[stage1] metrics-only: done (verdict/figure/report deferred)"); return
+        # STAGE 1 (cached)
+        if os.path.exists(mpath) and not a.force:
+            print(f"[stage1] using cached {mpath}"); d = json.load(open(mpath))
+        else:
+            print(f"[stage1] computing metrics (M={a.M}, num_actions={nact}) ..."); d = build_metrics(a.run_dir, nact, a.M)
+            json.dump(d, open(mpath, "w"), indent=1); print(f"[stage1] wrote {mpath}")
+
+        if a.metrics_only:
+            print("[stage1] metrics-only: done (verdict/figure/report deferred)"); return
 
     # STAGE 2 (cheap)
     if a.floor == "estimated":
         if not a.random_dir: raise SystemExit("--floor estimated needs --random_dir")
+        if not nact: raise SystemExit("--floor estimated needs --num_actions (cannot be inferred in --metrics mode)")
         emin = emin_from_random(a.random_dir, nact, a.M); print(f"[stage2] estimated epsilon_min = {emin}")
     else:
         emin = HARD_EMIN; print(f"[stage2] hard epsilon_min = {emin}")
