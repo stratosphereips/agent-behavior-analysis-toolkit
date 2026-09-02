@@ -745,6 +745,20 @@ def build_empirical_policy_from_file(path, max_trajectories:int, action_space=No
     empirical_policy = EmpiricalPolicy(trajectories, action_space=action_space)
     return empirical_policy, trajectories
 
+def drop_empty_trajectories(trajectories: Iterable[Trajectory]) -> list[Trajectory]:
+    """Filters out trajectories with zero transitions.
+
+    Some recordings contain degenerate placeholder records -- just the initial
+    reset state, no actions taken at all -- interleaved with real trajectories
+    (e.g. two recording runs concatenated into one file). Metrics that compute a
+    per-step distribution over a fixed population, like
+    ``utils.metrics.compute_stepwise_action_jsd``, pad every trajectory out to the
+    full episode length using a win/loss token picked from ``total_reward() > 0``;
+    an empty trajectory has a zero total reward, so it gets padded as a loss at
+    every single step, silently polluting the whole comparison.
+    """
+    return [t for t in trajectories if len(t) > 0]
+
 def split_trajectories_into_policies(trajectories: Iterable[Trajectory], action_space=None, test_ratio: float = 0.5) -> tuple[EmpiricalPolicy, EmpiricalPolicy]:
     """
     Randomly splits a list of trajectories and generates two EmpiricalPolicies.

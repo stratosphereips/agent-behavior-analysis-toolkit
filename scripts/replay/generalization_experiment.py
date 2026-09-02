@@ -1,11 +1,12 @@
 import argparse
 import os
 import json
+import warnings
 from netsecgame import ActionType
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from trajectory import EmpiricalPolicy
 from utils.plotting_utils import plot_action_per_step_distribution, plot_generalization_bidirectional, plot_action_divergence_per_step, plot_action_divergence_overlay, plot_jsd_vs_unseen_return
-from utils.trajectory_utils import build_empirical_policy_from_file, find_psm_mapping
+from utils.trajectory_utils import build_empirical_policy_from_file, find_psm_mapping, drop_empty_trajectories
 from utils.metrics import compute_stepwise_action_jsd
 from itertools import combinations
 import numpy as np
@@ -91,6 +92,7 @@ if __name__ == "__main__":
     parser.add_argument("--divergence_output", type=str, default="action_divergence.png", help="Output path for the seen-vs-unseen per-step action-distribution JSD figure")
     parser.add_argument("--divergence_overlay_output", type=str, default="action_divergence_overlay.png", help="Output path for the single-axes overlay of all models' per-step JSD")
     parser.add_argument("--jsd_vs_return_output", type=str, default="jsd_vs_unseen_return.png", help="Output path for the mean-JSD vs. mean-unseen-return scatter figure")
+    parser.add_argument("--keep_empty_trajectories", action="store_true", help="Keep trajectories with zero recorded actions (dropped by default -- they silently skew win/loss padding in the JSD computation, see utils.trajectory_utils.drop_empty_trajectories)")
 
 
     args = parser.parse_args()
@@ -143,6 +145,19 @@ if __name__ == "__main__":
         name: kinds for name, kinds in model_groups.items()
         if "seen" in kinds and "unseen" in kinds
     }
+
+    if not args.keep_empty_trajectories:
+        for name, kinds in generalization_models.items():
+            for kind, trajectories in kinds.items():
+                filtered = drop_empty_trajectories(trajectories)
+                n_dropped = len(trajectories) - len(filtered)
+                if n_dropped:
+                    warnings.warn(
+                        f"{name} ({kind}): dropped {n_dropped}/{len(trajectories)} trajectories with zero "
+                        f"actions (pass --keep_empty_trajectories to disable this)"
+                    )
+                kinds[kind] = filtered
+
     if generalization_models:
         gen_fig = plot_generalization_bidirectional(generalization_models, global_actions, optimal_length=args.optimal_length)
         gen_fig.savefig(args.generalization_output, dpi=350)

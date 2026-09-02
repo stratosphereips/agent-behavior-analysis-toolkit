@@ -11,6 +11,11 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter, MultipleLocator
 
+try:
+    from adjustText import adjust_text
+except ImportError:
+    adjust_text = None
+
 # Colour-blind-safe palette (Okabe & Ito, 2008) for the canonical NetSecGame
 # action-type kill-chain. Yellow deliberately avoided (low contrast on white).
 _GENERALIZATION_ACTION_COLORS = {
@@ -263,6 +268,7 @@ def plot_jsd_vs_unseen_return(models_jsd: dict, unseen_returns: dict, dpi: int =
     """
     fig, ax = plt.subplots(figsize=(6.5, 5), dpi=dpi)
 
+    texts = []
     for i, (name, result) in enumerate(models_jsd.items()):
         if name not in unseen_returns:
             continue
@@ -270,8 +276,12 @@ def plot_jsd_vs_unseen_return(models_jsd: dict, unseen_returns: dict, dpi: int =
         y = unseen_returns[name]
         label = name.replace("\n", " ")
         ax.scatter(x, y, color=_model_color(i), s=60, zorder=3)
-        ax.annotate(label, (x, y), textcoords="offset points", xytext=(6, 4),
-                    fontsize=8, color="0.25")
+        texts.append(ax.text(x, y, label, fontsize=8, color="0.25"))
+
+    # Points close together get labels shoved on top of each other by a fixed
+    # offset; nudge them apart instead (no leader lines back to the point).
+    if adjust_text is not None and texts:
+        adjust_text(texts, ax=ax)
 
     ax.set_xlabel("Mean action-distribution JSD (seen vs. unseen)")
     ax.set_ylabel("Mean return (unseen)")
