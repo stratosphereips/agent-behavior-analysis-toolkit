@@ -4,8 +4,9 @@ import json
 from netsecgame import ActionType
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from trajectory import EmpiricalPolicy
-from utils.plotting_utils import plot_action_per_step_distribution, plot_generalization_bidirectional
+from utils.plotting_utils import plot_action_per_step_distribution, plot_generalization_bidirectional, plot_action_divergence_per_step, plot_action_divergence_overlay, plot_jsd_vs_unseen_return
 from utils.trajectory_utils import build_empirical_policy_from_file, find_psm_mapping
+from utils.metrics import compute_stepwise_action_jsd
 from itertools import combinations
 import numpy as np
 def collect_src_file_paths(datadir, suffix=".jsonl"):
@@ -87,6 +88,9 @@ if __name__ == "__main__":
     parser.add_argument("--stability_threshold", type=float, default=0.1, help="Threshold for filtering matches in the hungarian algorithm ")
     parser.add_argument("--optimal_length", type=int, default=5, help="Minimum number of steps to solve the task; controls x-axis emphasis in the generalization figure")
     parser.add_argument("--generalization_output", type=str, default="behavioral_generalization.png", help="Output path for the seen-vs-unseen behavioral generalization figure")
+    parser.add_argument("--divergence_output", type=str, default="action_divergence.png", help="Output path for the seen-vs-unseen per-step action-distribution JSD figure")
+    parser.add_argument("--divergence_overlay_output", type=str, default="action_divergence_overlay.png", help="Output path for the single-axes overlay of all models' per-step JSD")
+    parser.add_argument("--jsd_vs_return_output", type=str, default="jsd_vs_unseen_return.png", help="Output path for the mean-JSD vs. mean-unseen-return scatter figure")
 
 
     args = parser.parse_args()
@@ -143,5 +147,32 @@ if __name__ == "__main__":
         gen_fig = plot_generalization_bidirectional(generalization_models, global_actions, optimal_length=args.optimal_length)
         gen_fig.savefig(args.generalization_output, dpi=350)
         print(f"Saved behavioral generalization figure to {args.generalization_output}")
+
+        # Numerical counterpart to the figure above: per-step JSD between the seen
+        # and unseen action distributions, with early-terminating episodes padded
+        # with a win/loss token so the divergence stays defined at every step.
+        divergence_results = {}
+        for name, kinds in generalization_models.items():
+            result = compute_stepwise_action_jsd(kinds["seen"], kinds["unseen"], global_actions)
+            divergence_results[name] = result
+            print(f"{name}: mean action-distribution JSD (seen vs. unseen) = {result['mean_jsd']:.4f}")
+
+        div_fig = plot_action_divergence_per_step(divergence_results)
+        div_fig.savefig(args.divergence_output, dpi=350)
+        print(f"Saved action divergence figure to {args.divergence_output}")
+
+        overlay_fig = plot_action_divergence_overlay(divergence_results)
+        overlay_fig.savefig(args.divergence_overlay_output, dpi=350)
+        print(f"Saved action divergence overlay figure to {args.divergence_overlay_output}")
+
+        # Does higher seen/unseen behavioral divergence track with worse unseen
+        # performance? Plot each model's mean JSD against its mean unseen return.
+        unseen_returns = {
+            name: float(np.mean([t.total_reward() for t in kinds["unseen"]]))
+            for name, kinds in generalization_models.items()
+        }
+        jsd_vs_return_fig = plot_jsd_vs_unseen_return(divergence_results, unseen_returns)
+        jsd_vs_return_fig.savefig(args.jsd_vs_return_output, dpi=350)
+        print(f"Saved mean-JSD vs. unseen-return figure to {args.jsd_vs_return_output}")
     else:
         print("No model has both 'seen' and 'unseen' trajectory files; skipping behavioral generalization figure.")
