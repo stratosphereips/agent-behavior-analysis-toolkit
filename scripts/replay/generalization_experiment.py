@@ -92,6 +92,7 @@ if __name__ == "__main__":
     parser.add_argument("--divergence_output", type=str, default="action_divergence.png", help="Output path for the seen-vs-unseen per-step action-distribution JSD figure")
     parser.add_argument("--divergence_overlay_output", type=str, default="action_divergence_overlay.png", help="Output path for the single-axes overlay of all models' per-step JSD")
     parser.add_argument("--jsd_vs_return_output", type=str, default="jsd_vs_unseen_return.png", help="Output path for the mean-JSD vs. mean-unseen-return scatter figure")
+    parser.add_argument("--aoc_vs_return_output", type=str, default="aoc_jsd_vs_unseen_return.png", help="Output path for the AOC-JSD vs. mean-unseen-return scatter figure")
     parser.add_argument("--keep_empty_trajectories", action="store_true", help="Keep trajectories with zero recorded actions (dropped by default -- they silently skew win/loss padding in the JSD computation, see utils.trajectory_utils.drop_empty_trajectories)")
 
 
@@ -170,7 +171,7 @@ if __name__ == "__main__":
         for name, kinds in generalization_models.items():
             result = compute_stepwise_action_jsd(kinds["seen"], kinds["unseen"], global_actions)
             divergence_results[name] = result
-            print(f"{name}: mean action-distribution JSD (seen vs. unseen) = {result['mean_jsd']:.4f}")
+            print(f"{name}: mean action-distribution JSD (seen vs. unseen) = {result['mean_jsd']:.4f}, AOC = {result['aoc_jsd']:.4f}")
 
         div_fig = plot_action_divergence_per_step(divergence_results)
         div_fig.savefig(args.divergence_output, dpi=350)
@@ -189,5 +190,15 @@ if __name__ == "__main__":
         jsd_vs_return_fig = plot_jsd_vs_unseen_return(divergence_results, unseen_returns)
         jsd_vs_return_fig.savefig(args.jsd_vs_return_output, dpi=350)
         print(f"Saved mean-JSD vs. unseen-return figure to {args.jsd_vs_return_output}")
+
+        aoc_vs_return_fig = plot_jsd_vs_unseen_return(
+            divergence_results,
+            unseen_returns,
+            metric_key="aoc_jsd",
+            xlabel="Action-distribution JSD area-over-curve (seen vs. unseen)",
+            title="Cumulative Behavioral Divergence vs. Unseen-Topology Performance",
+        )
+        aoc_vs_return_fig.savefig(args.aoc_vs_return_output, dpi=350)
+        print(f"Saved AOC-JSD vs. unseen-return figure to {args.aoc_vs_return_output}")
     else:
         print("No model has both 'seen' and 'unseen' trajectory files; skipping behavioral generalization figure.")

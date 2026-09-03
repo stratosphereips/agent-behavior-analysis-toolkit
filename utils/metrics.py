@@ -209,14 +209,17 @@ def compute_stepwise_action_jsd(
 
     Returns:
         dict: ``steps`` (list[int]), ``jsd_per_step`` (list[float] in [0, 1],
-        one per step), and ``mean_jsd`` (float, the mean of ``jsd_per_step``).
+        one per step), ``mean_jsd`` (float, the mean of ``jsd_per_step``), and
+        ``aoc_jsd`` (float, the trapezoidal area over the per-step curve --
+        unlike ``mean_jsd`` this scales with trajectory length, so it weights
+        divergence that persists over a longer horizon more heavily).
         Empty/NaN if both groups are empty.
     """
     trajectories_a = list(trajectories_a)
     trajectories_b = list(trajectories_b)
     max_len = max((len(t) for t in trajectories_a + trajectories_b), default=0)
     if max_len == 0:
-        return {"steps": [], "jsd_per_step": [], "mean_jsd": float("nan")}
+        return {"steps": [], "jsd_per_step": [], "mean_jsd": float("nan"), "aoc_jsd": float("nan")}
 
     global_keys = list(global_actions) + [win_action, loss_action]
     counts_a = _stepwise_action_counts(trajectories_a, max_len, win_action, loss_action)
@@ -226,10 +229,12 @@ def compute_stepwise_action_jsd(
         float(state_js_divergence(counts_a[t], counts_b[t], global_keys))
         for t in range(max_len)
     ]
+    steps = list(range(max_len))
     return {
-        "steps": list(range(max_len)),
+        "steps": steps,
         "jsd_per_step": jsd_per_step,
         "mean_jsd": float(np.mean(jsd_per_step)),
+        "aoc_jsd": float(np.trapezoid(jsd_per_step, steps)) if max_len > 1 else float(jsd_per_step[0]),
     }
 
 
