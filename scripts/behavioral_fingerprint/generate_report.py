@@ -128,7 +128,11 @@ def classify(d, emin):
     lrp = stats.linregress(xcp, perp); pp_eff = abs(perp[-1]-perp[0]) > np.std(perp)
     broaden = lrp.slope > 0 and lrp.pvalue/2 < ALPHA and pp_eff
     collapse = lrp.slope < 0 and lrp.pvalue/2 < ALPHA and pp_eff
-    primary = DEC[int(np.argmax(R[:, fire].mean(1)))] if fire.any() else DEC[int(np.argmax(R.mean(1)))]
+    # normalize each channel to [0,1] before comparing magnitudes: topo/strat are
+    # JSD in [0,1] but Δ_Seq is EMD in [0, WASS_MAX], so raw values would give Δ_Seq
+    # a WASS_MAX-fold head start in the argmax.
+    Rn = R / np.array([1.0, 1.0, WASS_MAX])[:, None]
+    primary = DEC[int(np.argmax(Rn[:, fire].mean(1)))] if fire.any() else DEC[int(np.argmax(Rn.mean(1)))]
     tot = disc.sum()+aban.sum()+np.array(d["topological_shift_overlap_raw"]).sum()
     shares = {"redistribution": float(np.array(d["topological_shift_overlap_raw"]).sum()/tot) if tot else 0,
               "discovery": float(disc.sum()/tot) if tot else 0, "abandonment": float(aban.sum()/tot) if tot else 0}
