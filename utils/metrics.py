@@ -162,6 +162,82 @@ def strategic_shift(current_policy, previous_policy, global_actions, noise_value
     # 4. Apply Noise Threshold
     return max(0.0, raw_strat_shift - noise_value)
 
+def _stepwise_action_counts(trajectories, max_len, win_action="A_win", loss_action="A_lost") -> list:
+    """Per-step raw action counts, padding episodes that end early.
+
+    Once a trajectory terminates, it stops contributing to the raw per-step action
+    counts used elsewhere (e.g. ``plot_action_per_step_distribution``), so the
+    population being compared shrinks over time. Here we instead pad every step
+    past a trajectory's end with a terminal pseudo-action -- ``win_action`` or
+    ``loss_action``, chosen from its total reward -- so every step's distribution
+    is taken over the same fixed population and reachability decay shows up
+    directly as growing win/loss mass instead of vanishing support.
+
+    Returns:
+        list[Counter]: counts[t] is the action-count distribution at step t.
+    """
+    counts = [Counter() for _ in range(max_len)]
+    for traj in trajectories:
+        actions = traj.actions
+        pad_token = win_action if traj.total_reward() > 0 else loss_action
+        for t in range(max_len):
+            action = actions[t] if t < len(actions) else pad_token
+            counts[t][action] += 1
+    return counts
+
+
+def compute_stepwise_action_jsd(
+    trajectories_a: Iterable,
+    trajectories_b: Iterable,
+    global_actions: Iterable,
+    win_action="A_win",
+    loss_action="A_lost",
+) -> Dict[str, Any]:
+    """Computes the per-step Jensen-Shannon divergence between two groups' action distributions.
+
+    Trajectories that finish before the longest one in either group are padded
+    with a terminal pseudo-action (``win_action``/``loss_action``, picked from
+    the trajectory's total reward) so the divergence at every step is computed
+    over the full population in both groups. See ``_stepwise_action_counts``.
+
+    Args:
+        trajectories_a: First group of trajectories (e.g. "seen").
+        trajectories_b: Second group of trajectories (e.g. "unseen").
+        global_actions: Canonical action space shared by both groups.
+        win_action: Pad token used for steps after a winning trajectory ends.
+        loss_action: Pad token used for steps after a losing trajectory ends.
+
+    Returns:
+        dict: ``steps`` (list[int]), ``jsd_per_step`` (list[float] in [0, 1],
+        one per step), ``mean_jsd`` (float, the mean of ``jsd_per_step``), and
+        ``aoc_jsd`` (float, the trapezoidal area over the per-step curve --
+        unlike ``mean_jsd`` this scales with trajectory length, so it weights
+        divergence that persists over a longer horizon more heavily).
+        Empty/NaN if both groups are empty.
+    """
+    trajectories_a = list(trajectories_a)
+    trajectories_b = list(trajectories_b)
+    max_len = max((len(t) for t in trajectories_a + trajectories_b), default=0)
+    if max_len == 0:
+        return {"steps": [], "jsd_per_step": [], "mean_jsd": float("nan"), "aoc_jsd": float("nan")}
+
+    global_keys = list(global_actions) + [win_action, loss_action]
+    counts_a = _stepwise_action_counts(trajectories_a, max_len, win_action, loss_action)
+    counts_b = _stepwise_action_counts(trajectories_b, max_len, win_action, loss_action)
+
+    jsd_per_step = [
+        float(state_js_divergence(counts_a[t], counts_b[t], global_keys))
+        for t in range(max_len)
+    ]
+    steps = list(range(max_len))
+    return {
+        "steps": steps,
+        "jsd_per_step": jsd_per_step,
+        "mean_jsd": float(np.mean(jsd_per_step)),
+        "aoc_jsd": float(np.trapezoid(jsd_per_step, steps)) if max_len > 1 else float(jsd_per_step[0]),
+    }
+
+
 def compute_ngram_histogram(trajectories, n=3, window_size=1)->dict:
     """Counts action n-grams observed across a set of trajectories.
 

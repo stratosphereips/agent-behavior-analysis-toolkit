@@ -15,7 +15,12 @@ from utils.plotting.trajectory import (
     plot_action_per_step_distribution,
     plot_segment_cluster_features,
 )
-from utils.plotting.generalization import plot_generalization_bidirectional
+from utils.plotting.generalization import (
+    plot_generalization_bidirectional,
+    plot_action_divergence_per_step,
+    plot_action_divergence_overlay,
+    plot_jsd_vs_unseen_return,
+)
 
 __all__ = [
     "plot_sequential_cp_metrics",
@@ -23,4 +28,7 @@ __all__ = [
     "plot_action_per_step_distribution",
     "plot_segment_cluster_features",
     "plot_generalization_bidirectional",
+    "plot_action_divergence_per_step",
+    "plot_action_divergence_overlay",
+    "plot_jsd_vs_unseen_return",
 ]

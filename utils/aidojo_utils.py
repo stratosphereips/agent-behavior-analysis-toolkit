@@ -19,7 +19,12 @@ def aidojo_rebuild_trajectory(states:Iterable[Dict[str, Any]], actions:Iterable[
 def aidojo_state_str_from_dict(state: Dict[str, Any]) -> str:
     """
     Encode a GameState into a string representation.
+    Some trajectory sources record a raw embedding vector instead of a GameState
+    dict (e.g. black-box RL agents); pass those through unchanged rather than
+    crashing on GameState.from_dict, mirroring aidojo_rebuild_trajectory above.
     """
+    if not isinstance(state, dict):
+        return state
     return state_as_ordered_string(GameState.from_dict(state))
 
 def aidojo_action_from_dict(action: Dict[str, Any]) -> Action:

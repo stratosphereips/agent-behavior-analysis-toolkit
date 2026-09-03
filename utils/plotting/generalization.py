@@ -11,6 +11,11 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter, MultipleLocator
 
+try:
+    from adjustText import adjust_text
+except ImportError:
+    adjust_text = None
+
 # Colour-blind-safe palette (Okabe & Ito, 2008) for the canonical NetSecGame
 # action-type kill-chain. Yellow deliberately avoided (low contrast on white).
 _GENERALIZATION_ACTION_COLORS = {
@@ -21,6 +26,28 @@ _GENERALIZATION_ACTION_COLORS = {
     "ExfiltrateData": "#CC79A7",  # reddish purple
 }
 _GENERALIZATION_FALLBACK_COLORS = ["#000000", "#56B4E9", "#F0E442"]
+
+# Colour-blind-safe qualitative palette (Okabe & Ito, 2008) for distinguishing
+# models/checkpoints on a shared axes (divergence overlay, JSD-vs-return scatter).
+# Ordered for maximum contrast between adjacent entries; cycles if there are more
+# models than colours. Kept separate from `_GENERALIZATION_ACTION_COLORS` since
+# it colours a different dimension (model identity, not action type).
+_MODEL_COLOR_PALETTE = [
+    "#0072B2",  # blue
+    "#E69F00",  # orange
+    "#009E73",  # bluish green
+    "#D55E00",  # vermillion
+    "#CC79A7",  # reddish purple
+    "#56B4E9",  # sky blue
+    "#000000",  # black
+    "#999999",  # grey
+]
+
+
+def _model_color(i: int) -> str:
+    """Colour-blind-safe colour for the i-th model, cycling if there are more
+    models than palette entries."""
+    return _MODEL_COLOR_PALETTE[i % len(_MODEL_COLOR_PALETTE)]
 
 
 def _generalization_action_name(action) -> str:
@@ -158,4 +185,129 @@ def plot_generalization_bidirectional(
 
     fig.suptitle("Behavioral Generalization: Action Usage Over Time (seen vs. unseen topology)", fontsize=11)
     plt.tight_layout(rect=[0, 0.08, 1, 0.95])
+    return fig
+
+
+def plot_action_divergence_per_step(models_jsd: dict, dpi: int = 350) -> plt.Figure:
+    """
+    Plots, per model, the per-step Jensen-Shannon divergence between the seen and
+    unseen action distributions (episodes padded with a win/loss terminal token so
+    the divergence stays defined over the full population at every step -- see
+    ``utils.metrics.compute_stepwise_action_jsd``), together with its mean and AOC.
+
+    Parameters:
+        models_jsd: {model_name: {"steps": [...], "jsd_per_step": [...],
+                    "mean_jsd": float, "aoc_jsd": float}} as returned by
+                    ``compute_stepwise_action_jsd`` for each model.
+        dpi: figure DPI.
+    """
+    n = len(models_jsd)
+    fig, axes = plt.subplots(n, 1, figsize=(8.2, 2.0 * n + 0.8), sharex=True, dpi=dpi)
+    if n == 1:
+        axes = [axes]
+
+    for ax, (name, result) in zip(axes, models_jsd.items()):
+        steps = result["steps"]
+        jsd = result["jsd_per_step"]
+        mean_jsd = result["mean_jsd"]
+        aoc_jsd = result["aoc_jsd"]
+        ax.plot(steps, jsd, color="#0072B2", lw=1.1)
+        # Shaded region is the trapezoidal area computed in aoc_jsd, made visible
+        # so the legend's AOC figure can be eyeballed against the curve.
+        ax.fill_between(steps, jsd, color="#0072B2", alpha=0.15, zorder=1)
+        ax.axhline(mean_jsd, color="0.3", ls="--", lw=1.0, label=f"mean = {mean_jsd:.3f}, AOC = {aoc_jsd:.3f}")
+        ax.set_ylim(-0.02, 1.02)
+        ax.set_xlim(0, max(steps) if steps else 1)
+        ax.set_ylabel(name, rotation=0, ha="right", va="center", fontsize=10)
+        ax.grid(alpha=0.2)
+        ax.legend(loc="upper right", fontsize=8)
+
+    axes[-1].set_xlabel("Time step")
+    fig.suptitle("Behavioral Divergence: Seen vs. Unseen Action Distribution (JSD per step)", fontsize=11)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    return fig
+
+
+def plot_action_divergence_overlay(models_jsd: dict, dpi: int = 350) -> plt.Figure:
+    """
+    Overlays every model's per-step seen-vs-unseen action-distribution JSD on a single
+    axes, for direct cross-model comparison (companion to the per-model stacked
+    version in ``plot_action_divergence_per_step``). Each model's mean and AOC JSD
+    are reported in its legend label rather than drawn on the axes, to keep the
+    overlay of 8+ curves legible.
+
+    Parameters:
+        models_jsd: {model_name: {"steps": [...], "jsd_per_step": [...],
+                    "mean_jsd": float, "aoc_jsd": float}} as returned by
+                    ``compute_stepwise_action_jsd`` for each model.
+        dpi: figure DPI.
+    """
+    fig, ax = plt.subplots(figsize=(9, 5.5), dpi=dpi)
+
+    for i, (name, result) in enumerate(models_jsd.items()):
+        color = _model_color(i)
+        label = f"{name.replace('\n', ' ')} (mean={result['mean_jsd']:.3f}, AOC={result['aoc_jsd']:.3f})"
+        ax.plot(result["steps"], result["jsd_per_step"], color=color, lw=1.2, label=label)
+
+    ax.set_ylim(-0.02, 1.02)
+    ax.set_xlabel("Time step")
+    ax.set_ylabel("JSD [0, 1]")
+    ax.set_title("Behavioral Divergence: Seen vs. Unseen Action Distribution (JSD per step)")
+    ax.grid(alpha=0.2)
+    ax.legend(loc="upper right", fontsize=8, ncol=2)
+    fig.tight_layout()
+    return fig
+
+
+def plot_jsd_vs_unseen_return(
+    models_jsd: dict,
+    unseen_returns: dict,
+    dpi: int = 350,
+    metric_key: str = "mean_jsd",
+    xlabel: str = "Mean action-distribution JSD (seen vs. unseen)",
+    title: str = "Behavioral Divergence vs. Unseen-Topology Performance",
+) -> plt.Figure:
+    """
+    Scatter of each model's seen-vs-unseen action-distribution JSD aggregate against
+    its mean return on unseen topologies -- one point per model, colored to match
+    ``plot_action_divergence_overlay`` so the two figures cross-reference directly.
+
+    Parameters:
+        models_jsd: {model_name: {metric_key: float, ...}}, as returned by
+                    ``compute_stepwise_action_jsd`` for each model.
+        unseen_returns: {model_name: float}, mean total reward over that model's
+                    unseen trajectories.
+        dpi: figure DPI.
+        metric_key: which aggregate of the per-step JSD curve to plot on the
+                    x-axis -- e.g. ``"mean_jsd"`` or ``"aoc_jsd"``.
+        xlabel: x-axis label, matched to ``metric_key``.
+        title: figure title.
+    """
+    fig, ax = plt.subplots(figsize=(6.5, 5), dpi=dpi)
+
+    texts = []
+    point_xs, point_ys = [], []
+    for i, (name, result) in enumerate(models_jsd.items()):
+        if name not in unseen_returns:
+            continue
+        x = result[metric_key]
+        y = unseen_returns[name]
+        label = name.replace("\n", " ")
+        ax.scatter(x, y, color=_model_color(i), s=60, zorder=3)
+        texts.append(ax.text(x, y, label, fontsize=8, color="0.25"))
+        point_xs.append(x)
+        point_ys.append(y)
+
+    # Points close together get labels shoved on top of each other by a fixed
+    # offset; nudge them apart instead (no leader lines back to the point). Passing
+    # the point coordinates (not just `ax`) is what makes adjust_text steer labels
+    # away from the *scatter dots* themselves, not just away from other labels.
+    if adjust_text is not None and texts:
+        adjust_text(texts, x=point_xs, y=point_ys, ax=ax)
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Mean return (unseen)")
+    ax.set_title(title)
+    ax.grid(alpha=0.2)
+    fig.tight_layout()
     return fig
