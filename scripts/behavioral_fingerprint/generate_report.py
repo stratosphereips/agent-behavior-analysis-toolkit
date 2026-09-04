@@ -134,14 +134,15 @@ def _fire_trend(fire):
     if n < 3 or ybar <= 0.0 or ybar >= 1.0:
         return {"slope": 0.0, "p_trend": 1.0, "p_start": ybar, "p_end": ybar}
     ll_null = float((y*np.log(ybar+eps) + (1-y)*np.log(1-ybar+eps)).sum())
-    def nll(pr):
-        a, b = pr; p = 1.0/(1.0+np.exp(-(a+b*x))); p = np.clip(p, eps, 1-eps)
-        return -float((y*np.log(p) + (1-y)*np.log(1-p)).sum())
     from scipy.optimize import minimize
+    from scipy.special import expit           # overflow-safe logistic sigmoid
+    def nll(pr):
+        a, b = pr; p = np.clip(expit(a + b*x), eps, 1-eps)
+        return -float((y*np.log(p) + (1-y)*np.log(1-p)).sum())
     res = minimize(nll, [np.log((ybar+eps)/(1-ybar+eps)), 0.0], method="Nelder-Mead")
     a, b = res.x; lr = max(2.0*(-res.fun - ll_null), 0.0)
-    sig = lambda z: float(1.0/(1.0+np.exp(-z)))
-    return {"slope": float(b), "p_trend": float(stats.chi2.sf(lr, 1)), "p_start": sig(a), "p_end": sig(a + b*(n-1))}
+    return {"slope": float(b), "p_trend": float(stats.chi2.sf(lr, 1)),
+            "p_start": float(expit(a)), "p_end": float(expit(a + b*(n-1)))}
 
 def portrait_classify(d, emin, reachable=None):
     """Reward-blind behavioral portrait: {state, axes:{return,footprint,stationarity,
