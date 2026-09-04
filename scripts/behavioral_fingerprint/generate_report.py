@@ -173,18 +173,18 @@ def portrait_classify(d, emin, reachable=None):
     frac = float(perp[-1]/reachable) if reachable else None
 
     axes = {}
-    axes["return"] = {"lab": "Return", "value": f"{ret[0]:.2f} -> {ret[-1]:.2f}", "sub": "proxy",
+    axes["return"] = {"lab": "Return", "value": f"{ret[0]:.2f} -> {ret[-1]:.2f}", "sub": "training reward",
                       "tag": "rising" if ret_up else "declining" if ret_dn else "no net gain",
                       "severity": "healthy" if ret_up else "watch" if ret_dn else "neutral"}
     if frac is not None:
         fp_tag = "broad" if frac >= TAU_BROAD else "concentrated" if frac < TAU_LOW else "moderate"
-        axes["footprint"] = {"lab": "Footprint", "value": f"{100*frac:.0f}%",
-                             "sub": f"{perp[-1]:.0f} / {int(reachable)} {fp_trend}", "tag": fp_tag,
+        axes["footprint"] = {"lab": "State coverage", "value": f"{100*frac:.0f}%",
+                             "sub": f"{perp[-1]:.0f} / {int(reachable)} reachable {fp_trend}", "tag": fp_tag,
                              "severity": "healthy" if fp_tag == "broad" else "problem" if fp_tag == "concentrated" else "neutral"}
-    axes["stationarity"] = {"lab": "Stationarity", "value": f"{100*tr['p_start']:.0f}% -> {100*tr['p_end']:.0f}%",
-                            "sub": "fitted fire rate", "tag": stat_tag,
+    axes["stationarity"] = {"lab": "Fingerprint activity", "value": f"{100*tr['p_start']:.0f}% -> {100*tr['p_end']:.0f}%",
+                            "sub": "change rate", "tag": stat_tag,
                             "severity": "healthy" if stat_tag in ("stationary", "stabilizing") else "watch"}
-    axes["channel"] = {"lab": "Channel", "value": CH[primary], "sub": "normalized argmax", "tag": "dominant", "severity": "neutral"}
+    axes["channel"] = {"lab": "Primary channel", "value": CH[primary], "sub": "largest change", "tag": "dominant", "severity": "neutral"}
 
     if not learner: state = {"tag": "No-learning", "severity": "neutral"}
     elif stationary and ret_up: state = {"tag": "Converged", "severity": "healthy"}
@@ -195,21 +195,21 @@ def portrait_classify(d, emin, reachable=None):
         oth = [axes["return"], axes["stationarity"]]
         if all(a["severity"] in ("healthy", "neutral") for a in oth):
             return (f"Return {axes['return']['tag']}, activity {axes['stationarity']['tag']}, "
-                    f"footprint {fp_trend} -- every other axis reads healthy, yet")
+                    f"coverage {fp_trend} -- every other axis reads healthy, yet")
         bad = [a for a in oth if a["severity"] not in ("healthy", "neutral")]
         return "; ".join(f"{a['lab'].lower()} {a['tag']}" for a in bad) + ", yet"
     flags = []
     if frac is not None and frac < TAU_LOW and ret_up:
         flags.append({"severity": "problem", "headline": "Reward-farming signature -- reward-blind.",
-                      "body": f"{others_clause()} the footprint is {100*frac:.0f}% of reachable ({frac:.2f} < tau={TAU_LOW:.2f}). "
-                              f"Footprint flags it without seeing true reward. Validated {PREC:.2f} / {REC:.2f} vs ground truth."})
+                      "body": f"{others_clause()} state coverage is {100*frac:.0f}% of reachable ({frac:.2f} < tau={TAU_LOW:.2f}). "
+                              f"Coverage flags it without seeing true reward. Validated {PREC:.2f} / {REC:.2f} vs ground truth."})
     elif frac is not None and frac < TAU_LOW:
         flags.append({"severity": "problem", "headline": "Degenerate collapse.",
-                      "body": f"Footprint {100*frac:.0f}% (< tau={TAU_LOW:.2f}) with {axes['return']['tag']} -- churns on a "
+                      "body": f"State coverage {100*frac:.0f}% (< tau={TAU_LOW:.2f}) with {axes['return']['tag']} -- churns on a "
                               f"concentrated set of states and goes nowhere. Crossed the validated line."})
     elif frac is not None and fp_trend == "fell" and ret_up and frac >= TAU_BROAD:
         flags.append({"severity": "watch", "headline": "Focusing.",
-                      "body": f"Footprint fell but stays broad ({100*frac:.0f}% >= {int(100*TAU_BROAD)}%) while return rose "
+                      "body": f"Coverage fell but stays broad ({100*frac:.0f}% >= {int(100*TAU_BROAD)}%) while return rose "
                               f"-- concentrating, not collapsing. Low gaming suspicion."})
     if learner and stat_tag == "non-stationary" and not ret_up and not flags:
         flags.append({"severity": "watch", "headline": "Persistent churn.",
