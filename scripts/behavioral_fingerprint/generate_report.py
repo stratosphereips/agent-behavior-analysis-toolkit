@@ -168,8 +168,6 @@ def portrait_classify(d, emin, reachable=None):
     lrr = stats.linregress(xcp, ret)
     ret_up = lrr.slope > 0 and lrr.pvalue/2 < ALPHA and ret[-1] > ret[0]
     ret_dn = lrr.slope < 0 and lrr.pvalue/2 < ALPHA and ret[-1] < ret[0]
-    Rn = R / np.array([1.0, 1.0, WASS_MAX])[:, None]   # normalize channels before argmax
-    primary = DEC[int(np.argmax(Rn[:, fire].mean(1)))] if fire.any() else DEC[int(np.argmax(Rn.mean(1)))]
     fp_trend = "rose" if perp[-1] > perp[0]*1.05 else "fell" if perp[-1] < perp[0]*0.95 else "unchanged"
     frac = float(perp[-1]/reachable) if reachable else None
 
@@ -185,7 +183,10 @@ def portrait_classify(d, emin, reachable=None):
     axes["stationarity"] = {"lab": "Fingerprint activity", "value": f"{100*tr['p_start']:.0f}% -> {100*tr['p_end']:.0f}%",
                             "sub": "change rate", "tag": stat_tag,
                             "severity": "healthy" if stat_tag in ("stationary", "stabilizing") else "watch"}
-    axes["channel"] = {"lab": "Primary channel", "value": CH[primary], "sub": "largest change", "tag": "dominant", "severity": "neutral"}
+    if learner and fire.any():   # a dominant channel is only meaningful when behavior actually changed
+        Rn = R / np.array([1.0, 1.0, WASS_MAX])[:, None]   # normalize (JSD [0,1] vs EMD [0,WASS_MAX]) before argmax
+        primary = DEC[int(np.argmax(Rn[:, fire].mean(1)))]
+        axes["channel"] = {"lab": "Primary channel", "value": CH[primary], "sub": "largest change", "tag": "dominant", "severity": "neutral"}
 
     if not learner: state = {"tag": "No-learning", "severity": "neutral"}
     elif stationary and ret_up: state = {"tag": "Converged", "severity": "healthy"}
