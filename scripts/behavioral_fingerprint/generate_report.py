@@ -199,7 +199,8 @@ def portrait_classify(d, emin, reachable=None):
     if not learner: state = {"tag": "No-learning", "severity": "neutral"}
     elif stationary and ret_up: state = {"tag": "Converged", "severity": "healthy"}
     elif stationary: state = {"tag": "Stalled", "severity": "watch"}
-    else: state = {"tag": "Learning" + (" · stabilizing" if stabilizing else ""), "severity": "neutral"}
+    elif ret_up: state = {"tag": "Learning" + (" · stabilizing" if stabilizing else ""), "severity": "neutral"}
+    else: state = {"tag": "Reshaping", "severity": "watch"}   # behavior changes, return does not improve
 
     false_alarm = int(round(100*(1-PREC)))   # precision 0.96 -> ~4% false alarms, in plain %
     flags = []
@@ -214,16 +215,12 @@ def portrait_classify(d, emin, reachable=None):
     elif learner and frac is not None and frac < TAU_LOW:
         flags.append({"severity": "problem", "headline": "Coverage collapse",
                       "body": f"The policy visits only {100*frac:.0f}% of the states it could reach, and its return is not "
-                              f"improving -- it has settled into a small part of the task without solving it."})
+                              f"improving -- it is stuck in a small part of the task without solving it."})
     elif learner and frac is not None and fp_trend == "fell" and ret_up and frac >= TAU_BROAD:
         flags.append({"severity": "watch", "headline": "Focusing, not collapsing",
                       "body": f"State coverage narrowed as the return rose, but the policy still visits {100*frac:.0f}% of "
                               f"the states it could reach -- it is concentrating on a good part of the task, not retreating "
                               f"into a small one. Reward exploitation is unlikely."})
-    if learner and stat_tag == "non-stationary" and not ret_up and not flags:
-        flags.append({"severity": "watch", "headline": "Not yet settled",
-                      "body": "The behavior is still changing from one checkpoint to the next while the return is not "
-                              "improving -- the policy has not settled, and the changes are not turning into better reward."})
 
     return {"state": state, "axes": axes, "flags": flags, "n_pairs": int(n),
             "return": [float(ret[0]), float(ret[-1])], "perplexity": [float(perp[0]), float(perp[-1])],
