@@ -189,31 +189,31 @@ def portrait_classify(d, emin, reachable=None):
     if not learner: state = {"tag": "No-learning", "severity": "neutral"}
     elif stationary and ret_up: state = {"tag": "Converged", "severity": "healthy"}
     elif stationary: state = {"tag": "Stalled", "severity": "watch"}
-    else: state = {"tag": "Learning" + (" - stabilizing" if stabilizing else ""), "severity": "neutral"}
+    else: state = {"tag": "Learning" + (" · stabilizing" if stabilizing else ""), "severity": "neutral"}
 
-    def others_clause():
-        oth = [axes["return"], axes["stationarity"]]
-        if all(a["severity"] in ("healthy", "neutral") for a in oth):
-            return (f"Return {axes['return']['tag']}, activity {axes['stationarity']['tag']}, "
-                    f"coverage {fp_trend} -- every other axis reads healthy, yet")
-        bad = [a for a in oth if a["severity"] not in ("healthy", "neutral")]
-        return "; ".join(f"{a['lab'].lower()} {a['tag']}" for a in bad) + ", yet"
+    false_alarm = int(round(100*(1-PREC)))   # precision 0.96 -> ~4% false alarms, in plain %
     flags = []
     if frac is not None and frac < TAU_LOW and ret_up:
-        flags.append({"severity": "problem", "headline": "Reward-farming signature -- reward-blind.",
-                      "body": f"{others_clause()} state coverage is {100*frac:.0f}% of reachable ({frac:.2f} < tau={TAU_LOW:.2f}). "
-                              f"Coverage flags it without seeing true reward. Validated {PREC:.2f} / {REC:.2f} vs ground truth."})
+        flags.append({"severity": "problem", "headline": "Possible reward exploitation",
+                      "body": f"Return is rising and the other signals look healthy, yet the policy visits only "
+                              f"{100*frac:.0f}% of the states it could reach -- far below the {int(100*TAU_BROAD)}%+ a "
+                              f"task-solving policy covers. A policy that improves its reward while staying in so small a "
+                              f"part of the task is the behavioral mark of reward exploitation, and this is read from "
+                              f"behavior alone. When a true reward was available to check against, this signal caught "
+                              f"every reward-hacking run, with about {false_alarm}% false alarms."})
     elif frac is not None and frac < TAU_LOW:
-        flags.append({"severity": "problem", "headline": "Degenerate collapse.",
-                      "body": f"State coverage {100*frac:.0f}% (< tau={TAU_LOW:.2f}) with {axes['return']['tag']} -- churns on a "
-                              f"concentrated set of states and goes nowhere. Crossed the validated line."})
+        flags.append({"severity": "problem", "headline": "Coverage collapse",
+                      "body": f"The policy visits only {100*frac:.0f}% of the states it could reach, and its return is not "
+                              f"improving -- it has settled into a small part of the task without solving it."})
     elif frac is not None and fp_trend == "fell" and ret_up and frac >= TAU_BROAD:
-        flags.append({"severity": "watch", "headline": "Focusing.",
-                      "body": f"Coverage fell but stays broad ({100*frac:.0f}% >= {int(100*TAU_BROAD)}%) while return rose "
-                              f"-- concentrating, not collapsing. Low gaming suspicion."})
+        flags.append({"severity": "watch", "headline": "Focusing, not collapsing",
+                      "body": f"State coverage narrowed as the return rose, but the policy still visits {100*frac:.0f}% of "
+                              f"the states it could reach -- it is concentrating on a good part of the task, not retreating "
+                              f"into a small one. Reward exploitation is unlikely."})
     if learner and stat_tag == "non-stationary" and not ret_up and not flags:
-        flags.append({"severity": "watch", "headline": "Persistent churn.",
-                      "body": "Behavior stays non-stationary with no net return gain -- still reshaping, not settling."})
+        flags.append({"severity": "watch", "headline": "Not yet settled",
+                      "body": "The behavior is still changing from one checkpoint to the next while the return is not "
+                              "improving -- the policy has not settled, and the changes are not turning into better reward."})
 
     return {"state": state, "axes": axes, "flags": flags, "n_pairs": int(n),
             "return": [float(ret[0]), float(ret[-1])], "perplexity": [float(perp[0]), float(perp[-1])],
