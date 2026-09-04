@@ -9,7 +9,7 @@ from typing import Iterable
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
-from matplotlib.ticker import FuncFormatter, MultipleLocator
+from matplotlib.ticker import FuncFormatter, MultipleLocator, LogLocator, NullFormatter, ScalarFormatter
 
 try:
     from adjustText import adjust_text
@@ -72,51 +72,54 @@ def _generalization_counts(trajectories: Iterable, action_index: dict, n_steps: 
     return counts
 
 
-def _generalization_emphasis_scale(t_max: int, early_split: int, early_fraction: float):
-    """X-axis warp that expands the first `early_split` steps to `early_fraction` of the axis width."""
-    split = min(early_split, max(1, t_max - 1))
-    w = early_fraction
+def _stacked_step_fill(ax, x, counts: np.ndarray, colors: list, sign: float = 1.0) -> None:
+    """
+    Stacked staircase fill, the step-plot counterpart of `ax.stackplot`.
 
-    def fwd(x):
-        x = np.asarray(x, dtype=float)
-        return np.where(x <= split,
-                         x / split * w,
-                         w + (x - split) / (t_max - split) * (1.0 - w))
-
-    def inv(y):
-        y = np.asarray(y, dtype=float)
-        return np.where(y <= w,
-                         y / w * split,
-                         split + (y - w) / (1.0 - w) * (t_max - split))
-
-    return split, fwd, inv
+    Each band k is filled between consecutive cumulative sums and held constant
+    across the step it belongs to ("steps-post"): the count recorded at step t
+    spans [t, t+1), so `x` must carry one extra trailing edge (see caller).
+    `sign=-1.0` stacks downward for the T_unseen half.
+    """
+    cumulative = np.cumsum(counts, axis=1)
+    lower = np.zeros(len(x))
+    for k in range(counts.shape[1]):
+        upper = sign * np.append(cumulative[:, k], cumulative[-1, k])
+        ax.fill_between(x, lower, upper, step="post", facecolor=colors[k], alpha=0.95, linewidth=0)
+        lower = upper
 
 
 def plot_generalization_bidirectional(
     models: dict,
     global_actions: list,
-    optimal_length: int = 5,
-    early_multiplier: int = 5,
-    early_fraction: float = 0.62,
+    time_scale: str = "log",
     dpi: int = 350,
 ) -> plt.Figure:
     """
     Behavioural-generalization figure: for every model, plots action-type usage over
-    time as a "double" stacked-count chart. T_seen grows UPWARD from zero, T_unseen
+    time as a "double" stacked staircase chart. T_seen grows UPWARD from zero, T_unseen
     grows DOWNWARD from zero; both halves are labelled with positive trajectory counts.
 
       * Height of a half -> reachability (how many trajectories survived to step t)
       * Coloured bands   -> the action sequence / behavioural signature
       * Up vs. down       -> seen vs. unseen topology
 
+    Counts are per-step and discrete, so the bands are drawn as steps rather than
+    interpolated: the count at step t is held flat across [t, t+1).
+
     Parameters:
         models: {model_name: {"seen": [Trajectory, ...], "unseen": [Trajectory, ...]}}
         global_actions: ordered list of canonical actions (Enum members, strings, or ints)
                         used to build the colour/stacking order.
-        optimal_length: minimum number of steps needed to solve the task; the x-axis
-                        expands the region up to `early_multiplier * optimal_length` steps.
+        time_scale: "log" (default) or "linear" for the time-step axis. A log axis is
+                    undefined at 0, so it is 1-indexed (the first action sits at step 1)
+                    and labelled 1/2/5 per decade; the linear axis is 0-indexed.
+                    Most of the behavioural signal is in the first ~20 steps, which the
+                    log axis expands and the linear axis compresses into a sliver.
         dpi: figure DPI.
     """
+    if time_scale not in ("log", "linear"):
+        raise ValueError(f"time_scale must be 'log' or 'linear', got {time_scale!r}")
     action_names = [_generalization_action_name(a) for a in global_actions]
     action_index = {action: i for i, action in enumerate(global_actions)}
     colors = [
@@ -138,41 +141,32 @@ def plot_generalization_bidirectional(
         model_y_max = int(np.ceil(model_y_max / 10.0) * 10) if model_y_max > 0 else 1
         per_model[name] = (cs, cu, model_y_max)
 
-    early_split = early_multiplier * optimal_length
-    split, fwd, inv = _generalization_emphasis_scale(t_max, early_split, early_fraction)
-
-    early_ticks = np.arange(0, split + 1, 5)
-    late_start = ((split // 10) + 1) * 10
-    late_ticks = np.arange(late_start, t_max, 10)
-    xticks_candidates = sorted(set(early_ticks.tolist()) | set(late_ticks.tolist()))
-
-    # Drop candidates that land too close (in transformed x) to the previous kept
-    # tick, which otherwise collide/overlap right around the early/late boundary.
-    min_gap = 0.035
-    xticks = [xticks_candidates[0]]
-    for tick in xticks_candidates[1:]:
-        if fwd(tick) - fwd(xticks[-1]) >= min_gap:
-            xticks.append(tick)
-
-    t = np.arange(t_max)
+    # Steps are 1-indexed on a log axis (which cannot show step 0), 0-indexed on a
+    # linear one. Either way one extra trailing edge, so the staircase draws the
+    # final step's tread instead of ending on its riser.
+    first_step = 1 if time_scale == "log" else 0
+    t_edges = np.arange(first_step, first_step + t_max + 1)
     n = len(per_model)
     fig, axes = plt.subplots(n, 1, figsize=(8.2, 1.7 * n + 1.2), sharex=True, dpi=dpi)
     if n == 1:
         axes = [axes]
 
     for ax, (name, (cs, cu, model_y_max)) in zip(axes, per_model.items()):
-        ax.stackplot(t, *[cs[:, k] for k in range(len(action_names))], colors=colors, alpha=0.95)
-        ax.stackplot(t, *[-cu[:, k] for k in range(len(action_names))], colors=colors, alpha=0.95)
+        _stacked_step_fill(ax, t_edges, cs, colors, sign=1.0)
+        _stacked_step_fill(ax, t_edges, cu, colors, sign=-1.0)
         ax.axhline(0, color="black", lw=0.8)
         ax.set_ylim(-model_y_max, model_y_max)
-        ax.set_xlim(0, max(t_max - 1, 1))
-        ax.set_xscale("function", functions=(fwd, inv))
-        ax.axvline(split, color="0.4", ls=":", lw=0.9)
+        ax.set_xscale(time_scale)
+        ax.set_xlim(t_edges[0], max(t_edges[-1], t_edges[0] + 1))
         ax.set_ylabel(name, rotation=0, ha="right", va="center", fontsize=10)
         ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{abs(int(round(v)))}"))
         ax.yaxis.set_major_locator(MultipleLocator(max(10, model_y_max // 2)))
         ax.grid(axis="y", alpha=0.2)
-        ax.set_xticks(xticks)
+        if time_scale == "log":
+            # Plain integer step labels at 1/2/5 per decade instead of 10^n notation.
+            ax.xaxis.set_major_locator(LogLocator(base=10.0, subs=(1.0, 2.0, 5.0)))
+            ax.xaxis.set_major_formatter(ScalarFormatter())
+            ax.xaxis.set_minor_formatter(NullFormatter())
         ax.tick_params(axis="x", labelbottom=True)
         ax.text(0.99, 0.85, "$T_{seen}$", transform=ax.transAxes, ha="right", va="top", fontsize=9, color="0.3")
         ax.text(0.99, 0.15, "$T_{unseen}$", transform=ax.transAxes, ha="right", va="bottom", fontsize=9, color="0.3")

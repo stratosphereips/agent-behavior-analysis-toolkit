@@ -87,7 +87,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_trajectories", type=int, default=None, help="Maximum number of trajectories to load per task")
     parser.add_argument("--max_iterations", type=int, default=10, help="Number of iteration for cost-matrix refinement")
     parser.add_argument("--stability_threshold", type=float, default=0.1, help="Threshold for filtering matches in the hungarian algorithm ")
-    parser.add_argument("--optimal_length", type=int, default=5, help="Minimum number of steps to solve the task; controls x-axis emphasis in the generalization figure")
+    parser.add_argument("--time_scale", type=str, default="log", choices=["log", "linear"], help="Scale of the time-step axis in the generalization figure. 'log' (default) expands the first ~20 steps, where most of the behavioral signal is; 'linear' spreads the steps evenly")
     parser.add_argument("--generalization_output", type=str, default="behavioral_generalization.png", help="Output path for the seen-vs-unseen behavioral generalization figure")
     parser.add_argument("--divergence_output", type=str, default="action_divergence.png", help="Output path for the seen-vs-unseen per-step action-distribution JSD figure")
     parser.add_argument("--divergence_overlay_output", type=str, default="action_divergence_overlay.png", help="Output path for the single-axes overlay of all models' per-step JSD")
@@ -160,7 +160,7 @@ if __name__ == "__main__":
                 kinds[kind] = filtered
 
     if generalization_models:
-        gen_fig = plot_generalization_bidirectional(generalization_models, global_actions, optimal_length=args.optimal_length)
+        gen_fig = plot_generalization_bidirectional(generalization_models, global_actions, time_scale=args.time_scale)
         gen_fig.savefig(args.generalization_output, dpi=350)
         print(f"Saved behavioral generalization figure to {args.generalization_output}")
 
