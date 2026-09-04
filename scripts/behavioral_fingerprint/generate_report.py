@@ -112,6 +112,18 @@ def emin_from_random(random_dir, nact, M=200):
 
 # ---------------- STAGE 2: interpret -> verdict dict ----------------
 def classify(d, emin):
+    # a run needs >= 2 checkpoints (>= 1 pair) to have any behavioral change to
+    # diagnose; single-checkpoint runs get a stub verdict instead of crashing.
+    if len(d.get("topological_shift_raw", [])) < 1:
+        rr = d.get("mean_return") or [0.0]; pp = d.get("state_visitation_perplexity") or [0.0]
+        return {"mode": "Insufficient data", "sub_state": "single checkpoint",
+                "learner": False, "converged": False,
+                "activity_rate": 0.0, "activity_head": 0.0, "activity_tail": 0.0,
+                "return_trend": "n/a", "coverage_trend": "n/a", "primary_channel": "n/a",
+                "coverage_change_makeup": {"redistribution": 0.0, "discovery": 0.0, "abandonment": 0.0},
+                "reward_behavior": "n/a", "convergence": "n/a",
+                "return": [float(rr[0]), float(rr[-1])], "perplexity": [float(pp[0]), float(pp[-1])],
+                "epsilon_min": [float(x) for x in emin], "n_pairs": 0}
     ret = np.array(d["mean_return"]); perp = np.array(d["state_visitation_perplexity"])
     R = np.vstack([np.array(d[NAMES[m]+"_raw"]) for m in DEC])
     mu = np.vstack([np.array(d["null_mean_"+NAMES[m]]) for m in DEC])
@@ -128,7 +140,11 @@ def classify(d, emin):
     lrp = stats.linregress(xcp, perp); pp_eff = abs(perp[-1]-perp[0]) > np.std(perp)
     broaden = lrp.slope > 0 and lrp.pvalue/2 < ALPHA and pp_eff
     collapse = lrp.slope < 0 and lrp.pvalue/2 < ALPHA and pp_eff
-    primary = DEC[int(np.argmax(R[:, fire].mean(1)))] if fire.any() else DEC[int(np.argmax(R.mean(1)))]
+    # normalize each channel to [0,1] before comparing magnitudes: topo/strat are
+    # JSD in [0,1] but Δ_Seq is EMD in [0, WASS_MAX], so raw values would give Δ_Seq
+    # a WASS_MAX-fold head start in the argmax.
+    Rn = R / np.array([1.0, 1.0, WASS_MAX])[:, None]
+    primary = DEC[int(np.argmax(Rn[:, fire].mean(1)))] if fire.any() else DEC[int(np.argmax(Rn.mean(1)))]
     tot = disc.sum()+aban.sum()+np.array(d["topological_shift_overlap_raw"]).sum()
     shares = {"redistribution": float(np.array(d["topological_shift_overlap_raw"]).sum()/tot) if tot else 0,
               "discovery": float(disc.sum()/tot) if tot else 0, "abandonment": float(aban.sum()/tot) if tot else 0}
@@ -255,6 +271,8 @@ def main():
     v = classify(d, emin)
     v["run"] = name; v["floor"] = a.floor
     json.dump(v, open(os.path.join(out, f"{name}_verdict.json"), "w"), indent=1)
+    if v["n_pairs"] < 1:
+        print(f"[stage2] {name}: insufficient data (single checkpoint) -- verdict only, no figure/report"); return
     figp = os.path.join(out, f"{name}_fingerprint.png")
     plot_fingerprint_report(d, name, figp, dpi=170, emin=emin)
     open(os.path.join(out, f"{name}_report.html"), "w", encoding="utf-8").write(render_html(v, figp, name))

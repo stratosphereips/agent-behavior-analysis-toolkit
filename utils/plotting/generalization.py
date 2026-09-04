@@ -246,7 +246,8 @@ def plot_action_divergence_overlay(models_jsd: dict, dpi: int = 350) -> plt.Figu
 
     for i, (name, result) in enumerate(models_jsd.items()):
         color = _model_color(i)
-        label = f"{name.replace('\n', ' ')} (mean={result['mean_jsd']:.3f}, AOC={result['aoc_jsd']:.3f})"
+        disp = name.replace("\n", " ")
+        label = f"{disp} (mean={result['mean_jsd']:.3f}, AOC={result['aoc_jsd']:.3f})"
         ax.plot(result["steps"], result["jsd_per_step"], color=color, lw=1.2, label=label)
 
     ax.set_ylim(-0.02, 1.02)
