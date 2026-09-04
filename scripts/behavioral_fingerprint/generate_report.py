@@ -5,6 +5,13 @@ Two stages:
   STAGE 1 (expensive, cached):  trajectories -> <run>_metrics.json   (M split-half floors)
   STAGE 2 (cheap, re-derivable): metrics.json + epsilon_min -> verdict.json + fingerprint.png + report.html
 
+STAGE 2 is a reward-blind behavioral PORTRAIT: a State chip + axes {return, footprint,
+stationarity, channel}, each {value, tag, severity}, plus templated flags. Gaming is a
+footprint flag (effective footprint < tau=0.20 of reachable states, validated P/R 0.96/1.00
+vs true reward), never a verdict. Pass --reachable <N> (FrozenLake 64, Taxi 500, MC bins^2)
+for the footprint axis; omit it to skip footprint. Severity is a rule: a validated line
+crossed (problem), a significant good/bad direction (healthy/watch), or a bare fact (neutral).
+
 epsilon_min (the practical-significance floor) is a STAGE-2 parameter, so switching
 floors is cheap (no floor recompute):
   --floor hard        fixed universal floor 0.05 (normalized) -> [0.05,0.05,0.15] raw   (default)
@@ -110,106 +117,170 @@ def emin_from_random(random_dir, nact, M=200):
     a = np.array(cols)
     return [float(np.percentile(a[:, i], 99)) for i in range(3)]
 
-# ---------------- STAGE 2: interpret -> verdict dict ----------------
-def classify(d, emin):
-    # a run needs >= 2 checkpoints (>= 1 pair) to have any behavioral change to
-    # diagnose; single-checkpoint runs get a stub verdict instead of crashing.
-    if len(d.get("topological_shift_raw", [])) < 1:
-        rr = d.get("mean_return") or [0.0]; pp = d.get("state_visitation_perplexity") or [0.0]
-        return {"mode": "Insufficient data", "sub_state": "single checkpoint",
-                "learner": False, "converged": False,
-                "activity_rate": 0.0, "activity_head": 0.0, "activity_tail": 0.0,
-                "return_trend": "n/a", "coverage_trend": "n/a", "primary_channel": "n/a",
-                "coverage_change_makeup": {"redistribution": 0.0, "discovery": 0.0, "abandonment": 0.0},
-                "reward_behavior": "n/a", "convergence": "n/a",
-                "return": [float(rr[0]), float(rr[-1])], "perplexity": [float(pp[0]), float(pp[-1])],
-                "epsilon_min": [float(x) for x in emin], "n_pairs": 0}
-    ret = np.array(d["mean_return"]); perp = np.array(d["state_visitation_perplexity"])
-    R = np.vstack([np.array(d[NAMES[m]+"_raw"]) for m in DEC])
-    mu = np.vstack([np.array(d["null_mean_"+NAMES[m]]) for m in DEC])
-    sd = np.vstack([np.array(d["null_std_"+NAMES[m]]) for m in DEC])
-    p95 = np.array(d["zmax_p95"]); disc = np.array(d["topological_shift_discovery_raw"]); aban = np.array(d["topological_shift_abandonment_raw"])
-    Z = (R - mu) / np.where(sd > 0, sd, np.nan)
-    fire = ((Z > p95[None, :]) & (R > np.asarray(emin)[:, None])).any(0)
-    n = len(fire); tw = max(n//4, 3); xcp = np.arange(len(ret))
-    binom = lambda k, N: stats.binomtest(int(k), int(N), P0, alternative="greater").pvalue < ALPHA
-    learner = binom(fire.sum(), n); tail_active = binom(fire[-tw:].sum(), tw)
-    p = (fire[:tw].sum()+fire[-tw:].sum())/max(2*tw, 1); se = np.sqrt(p*(1-p)*2/max(tw, 1))
-    diminishing = se > 0 and (fire[-tw:].mean()-fire[:tw].mean())/se < -1.645
-    lrr = stats.linregress(xcp, ret); ret_up = lrr.slope > 0 and lrr.pvalue/2 < ALPHA
-    lrp = stats.linregress(xcp, perp); pp_eff = abs(perp[-1]-perp[0]) > np.std(perp)
-    broaden = lrp.slope > 0 and lrp.pvalue/2 < ALPHA and pp_eff
-    collapse = lrp.slope < 0 and lrp.pvalue/2 < ALPHA and pp_eff
-    # normalize each channel to [0,1] before comparing magnitudes: topo/strat are
-    # JSD in [0,1] but Δ_Seq is EMD in [0, WASS_MAX], so raw values would give Δ_Seq
-    # a WASS_MAX-fold head start in the argmax.
-    Rn = R / np.array([1.0, 1.0, WASS_MAX])[:, None]
-    primary = DEC[int(np.argmax(Rn[:, fire].mean(1)))] if fire.any() else DEC[int(np.argmax(Rn.mean(1)))]
-    tot = disc.sum()+aban.sum()+np.array(d["topological_shift_overlap_raw"]).sum()
-    shares = {"redistribution": float(np.array(d["topological_shift_overlap_raw"]).sum()/tot) if tot else 0,
-              "discovery": float(disc.sum()/tot) if tot else 0, "abandonment": float(aban.sum()/tot) if tot else 0}
-    if not learner:                       mode, sub = "Random / No learning", ""
-    elif collapse and ret_up:             mode, sub = "Reward-hacking / Gaming", "warning"
-    elif ret_up:                          mode, sub = "Good learning", ("converged" if not tail_active else "converging" if diminishing else "in progress")
-    elif tail_active:                     mode, sub = "Reshaping / persistent", ""
-    elif collapse:                        mode, sub = "Coverage collapse (no return gain)", "warning"
-    else:                                 mode, sub = "Stalled / converged-flat", ""
-    conv = ("behaviorally converged" if not tail_active else
-            "converging (activity winding down)" if diminishing else
-            "not converged; persistent policy (stochastic env may settle here)" if ret_up else
-            "not converged")
-    return {
-        "mode": mode, "sub_state": sub,
-        "learner": bool(learner), "converged": bool(not tail_active),
-        "activity_rate": float(fire.mean()), "activity_head": float(fire[:tw].mean()), "activity_tail": float(fire[-tw:].mean()),
-        "return_trend": "up" if ret_up else "flat",
-        "coverage_trend": "broadens" if broaden else "collapses" if collapse else "stable",
-        "primary_channel": CH[primary],
-        "coverage_change_makeup": shares,
-        "reward_behavior": ("mismatch" if (learner and collapse and ret_up) else "consistent" if learner else "n/a"),
-        "convergence": conv,
-        "return": [float(ret[0]), float(ret[-1])], "perplexity": [float(perp[0]), float(perp[-1])],
-        "epsilon_min": [float(x) for x in emin], "n_pairs": int(n),
-    }
-
 # ---------------- HTML report ----------------
 def _b64(p):
     with open(p, "rb") as f: return "data:image/png;base64," + base64.b64encode(f.read()).decode()
 
-def render_html(v, fig_path, title):
-    sem = {"warning": "#c26a00"}.get(v["sub_state"], "#1a875a")
-    if v["mode"].startswith("Random") or v["mode"].startswith("Stalled"): sem = "#647082"
-    if v["mode"].startswith("Reshaping"): sem = "#6f52c0"
-    mk = v["coverage_change_makeup"]
-    rows = [("Return", f"{v['return'][0]:.1f} → {v['return'][1]:.1f}", "trends up" if v["return_trend"]=="up" else "flat / plateau"),
-            ("State breadth", f"PP {v['perplexity'][0]:.0f} → {v['perplexity'][1]:.0f}", v["coverage_trend"]),
-            ("Activity", f"{100*v['activity_rate']:.0f}% of pairs", f"early {100*v['activity_head']:.0f}% → late {100*v['activity_tail']:.0f}%"),
-            ("Dominant channel", v["primary_channel"], "largest change"),
-            ("Coverage change", f"{100*mk['redistribution']:.0f}% redist · {100*mk['discovery']:.0f}% disc · {100*mk['abandonment']:.0f}% aband", "ΔTopo makeup"),
-            ("Reward vs behavior", v["reward_behavior"].capitalize(), ""),
-            ("Convergence", v["convergence"], "")]
-    fnd = "\n".join(f'<div class="f"><div class="fl">{a}</div><div class="fv">{b}</div><div class="fn">{c}</div></div>' for a,b,c in rows)
-    return f'''<title>{title}</title>
+# ---------------- redesigned portrait (axes + flags + severity) ----------------
+TAU_LOW, TAU_BROAD = 0.20, 0.35     # footprint bands: <0.20 flag (validated), >=0.35 broad
+PREC, REC = 0.96, 1.00              # footprint-flag precision/recall vs true reward
+
+def _fire_trend(fire):
+    """Logistic fit of fire ~ checkpoint index -- window-free stationarity. Returns the
+    slope sign, an LR-test p for a monotone trend, and the model-fitted fire rate at the
+    first and last checkpoint."""
+    y = np.asarray(fire, float); n = len(y); x = np.arange(n); eps = 1e-9
+    ybar = float(y.mean())
+    if n < 3 or ybar <= 0.0 or ybar >= 1.0:
+        return {"slope": 0.0, "p_trend": 1.0, "p_start": ybar, "p_end": ybar}
+    ll_null = float((y*np.log(ybar+eps) + (1-y)*np.log(1-ybar+eps)).sum())
+    def nll(pr):
+        a, b = pr; p = 1.0/(1.0+np.exp(-(a+b*x))); p = np.clip(p, eps, 1-eps)
+        return -float((y*np.log(p) + (1-y)*np.log(1-p)).sum())
+    from scipy.optimize import minimize
+    res = minimize(nll, [np.log((ybar+eps)/(1-ybar+eps)), 0.0], method="Nelder-Mead")
+    a, b = res.x; lr = max(2.0*(-res.fun - ll_null), 0.0)
+    sig = lambda z: float(1.0/(1.0+np.exp(-z)))
+    return {"slope": float(b), "p_trend": float(stats.chi2.sf(lr, 1)), "p_start": sig(a), "p_end": sig(a + b*(n-1))}
+
+def portrait_classify(d, emin, reachable=None):
+    """Reward-blind behavioral portrait: {state, axes:{return,footprint,stationarity,
+    channel}, flags[]}. Runs on alpha, the permutation floor, eps_min, and tau only."""
+    if len(d.get("topological_shift_raw", [])) < 1:
+        rr = d.get("mean_return") or [0.0]; pp = d.get("state_visitation_perplexity") or [0.0]
+        return {"state": {"tag": "Insufficient data", "severity": "neutral"}, "axes": {}, "flags": [],
+                "n_pairs": 0, "return": [float(rr[0]), float(rr[-1])], "perplexity": [float(pp[0]), float(pp[-1])],
+                "epsilon_min": [float(x) for x in emin], "reachable": reachable, "footprint_frac": None}
+    ret = np.array(d["mean_return"]); perp = np.array(d["state_visitation_perplexity"])
+    R = np.vstack([np.array(d[NAMES[m]+"_raw"]) for m in DEC])
+    mu = np.vstack([np.array(d["null_mean_"+NAMES[m]]) for m in DEC])
+    sd = np.vstack([np.array(d["null_std_"+NAMES[m]]) for m in DEC])
+    p95 = np.array(d["zmax_p95"])
+    Z = (R - mu) / np.where(sd > 0, sd, np.nan)
+    fire = ((Z > p95[None, :]) & (R > np.asarray(emin)[:, None])).any(0)
+    n = len(fire); xcp = np.arange(len(ret))
+    learner = stats.binomtest(int(fire.sum()), int(n), P0, alternative="greater").pvalue < ALPHA
+    tr = _fire_trend(fire)
+    stationary = tr["p_end"] <= P0
+    stabilizing = (tr["slope"] < 0 and tr["p_trend"] < ALPHA) and not stationary
+    stat_tag = "stationary" if stationary else "stabilizing" if stabilizing else "non-stationary"
+    lrr = stats.linregress(xcp, ret)
+    ret_up = lrr.slope > 0 and lrr.pvalue/2 < ALPHA and ret[-1] > ret[0]
+    ret_dn = lrr.slope < 0 and lrr.pvalue/2 < ALPHA and ret[-1] < ret[0]
+    Rn = R / np.array([1.0, 1.0, WASS_MAX])[:, None]   # normalize channels before argmax
+    primary = DEC[int(np.argmax(Rn[:, fire].mean(1)))] if fire.any() else DEC[int(np.argmax(Rn.mean(1)))]
+    fp_trend = "rose" if perp[-1] > perp[0]*1.05 else "fell" if perp[-1] < perp[0]*0.95 else "unchanged"
+    frac = float(perp[-1]/reachable) if reachable else None
+
+    axes = {}
+    axes["return"] = {"lab": "Return", "value": f"{ret[0]:.2f} -> {ret[-1]:.2f}", "sub": "proxy",
+                      "tag": "rising" if ret_up else "declining" if ret_dn else "no net gain",
+                      "severity": "healthy" if ret_up else "watch" if ret_dn else "neutral"}
+    if frac is not None:
+        fp_tag = "broad" if frac >= TAU_BROAD else "concentrated" if frac < TAU_LOW else "moderate"
+        axes["footprint"] = {"lab": "Footprint", "value": f"{100*frac:.0f}%",
+                             "sub": f"{perp[-1]:.0f} / {int(reachable)} {fp_trend}", "tag": fp_tag,
+                             "severity": "healthy" if fp_tag == "broad" else "problem" if fp_tag == "concentrated" else "neutral"}
+    axes["stationarity"] = {"lab": "Stationarity", "value": f"{100*tr['p_start']:.0f}% -> {100*tr['p_end']:.0f}%",
+                            "sub": "fitted fire rate", "tag": stat_tag,
+                            "severity": "healthy" if stat_tag in ("stationary", "stabilizing") else "watch"}
+    axes["channel"] = {"lab": "Channel", "value": CH[primary], "sub": "normalized argmax", "tag": "dominant", "severity": "neutral"}
+
+    if not learner: state = {"tag": "No-learning", "severity": "neutral"}
+    elif stationary and ret_up: state = {"tag": "Converged", "severity": "healthy"}
+    elif stationary: state = {"tag": "Stalled", "severity": "watch"}
+    else: state = {"tag": "Learning" + (" - stabilizing" if stabilizing else ""), "severity": "neutral"}
+
+    def others_clause():
+        oth = [axes["return"], axes["stationarity"]]
+        if all(a["severity"] in ("healthy", "neutral") for a in oth):
+            return (f"Return {axes['return']['tag']}, activity {axes['stationarity']['tag']}, "
+                    f"footprint {fp_trend} -- every other axis reads healthy, yet")
+        bad = [a for a in oth if a["severity"] not in ("healthy", "neutral")]
+        return "; ".join(f"{a['lab'].lower()} {a['tag']}" for a in bad) + ", yet"
+    flags = []
+    if frac is not None and frac < TAU_LOW and ret_up:
+        flags.append({"severity": "problem", "headline": "Reward-farming signature -- reward-blind.",
+                      "body": f"{others_clause()} the footprint is {100*frac:.0f}% of reachable ({frac:.2f} < tau={TAU_LOW:.2f}). "
+                              f"Footprint flags it without seeing true reward. Validated {PREC:.2f} / {REC:.2f} vs ground truth."})
+    elif frac is not None and frac < TAU_LOW:
+        flags.append({"severity": "problem", "headline": "Degenerate collapse.",
+                      "body": f"Footprint {100*frac:.0f}% (< tau={TAU_LOW:.2f}) with {axes['return']['tag']} -- churns on a "
+                              f"concentrated set of states and goes nowhere. Crossed the validated line."})
+    elif frac is not None and fp_trend == "fell" and ret_up and frac >= TAU_BROAD:
+        flags.append({"severity": "watch", "headline": "Focusing.",
+                      "body": f"Footprint fell but stays broad ({100*frac:.0f}% >= {int(100*TAU_BROAD)}%) while return rose "
+                              f"-- concentrating, not collapsing. Low gaming suspicion."})
+    if learner and stat_tag == "non-stationary" and not ret_up and not flags:
+        flags.append({"severity": "watch", "headline": "Persistent churn.",
+                      "body": "Behavior stays non-stationary with no net return gain -- still reshaping, not settling."})
+
+    return {"state": state, "axes": axes, "flags": flags, "n_pairs": int(n),
+            "return": [float(ret[0]), float(ret[-1])], "perplexity": [float(perp[0]), float(perp[-1])],
+            "epsilon_min": [float(x) for x in emin], "reachable": reachable, "footprint_frac": frac}
+
+_PORTRAIT_CSS = """
+:root{--g:#eef2f5;--s:#fff;--s2:#f6f8fa;--ink:#141a20;--mut:#5a6673;--fnt:#8390a0;--h:#dbe2e9;--good:#1a875a;--good-bg:#e4f2eb;--warn:#b5620a;--warn-bg:#f8ecdd;--crit:#b5322a;--crit-bg:#f7e4e2;--neu:#5a6673;--neu-bg:#e9edf1}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--g:#0e1216;--s:#161b21;--s2:#1b222a;--ink:#e7ecf1;--mut:#9aa6b3;--fnt:#67737f;--h:#2a333d;--good:#4cc38a;--good-bg:#17332a;--warn:#e0913c;--warn-bg:#382713;--crit:#e5675c;--crit-bg:#3a201d;--neu:#9aa6b3;--neu-bg:#232b34}}
+:root[data-theme=dark]{--g:#0e1216;--s:#161b21;--s2:#1b222a;--ink:#e7ecf1;--mut:#9aa6b3;--fnt:#67737f;--h:#2a333d;--good:#4cc38a;--good-bg:#17332a;--warn:#e0913c;--warn-bg:#382713;--crit:#e5675c;--crit-bg:#3a201d;--neu:#9aa6b3;--neu-bg:#232b34}
+*{box-sizing:border-box}body{margin:0;background:var(--g);color:var(--ink);font-family:"IBM Plex Sans",system-ui,sans-serif;line-height:1.5}
+.wrap{max-width:820px;margin:0 auto;padding:44px 22px 60px}.mono{font-family:"IBM Plex Mono",monospace}
+.thesis{font-size:12px;color:var(--fnt);text-transform:uppercase;letter-spacing:.09em;margin:0 0 16px}
+.runhead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+.runid .path{font-size:12.5px;color:var(--mut);word-break:break-all}.runid .tag{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--fnt)}
+.state{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:999px;font-weight:600;font-size:15px;white-space:nowrap}.state .dot{width:8px;height:8px;border-radius:50%}
+.axes{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--h);border:1px solid var(--h);border-radius:11px;overflow:hidden}
+.ax{background:var(--s);padding:12px 14px;display:flex;flex-direction:column;gap:4px;min-height:92px}.ax.hi{background:var(--crit-bg)}
+.ax .lab{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--fnt)}
+.ax .val{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}.ax .sub{font-size:11.5px;color:var(--mut)}
+.ax .st{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;margin-top:auto}.ax .st .dot{width:7px;height:7px;border-radius:50%}
+.g{color:var(--good)}.w{color:var(--warn)}.c{color:var(--crit)}.n{color:var(--neu)}
+.bg-g{background:var(--good)}.bg-w{background:var(--warn)}.bg-c{background:var(--crit)}.bg-n{background:var(--neu)}
+.flags{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+.flag{display:flex;align-items:flex-start;gap:10px;font-size:13.5px;padding:9px 13px;border-radius:9px;border:1px solid}
+.flag .ico{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:12px;margin-top:1px}
+.flag.watch{background:var(--warn-bg);border-color:color-mix(in srgb,var(--warn) 30%,transparent);color:var(--warn)}
+.flag.crit{background:var(--crit-bg);border-color:color-mix(in srgb,var(--crit) 34%,transparent);color:var(--crit)}
+.flag b{color:var(--ink)}.flag .txt{color:var(--ink)}
+.none{font-size:12.5px;color:var(--fnt);display:flex;align-items:center;gap:8px;padding-top:4px}.none .dot{width:7px;height:7px;border-radius:50%}
+.figscroll{overflow-x:auto;border:1px solid var(--h);border-radius:12px;background:var(--s2);padding:10px;margin-top:20px}.figscroll img{width:100%;height:auto;border-radius:6px}
+"""
+
+_SEVDOT = {"healthy": "bg-g", "watch": "bg-w", "problem": "bg-c", "neutral": "bg-n"}
+_SEVTXT = {"healthy": "g", "watch": "w", "problem": "c", "neutral": "n"}
+_STBG = {"healthy": ("var(--good-bg)", "var(--good)"), "watch": ("var(--warn-bg)", "var(--warn)"),
+         "problem": ("var(--crit-bg)", "var(--crit)"), "neutral": ("var(--neu-bg)", "var(--neu)")}
+
+def render_portrait(v, fig_path, title):
+    import html as _h
+    esc = _h.escape
+    st = v["state"]; sb, sc = _STBG[st["severity"]]
+    ax = ""
+    for k in ("return", "footprint", "stationarity", "channel"):
+        a = v["axes"].get(k)
+        if not a: continue
+        hi = " hi" if a["severity"] == "problem" else ""
+        ax += (f'<div class="ax{hi}"><span class="lab">{esc(a["lab"])}</span><span class="val">{esc(str(a["value"]))}</span>'
+               f'<span class="sub">{esc(str(a["sub"]))}</span><span class="st {_SEVTXT[a["severity"]]}">'
+               f'<span class="dot {_SEVDOT[a["severity"]]}"></span>{esc(a["tag"])}</span></div>')
+    fl = ""
+    for f in v["flags"]:
+        cls = "crit" if f["severity"] == "problem" else "watch"
+        ico = "▲" if f["severity"] == "problem" else "◆"
+        fl += f'<div class="flag {cls}"><span class="ico">{ico}</span><span class="txt"><b>{esc(f["headline"])}</b> {esc(f["body"])}</span></div>'
+    if not fl:
+        fl = '<div class="none"><span class="dot bg-g"></span>No flags -- axes read healthy.</div>'
+    fig = f'<div class="figscroll"><img src="{_b64(fig_path)}" alt="fingerprint"></div>' if (fig_path and os.path.exists(fig_path)) else ""
+    return f'''<title>{esc(title)}</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
-<style>
- :root{{--g:#f2f5f8;--s:#fff;--s2:#f7f9fb;--ink:#141a20;--mut:#5a6673;--fnt:#8b97a4;--h:#e1e7ec;--ac:#0072b2}}
- @media(prefers-color-scheme:dark){{:root:not([data-theme=light]){{--g:#0f1317;--s:#171c22;--s2:#1c232b;--ink:#e7ecf1;--mut:#9aa6b3;--fnt:#6b7783;--h:#2a333d;--ac:#4ba8db}}}}
- :root[data-theme=dark]{{--g:#0f1317;--s:#171c22;--s2:#1c232b;--ink:#e7ecf1;--mut:#9aa6b3;--fnt:#6b7783;--h:#2a333d;--ac:#4ba8db}}
- *{{box-sizing:border-box}} body{{margin:0;background:var(--g);color:var(--ink);font-family:"IBM Plex Sans",system-ui,sans-serif;line-height:1.5}}
- .w{{max-width:860px;margin:0 auto;padding:48px 24px 72px}}
- .eyebrow{{font-family:"IBM Plex Mono",monospace;font-size:12.5px;color:var(--mut);margin:0 0 12px}}
- .badge{{display:inline-block;font-weight:600;font-size:16px;padding:6px 15px;border-radius:999px;color:#fff;background:{sem}}}
- .sub{{font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.08em;margin-left:10px}}
- .findings{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1px;background:var(--h);border:1px solid var(--h);border-radius:12px;overflow:hidden;margin:22px 0}}
- .f{{background:var(--s);padding:14px 16px}} .fl{{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--fnt);margin-bottom:6px}}
- .fv{{font-size:15px;font-weight:600}} .fn{{font-size:12.5px;color:var(--mut);margin-top:3px}}
- .figscroll{{overflow-x:auto;border:1px solid var(--h);border-radius:12px;background:var(--s2);padding:10px}} .figscroll img{{width:100%;height:auto;border-radius:6px}}
-</style>
-<div class="w">
- <p class="eyebrow">{title}</p>
- <div><span class="badge">{v['mode']}</span>{f'<span class="sub">{v["sub_state"]}</span>' if v['sub_state'] and v['sub_state']!="warning" else ''}</div>
- <div class="findings">{fnd}</div>
- <div class="figscroll"><img src="{_b64(fig_path)}" alt="fingerprint"></div>
+<style>{_PORTRAIT_CSS}</style>
+<div class="wrap">
+ <p class="thesis">Behavioral Fingerprint &middot; portrait</p>
+ <div class="runhead"><div class="runid"><div class="tag">{esc(str(v.get("floor","hard")))} floor &middot; {v["n_pairs"]} pairs</div><div class="path mono">{esc(title)}</div></div>
+  <span class="state" style="background:{sb};color:{sc}"><span class="dot {_SEVDOT[st["severity"]]}"></span>{esc(st["tag"])}</span></div>
+ <div class="axes">{ax}</div>
+ <div class="flags">{fl}</div>
+ {fig}
 </div>'''
 
 # ---------------- CLI ----------------
@@ -222,6 +293,7 @@ def main():
     ap.add_argument("--floor", choices=["hard", "estimated"], default="hard")
     ap.add_argument("--random_dir", default=None); ap.add_argument("--force", action="store_true")
     ap.add_argument("--metrics-only", action="store_true", help="Stage 1 only: write metrics.json and stop (floor-independent; verdict/figure/report can be derived later from the cached metrics).")
+    ap.add_argument("--reachable", type=int, default=None, help="Reachable state count for the footprint axis (e.g. FrozenLake 64, Taxi 500, MountainCar bins^2). Omit to skip the footprint axis and its flags.")
     a = ap.parse_args()
 
     if a.metrics:
@@ -268,15 +340,18 @@ def main():
         print(f"[stage2] estimated epsilon_min = {emin}  (raw random 99pct = {[round(x, 4) for x in raw]}, floored at hard)")
     else:
         emin = list(HARD_EMIN); print(f"[stage2] hard epsilon_min = {emin}")
-    v = classify(d, emin)
+    v = portrait_classify(d, emin, reachable=a.reachable)
     v["run"] = name; v["floor"] = a.floor
     json.dump(v, open(os.path.join(out, f"{name}_verdict.json"), "w"), indent=1)
     if v["n_pairs"] < 1:
-        print(f"[stage2] {name}: insufficient data (single checkpoint) -- verdict only, no figure/report"); return
+        print(f"[stage2] {name}: insufficient data (single checkpoint) -- verdict only"); return
+    if a.reachable is None:
+        print("[stage2] note: no --reachable given -- footprint axis and its flags are omitted")
     figp = os.path.join(out, f"{name}_fingerprint.png")
     plot_fingerprint_report(d, name, figp, dpi=170, emin=emin)
-    open(os.path.join(out, f"{name}_report.html"), "w", encoding="utf-8").write(render_html(v, figp, name))
-    print(f"[stage2] VERDICT: {v['mode']} {('('+v['sub_state']+')') if v['sub_state'] and v['sub_state']!='warning' else ''}")
+    open(os.path.join(out, f"{name}_report.html"), "w", encoding="utf-8").write(render_portrait(v, figp, name))
+    flags = "; ".join(f["headline"].rstrip(".") for f in v["flags"]) or "no flags"
+    print(f"[stage2] STATE: {v['state']['tag']}  |  {flags}")
     print(f"[stage2] wrote {name}_verdict.json, {name}_fingerprint.png, {name}_report.html in {out}")
 
 if __name__ == "__main__":
