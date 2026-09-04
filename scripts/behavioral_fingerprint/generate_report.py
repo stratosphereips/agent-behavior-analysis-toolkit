@@ -294,6 +294,7 @@ def main():
     ap.add_argument("--random_dir", default=None); ap.add_argument("--force", action="store_true")
     ap.add_argument("--metrics-only", action="store_true", help="Stage 1 only: write metrics.json and stop (floor-independent; verdict/figure/report can be derived later from the cached metrics).")
     ap.add_argument("--reachable", type=int, default=None, help="Reachable state count for the footprint axis (e.g. FrozenLake 64, Taxi 500, MountainCar bins^2). Omit to skip the footprint axis and its flags.")
+    ap.add_argument("--no-figure", action="store_true", help="Skip the embedded fingerprint PNG -- portrait card only (fast).")
     a = ap.parse_args()
 
     if a.metrics:
@@ -347,12 +348,15 @@ def main():
         print(f"[stage2] {name}: insufficient data (single checkpoint) -- verdict only"); return
     if a.reachable is None:
         print("[stage2] note: no --reachable given -- footprint axis and its flags are omitted")
-    figp = os.path.join(out, f"{name}_fingerprint.png")
-    plot_fingerprint_report(d, name, figp, dpi=170, emin=emin)
+    if a.no_figure:
+        figp = None
+    else:
+        figp = os.path.join(out, f"{name}_fingerprint.png")
+        plot_fingerprint_report(d, name, figp, dpi=170, emin=emin)
     open(os.path.join(out, f"{name}_report.html"), "w", encoding="utf-8").write(render_portrait(v, figp, name))
     flags = "; ".join(f["headline"].rstrip(".") for f in v["flags"]) or "no flags"
     print(f"[stage2] STATE: {v['state']['tag']}  |  {flags}")
-    print(f"[stage2] wrote {name}_verdict.json, {name}_fingerprint.png, {name}_report.html in {out}")
+    print(f"[stage2] wrote {name}_verdict.json + report.html{'' if a.no_figure else ' + fingerprint.png'} in {out}")
 
 if __name__ == "__main__":
     main()
