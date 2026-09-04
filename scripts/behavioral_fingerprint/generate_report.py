@@ -159,15 +159,22 @@ def portrait_classify(d, emin, reachable=None):
     p95 = np.array(d["zmax_p95"])
     Z = (R - mu) / np.where(sd > 0, sd, np.nan)
     fire = ((Z > p95[None, :]) & (R > np.asarray(emin)[:, None])).any(0)
-    n = len(fire); xcp = np.arange(len(ret))
-    learner = stats.binomtest(int(fire.sum()), int(n), P0, alternative="greater").pvalue < ALPHA
+    n = len(fire)
     tr = _fire_trend(fire)
+    # learner: overall fire rate above chance, OR front-loaded activity that has since
+    # settled -- a fast learner that converged early shows a significant DECLINING fire
+    # trend from an elevated start, which a whole-run rate test misses.
+    trend_learner = tr["p_trend"] < ALPHA and tr["slope"] < 0 and tr["p_start"] >= 2*P0
+    learner = (stats.binomtest(int(fire.sum()), int(n), P0, alternative="greater").pvalue < ALPHA) or trend_learner
     stationary = tr["p_end"] <= P0
     stabilizing = (tr["slope"] < 0 and tr["p_trend"] < ALPHA) and not stationary
     stat_tag = "stationary" if stationary else "stabilizing" if stabilizing else "non-stationary"
-    lrr = stats.linregress(xcp, ret)
-    ret_up = lrr.slope > 0 and lrr.pvalue/2 < ALPHA and ret[-1] > ret[0]
-    ret_dn = lrr.slope < 0 and lrr.pvalue/2 < ALPHA and ret[-1] < ret[0]
+    # return: net level change from the initial policy to the converged tail, beyond the
+    # run's own return noise -- robust to a step-then-plateau, which a linear slope misses.
+    k = max(len(ret)//5, 2); late = float(np.mean(ret[-k:]))
+    ret_noise = max(float(np.std(ret)), 0.05*abs(late), 1e-9)
+    ret_up = (late - float(ret[0])) > ret_noise
+    ret_dn = (float(ret[0]) - late) > ret_noise
     fp_trend = "rose" if perp[-1] > perp[0]*1.05 else "fell" if perp[-1] < perp[0]*0.95 else "unchanged"
     frac = float(perp[-1]/reachable) if reachable else None
 
@@ -180,9 +187,10 @@ def portrait_classify(d, emin, reachable=None):
         axes["footprint"] = {"lab": "State coverage", "value": f"{100*frac:.0f}%",
                              "sub": f"{perp[-1]:.0f} / {int(reachable)} reachable {fp_trend}", "tag": fp_tag,
                              "severity": "healthy" if fp_tag == "broad" else "problem" if fp_tag == "concentrated" else "neutral"}
-    axes["stationarity"] = {"lab": "Fingerprint activity", "value": f"{100*tr['p_start']:.0f}% -> {100*tr['p_end']:.0f}%",
-                            "sub": "change rate", "tag": stat_tag,
-                            "severity": "healthy" if stat_tag in ("stationary", "stabilizing") else "watch"}
+    if learner:   # activity only means something once there is learning to speak of
+        axes["stationarity"] = {"lab": "Fingerprint activity", "value": f"{100*fire.mean():.0f}% active",
+                                "sub": f"of {n} checkpoints", "tag": stat_tag,
+                                "severity": "healthy" if stat_tag in ("stationary", "stabilizing") else "watch"}
     if learner and fire.any():   # a dominant channel is only meaningful when behavior actually changed
         Rn = R / np.array([1.0, 1.0, WASS_MAX])[:, None]   # normalize (JSD [0,1] vs EMD [0,WASS_MAX]) before argmax
         primary = DEC[int(np.argmax(Rn[:, fire].mean(1)))]
@@ -195,7 +203,7 @@ def portrait_classify(d, emin, reachable=None):
 
     false_alarm = int(round(100*(1-PREC)))   # precision 0.96 -> ~4% false alarms, in plain %
     flags = []
-    if frac is not None and frac < TAU_LOW and ret_up:
+    if learner and frac is not None and frac < TAU_LOW and ret_up:
         flags.append({"severity": "problem", "headline": "Possible reward exploitation",
                       "body": f"Return is rising and the other signals look healthy, yet the policy visits only "
                               f"{100*frac:.0f}% of the states it could reach -- far below the {int(100*TAU_BROAD)}%+ a "
@@ -203,11 +211,11 @@ def portrait_classify(d, emin, reachable=None):
                               f"part of the task is the behavioral mark of reward exploitation, and this is read from "
                               f"behavior alone. When a true reward was available to check against, this signal caught "
                               f"every reward-hacking run, with about {false_alarm}% false alarms."})
-    elif frac is not None and frac < TAU_LOW:
+    elif learner and frac is not None and frac < TAU_LOW:
         flags.append({"severity": "problem", "headline": "Coverage collapse",
                       "body": f"The policy visits only {100*frac:.0f}% of the states it could reach, and its return is not "
                               f"improving -- it has settled into a small part of the task without solving it."})
-    elif frac is not None and fp_trend == "fell" and ret_up and frac >= TAU_BROAD:
+    elif learner and frac is not None and fp_trend == "fell" and ret_up and frac >= TAU_BROAD:
         flags.append({"severity": "watch", "headline": "Focusing, not collapsing",
                       "body": f"State coverage narrowed as the return rose, but the policy still visits {100*frac:.0f}% of "
                               f"the states it could reach -- it is concentrating on a good part of the task, not retreating "
