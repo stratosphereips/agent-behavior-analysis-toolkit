@@ -75,10 +75,15 @@ def build_metrics(run_dir, nact, M=200):
     cps = sorted(summ.keys(), key=lambda x: int(x.split("_")[-1]))
     d = {"checkpoints": [int(c.split("_")[-1]) for c in cps],
          "mean_return": [], "std_return": [], "state_visitation_perplexity": [], "total_nodes": []}
+    all_states = set()
     for c in cps:
         scl, sacl, ngl = summ[c]; m = ab.merge(range(len(scl)), scl)
         d["state_visitation_perplexity"].append(compute_perplexity_from_counts(m)); d["total_nodes"].append(len(m))
         d["mean_return"].append(float(np.mean(rets[c]))); d["std_return"].append(float(np.std(rets[c])))
+        all_states.update(m.keys())
+    # union of per-checkpoint state sets: distinct states visited across the whole run,
+    # not just within a single checkpoint (that's total_nodes).
+    d["total_distinct_states_visited"] = len(all_states)
     keys = ["topological_shift_raw","topological_shift_overlap_raw","topological_shift_discovery_raw",
             "topological_shift_abandonment_raw","topological_shift_net_raw","strategic_shift_raw",
             "3-gram_wasserstein_raw","topological_shift_noise_threshold","strategic_shift_noise_threshold",

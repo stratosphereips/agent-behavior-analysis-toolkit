@@ -162,6 +162,34 @@ def strategic_shift(current_policy, previous_policy, global_actions, noise_value
     # 4. Apply Noise Threshold
     return max(0.0, raw_strat_shift - noise_value)
 
+def compute_sequence_order_score(trajectories: Iterable, global_actions: Iterable) -> float:
+    """Sequence-order score (SOS): how well action sequences follow the canonical order.
+
+    ``global_actions`` is read as the canonical progression -- for NetSecGame the
+    kill chain ScanNetwork -> FindServices -> ExploitService -> FindData ->
+    ExfiltrateData. Each consecutive action pair scores 1 when it does not regress
+    in that order (rank holds or advances) and 0 when it falls back; a trajectory
+    scores the mean over its pairs, and the result is the mean over trajectories.
+    So 1.0 is a clean forward progression through the chain and 0.0 is strictly
+    backwards movement.
+
+    Pairs involving an action outside ``global_actions`` are skipped, as are
+    trajectories with fewer than two in-vocabulary actions, which have no order
+    to score. Returns 0.0 when no trajectory has a scorable pair.
+
+    Returns:
+        float: SOS in [0, 1].
+    """
+    rank = {action: i for i, action in enumerate(global_actions)}
+    per_trajectory = []
+    for traj in trajectories:
+        ranks = [rank[action] for action in traj.actions if action in rank]
+        if len(ranks) < 2:
+            continue
+        per_trajectory.append(float(np.mean(np.diff(ranks) >= 0)))
+    return float(np.mean(per_trajectory)) if per_trajectory else 0.0
+
+
 def _stepwise_action_counts(trajectories, max_len, win_action="A_win", loss_action="A_lost") -> list:
     """Per-step raw action counts, padding episodes that end early.
 
