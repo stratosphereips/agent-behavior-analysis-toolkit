@@ -644,7 +644,7 @@ def render_report(d, v, title):
     if v["trend"] == "rising":
         r_why, r_st, r_tr, r_col = (f"Reward rises from {fnum(ret[0])} to {fnum(late)}, by more than its measurement error (slope {v['return_slope']:+.2g} per checkpoint)." + (" Most of the gain is one early jump." if v["step"] else ""), "obs", "&#9650; rising", _RCOL["up"])
     elif v["trend"] == "declining":
-        r_why, r_st, r_tr, r_col = (f"Reward decreases from {fnum(ret[0])} to {fnum(late)}, by more than its measurement error (slope {v['return_slope']:+.2g} per checkpoint).", "watch", "&#9660; decreasing", _RCOL["down"])
+        r_why, r_st, r_tr, r_col = (f"Reward decreases from {fnum(ret[0])} to {fnum(late)}, by more than its measurement error (slope {v['return_slope']:+.2g} per checkpoint).", "flag", "&#9660; decreasing", _RCOL["down"])
     else:
         r_why, r_st, r_tr, r_col = (f"Reward shows no net trend: the change from start ({fnum(ret[0])}) to end ({fnum(late)}) stays within its measurement error, so it never improved.", "watch", "&rarr; no trend", _RCOL["flat"])
     if has_true:
@@ -744,6 +744,53 @@ def render_report(d, v, title):
  <div class="flags">{fl}{ip}</div>
 </div>'''
 
+def estimate_report_height(v, title, width=900):
+    """Content-aware height for render_report_svg, so the exported canvas neither clips the
+    report nor leaves a large blank margin below it. render_report()'s layout is fixed: a header
+    + exactly 4 panel rows ('.ag'), followed by one '.flag' div per raised flag plus exactly one
+    interpretation '.flag' div. Calibrated against headless-Chrome-measured renders at width=900
+    (0-flag / 1-flag / long-title reports all landed at 1110-1237px); the constants below add a
+    deliberate safety margin on top of that fit so a formula edge case still clears real content."""
+    n_notes = len(v.get("flags", [])) + max(len(v.get("interpretation", [])), 1)
+    text_len = len(str(title)) + len(str(v.get("run", "")))
+    return int(1050 + 85 * n_notes + max(0, text_len - 120) * 0.6 + 180)
+
+def render_report_svg(html, width=900, height=2000):
+    """Wrap an HTML report in an SVG foreignObject for single-file vector output.
+
+    The result is a valid .svg that renders in any browser.  The HTML is
+    sanitized to valid XHTML first (named entities → numeric, void tags
+    self-closed, bare & escaped) since SVG is XML.
+    """
+    import re
+    xhtml = html
+    # The report's inline chart <svg> tags carry no xmlns of their own, so once nested inside
+    # this wrapper's <html xmlns="...xhtml"> they'd inherit the XHTML namespace instead of SVG
+    # and render as inert text (axis labels run together, no lines/bars) rather than graphics.
+    xhtml = re.sub(r'<svg\b', '<svg xmlns="http://www.w3.org/2000/svg"', xhtml)
+    # Named HTML entities → numeric (XML only predefines &amp; &lt; &gt; &quot; &apos;)
+    for name, num in (('&middot;', '&#183;'), ('&rarr;', '&#8594;'),
+                      ('&plusmn;', '&#177;'), ('&mdash;', '&#8212;'),
+                      ('&ndash;', '&#8211;'), ('&nbsp;', '&#160;'),
+                      ('&bull;', '&#8226;')):
+        xhtml = xhtml.replace(name, num)
+    # Self-close void XHTML tags (<link ...> → <link ... />, <meta ...> → <meta ... />)
+    xhtml = re.sub(r'<(link|meta|br|hr|img)\b([^>]*?)(?<!/)\s*>', r'<\1\2 />', xhtml)
+    # Escape bare & (but not &amp; &lt; &gt; &quot; &apos; &#NNN; &#xHHH;)
+    xhtml = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)', '&amp;', xhtml)
+    return f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}"
+     viewBox="0 0 {width} {height}" style="overflow:visible">
+  <foreignObject width="100%" height="100%" style="overflow:visible">
+    <html xmlns="http://www.w3.org/1999/xhtml">
+      <head><meta charset="utf-8"/></head>
+      <body style="margin:0;padding:0">
+        {xhtml}
+      </body>
+    </html>
+  </foreignObject>
+</svg>'''
+
 # ---------------- CLI ----------------
 def main():
     ap = argparse.ArgumentParser()
@@ -811,12 +858,16 @@ def main():
         print(f"[stage2] {name}: insufficient data (single checkpoint) -- verdict only"); return
     if a.reachable is None:
         print("[stage2] note: no --reachable given -- coverage shown without a fraction; footprint flag omitted")
-    open(os.path.join(out, f"{name}_report.html"), "w", encoding="utf-8").write(render_report(d, v, a.title or name))
+    title = a.title or name
+    html = render_report(d, v, title)
+    open(os.path.join(out, f"{name}_report.html"), "w", encoding="utf-8").write(html)
+    svg_height = estimate_report_height(v, title)
+    open(os.path.join(out, f"{name}_report.svg"), "w", encoding="utf-8").write(render_report_svg(html, height=svg_height))
     flags = "; ".join(f["headline"] for f in v["flags"]) or "no flags"
     print(f"[stage2] {v['trend']} return | {'settled' if v['settled'] else 'never settles'}"
           + (f" | coverage {100*v['footprint_frac']:.0f}%" if v['footprint_frac'] is not None else "")
           + f" | flags: {flags}")
-    print(f"[stage2] wrote {name}_verdict.json + report.html in {out}")
+    print(f"[stage2] wrote {name}_verdict.json + report.html + report.svg in {out}")
 
 if __name__ == "__main__":
     main()
