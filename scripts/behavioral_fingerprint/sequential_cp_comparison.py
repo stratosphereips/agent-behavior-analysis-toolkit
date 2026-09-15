@@ -625,6 +625,12 @@ def main():
 
     checkpoint_stats = compute_checkpoint_stats(checkpoint_policies)
 
+    # Union of per-checkpoint state sets: distinct states visited across the whole
+    # run, not just within a single checkpoint (that's total_nodes per checkpoint).
+    total_distinct_states_visited = len(set().union(
+        *(checkpoint_policies[cp]._state_visitation_count.keys() for cp in checkpoints)
+    )) if checkpoints else 0
+
     # estimate noise values for each checkpoint
     noise_values = estimate_noise_values(checkpoint_pairs, checkpoint_policies, cost_matrix_3, global_ngrams_3, GLOBAL_ACTIONS, num_samples=args.noise_num_samples)
     
@@ -668,6 +674,7 @@ def main():
         "checkpoint_ids": [],
         "nodes_added": [],
         "nodes_removed": [],
+        "total_distinct_states_visited": total_distinct_states_visited,
     }
     print(f"checkpoint_pairs: {checkpoint_pairs}")
     for i, timestep in enumerate(checkpoints):
@@ -716,7 +723,7 @@ def main():
             try:
                 step_metrics = {"checkpoint": checkpoint_labels[i]}
                 for k, v in metrics.items():
-                    if len(v) > 0 and v[-1] is not None:
+                    if isinstance(v, list) and len(v) > 0 and v[-1] is not None:
                         step_metrics[k] = v[-1]
                 wandb.log(step_metrics, step=checkpoint_labels[i])
             except Exception as e:
