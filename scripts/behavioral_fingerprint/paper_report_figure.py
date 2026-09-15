@@ -36,9 +36,10 @@ rt_lvl = int(round(np.nanmedian(rtrue))) if has_true else 0
 r0, rlate = ret[0], v.get("return_late", ret[-1])
 
 # ---- verdict-driven chips ----
-rew_st = "watch" if v["trend"] == "declining" else "obs"
+lip = v.get("learning_in_progress")
+rew_st = "watch" if (v["trend"] == "declining" or lip) else "obs"
 cov_st = "flag" if v["footprint_flag"] else ("watch" if v.get("cov_contracting") else "obs")
-beh_st = "watch" if v.get("settle_state") == "unsettled" else "obs"
+beh_st = "flag" if v.get("static") else ("watch" if v.get("settle_state") == "unsettled" else "obs")
 ss = v.get("settle_state", "settled" if v.get("settled") else "unsettled")
 kindw = KINDW.get(v.get("kind_dominant"), "several channels") if v.get("kind_clear") else "several channels"
 
@@ -144,8 +145,9 @@ if v["flags"]:
         btxt = "FLAG (%s): %s %s" % (CHIP[{"problem": "flag"}.get(f0["severity"], "watch")][1], f0["headline"], f0.get("body", ""))
     banner(gs[3, :], btxt, "#f7e4e2", "#b5322a", 8.8)
 else:
-    banner(gs[3, :], "No flags raised. Only the coverage line is checked against a true reward; everything else "
-           "describes the run without judging it.", "#e6f4ec", "#1a875a", 8.8)
+    banner(gs[3, :], "No flags raised. Each panel is checked against its noise floor, and the validated reads "
+           "(low coverage, no-learning, change-underway) did not fire. The rest describes the run without judging it.",
+           "#e6f4ec", "#1a875a", 8.8)
 
 fig.savefig(OUT, dpi=200, bbox_inches="tight")
 fig.savefig(OUT.replace(".png", ".pdf"), bbox_inches="tight")
