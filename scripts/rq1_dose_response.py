@@ -53,9 +53,9 @@ from scipy import stats
 Z_CRIT = 1.9599639845400545  # two-sided p<0.05
 EVO_METRICS = ["topological_shift", "strategic_shift", "3-gram_wasserstein"]
 ENV_N = {"Taxi": 1000, "FrozenLake": 500, "MountainCar": 500}
-ENV_DIR = {"FrozenLake": "frozenlake8x8", "MountainCar": "mountain_car", "Taxi": "taxi"}
+ENV_DIR = {"FrozenLake": "frozen_lake8x8", "MountainCar": "mountain_car", "Taxi": "taxi"}
 ALGOS = ["q_learning", "sarsa", "dqn", "ppo"]
-SEEDS = ["seed1", "seed2", "seed3", "seed4", "seed5", "seed4242"]
+SEEDS = ["seed_1", "seed_2", "seed_3", "seed_4", "seed_5", "seed_4242"]
 EXCLUDE = {("Taxi", "ppo")}  # return never active -> nothing to confirm against
 COLORS = {"FrozenLake": "#F58518", "MountainCar": "#4C78A8", "Taxi": "#54A24B"}
 
@@ -88,8 +88,13 @@ def return_detect(d, n):
 
 
 def load_run(root, env, algo, seed, mode):
-    fs = glob.glob(os.path.join(root, ENV_DIR[env], algo, mode, seed, "*_metrics.json"))
-    return json.load(open(fs[0])) if fs else None
+    fs = sorted(f for f in glob.glob(os.path.join(root, ENV_DIR[env], algo, mode, seed, "*_metrics.json"))
+                if not any(t in f for t in ("30K", "bins15", "bins30", "_bak")))
+    for f in fs:
+        d = json.load(open(f))
+        if len(d.get("topological_shift_raw", [])) > 0:      # skip empty/truncated runs
+            return d
+    return None
 
 
 def collect(root, mode):
@@ -237,7 +242,7 @@ def plot(env, x, signed, out_fig, dpi):
 def main():
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     ap = argparse.ArgumentParser(description="RQ1 dose-response / funnel (Finding 2 support).")
-    ap.add_argument("--results_root", default=os.path.join(here, "results"),
+    ap.add_argument("--results_root", default=r"C:\Users\ondra\Documents\metric_results",
                     help="Root holding <env>/<algo>/<mode>/seed*/*_metrics.json")
     ap.add_argument("--mode", default="standard", help="Learning mode subfolder (default: standard).")
     ap.add_argument("--out_fig", default=None, help="If set, write the funnel figure here.")

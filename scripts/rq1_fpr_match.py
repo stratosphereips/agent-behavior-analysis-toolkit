@@ -47,12 +47,13 @@ import numpy as np
 Z_CRIT = 1.9599639845400545  # two-sided p<0.05
 EVO_METRICS = ["topological_shift", "strategic_shift", "3-gram_wasserstein"]
 ENV_N = {"Taxi": 1000, "FrozenLake": 500, "MountainCar": 500}
-ENV_DIR = {"FrozenLake": "frozenlake8x8", "MountainCar": "mountain_car", "Taxi": "taxi"}
+ENV_DIR = {"FrozenLake": "frozen_lake8x8", "MountainCar": "mountain_car", "Taxi": "taxi"}
 # Paper's measured fingerprint false-positive floor per environment (Sec null_fpr).
 FP_FLOOR = {"FrozenLake": 0.15, "MountainCar": 0.10, "Taxi": 0.14}
 ALGOS = ["q_learning", "sarsa", "dqn", "ppo"]
-SEEDS = ["seed1", "seed2", "seed3", "seed4", "seed5", "seed4242"]
+SEEDS = ["seed_1", "seed_2", "seed_3", "seed_4", "seed_5", "seed_4242"]
 EXCLUDE = {("Taxi", "ppo")}
+EXCL_TOK = ("30K", "bins15", "bins30", "_bak")
 # Non-standard random variants to exclude when estimating the STATIONARY floor.
 NON_STATIONARY = ("reward_hacking", "perpetual", "limited")
 
@@ -92,11 +93,55 @@ def random_return_z(root, env):
     """|z| of the return test over the stationary Random policy (standard only)."""
     out = []
     for f in glob.glob(os.path.join(root, ENV_DIR[env], "random", "**", "*_metrics.json"), recursive=True):
-        if any(t in f for t in NON_STATIONARY):
+        if any(t in f for t in NON_STATIONARY) or any(t in f for t in EXCL_TOK):
             continue
-        out.append(return_absz(json.load(open(f)), ENV_N[env]))
+        d = json.load(open(f))
+        if len(d.get("topological_shift_raw", [])) == 0:
+            continue
+        out.append(return_absz(d, ENV_N[env]))
     z = np.concatenate(out)
     return z[~np.isnan(z)]
+
+
+def random_fp_excess(root, env):
+    """Per-pair fingerprint excess-z over the stationary Random policy (standard only)."""
+    out = []
+    for f in glob.glob(os.path.join(root, ENV_DIR[env], "random", "**", "*_metrics.json"), recursive=True):
+        if any(t in f for t in NON_STATIONARY) or any(t in f for t in EXCL_TOK):
+            continue
+        d = json.load(open(f))
+        if has_null(d) and len(d.get("topological_shift_raw", [])) > 0:
+            out.append(excess_z(d))
+    if not out:
+        return np.array([])
+    e = np.concatenate(out)
+    return e[~np.isnan(e)]
+
+
+def symmetric_match(root, mode, alphas=(0.05, 0.10, 0.15)):
+    """Strongest form: put BOTH detectors at a common empirical FPR alpha on the Random
+    control (per environment), then recount fp-only vs return-only on the learners. This
+    removes the operating-point difference entirely, in both directions at once."""
+    print("\n\n===== SYMMETRIC matched-FPR: both detectors at a common Random FPR =====")
+    for env in ENV_DIR:
+        re_z = random_return_z(root, env)
+        fp_e = random_fp_excess(root, env)
+        if fp_e.size == 0 or re_z.size == 0:
+            print(f"\n{env}: no calibratable Random pairs (fp_excess n={fp_e.size}, ret_z n={re_z.size}) -- skipped")
+            continue
+        print(f"\n{env}:")
+        print(f"  {'alpha':>6} {'ret zc':>8} {'fp tc':>8} {'fp-only':>9} {'ret-only':>9} {'ratio':>8}")
+        for a in alphas:
+            zc = float(np.quantile(re_z, 1 - a))
+            tc = float(np.quantile(fp_e, 1 - a))
+            fo = ro = 0
+            for d in learner_runs(root, env, mode):
+                ex = excess_z(d); fp = np.where(np.isnan(ex), False, ex > tc)
+                z = return_absz(d, ENV_N[env]); cn = np.where(np.isnan(z), False, z > zc)
+                fo += int((fp & ~cn).sum()); ro += int((~fp & cn).sum())
+            ratio = f"{fo/ro:.0f}:1" if ro else "inf:1"
+            deg = "  (ret zc~0: Random return constant)" if zc < 1e-6 else ""
+            print(f"  {a:6.2f} {zc:8.3f} {tc:8.3f} {fo:9d} {ro:9d} {ratio:>8}{deg}")
 
 
 def learner_runs(root, env, mode):
@@ -104,17 +149,19 @@ def learner_runs(root, env, mode):
         if (env, a) in EXCLUDE:
             continue
         for s in SEEDS:
-            fs = glob.glob(os.path.join(root, ENV_DIR[env], a, mode, s, "*_metrics.json"))
-            if fs:
-                d = json.load(open(fs[0]))
-                if has_null(d):
+            fs = sorted(f for f in glob.glob(os.path.join(root, ENV_DIR[env], a, mode, s, "*_metrics.json"))
+                        if not any(t in f for t in EXCL_TOK))
+            for f in fs:
+                d = json.load(open(f))
+                if has_null(d) and len(d.get("topological_shift_raw", [])) > 0:
                     yield d
+                    break
 
 
 def main():
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     ap = argparse.ArgumentParser(description="RQ1 FPR-matching robustness (Finding 2 footnote).")
-    ap.add_argument("--results_root", default=os.path.join(here, "results"))
+    ap.add_argument("--results_root", default=r"C:\Users\ondra\Documents\metric_results")
     ap.add_argument("--mode", default="standard")
     args = ap.parse_args()
 
@@ -145,6 +192,7 @@ def main():
     print(f"{'TOTAL':12} {f'{tot[0]} / {tot[1]}':>26} {f'{tot[2]} / {tot[3]}':>26}")
     print("\nNote: MountainCar's matched threshold is ~0 (Random return is constant), so its"
           "\nmatched counts are degenerate; FrozenLake is the cleanly matchable case (~20:1).")
+    symmetric_match(args.results_root, args.mode)
 
 
 if __name__ == "__main__":
