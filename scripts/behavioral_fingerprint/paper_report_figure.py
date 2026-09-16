@@ -27,7 +27,7 @@ perp = np.array(d["state_visitation_perplexity"], float); nodes = np.array(d["to
 emin = v.get("epsilon_min", list(HARD_EMIN))
 Rn, floor_n, _ = _channels(d, emin)
 disc = np.array(d["topological_shift_discovery_raw"], float); aban = np.array(d["topological_shift_abandonment_raw"], float)
-reach = int(v["reachable"]); pct = int(round(100 * v["footprint_frac"]))
+peak = int(round(v.get("peak_nodes") or float(np.max(nodes)))); pct = int(round(100 * v["footprint_frac"]))
 sf = int(round((v.get("settle_frac") or 0) * 100))
 x = np.arange(len(ret)); xp = np.arange(len(Rn[0]))
 tp = v["turnover"]
@@ -53,7 +53,7 @@ elif ss == "settled": sw = "and its behaviour sits at the noise floor throughout
 elif ss == "converging": sw = "and its behaviour is still settling toward the noise floor"
 else: sw = "and its behaviour stays unsettled"
 _cov = "yet the agent covers only %d%%" % pct if v["footprint_flag"] else "the agent covers %d%%" % pct
-summary = "%s, %s of the reachable states %s. " % (rw, _cov, sw)
+summary = "%s, %s of its own widest reach %s. " % (rw, _cov, sw)
 if v["trend"] == "rising" and v["footprint_flag"]:
     summary += "Reward alone reads this run as solved; the fingerprint does not."
 elif not v["flags"]:
@@ -106,15 +106,15 @@ if has_true:
 
 # ---- Coverage ----
 if v["footprint_flag"]:
-    ccap = "Effective coverage (perplexity / %d reachable) = %d%%, below the validated 0.20 line." % (reach, pct)
+    ccap = "Effective coverage (perplexity / %d peak reach) = %d%%, below the validated 0.20 line." % (peak, pct)
 elif cov_st == "watch":
-    ccap = ("Effective coverage (perplexity / %d reachable) = %d%%, at or above the 0.20 line, but the "
-            "footprint is shrinking over training." % (reach, pct))
+    ccap = ("Effective coverage (perplexity / %d peak reach) = %d%%, at or above the 0.20 line, but the "
+            "footprint is shrinking over training." % (peak, pct))
 else:
-    ccap = "Effective coverage (perplexity / %d reachable) = %d%%, at or above the 0.20 line." % (reach, pct)
+    ccap = "Effective coverage (perplexity / %d peak reach) = %d%%, at or above the 0.20 line." % (peak, pct)
 a = panel(gs[1, 1], "Coverage", cov_st, ccap)
 a.plot(x, perp, color=AC, lw=1.8, label="perplexity"); a.plot(x, nodes, color=FNT, lw=1.2, label="distinct")
-a.axhline(0.20 * reach, ls="--", lw=1, color="#8390a0"); a.text(x[-1], 0.20 * reach, "0.20", fontsize=6.2, color="#5a6673", va="bottom", ha="right")
+a.axhline(0.20 * peak, ls="--", lw=1, color="#8390a0"); a.text(x[-1], 0.20 * peak, "0.20", fontsize=6.2, color="#5a6673", va="bottom", ha="right")
 a.legend(fontsize=6.8, loc="center right", frameon=False)
 
 # ---- Behaviour change ----
