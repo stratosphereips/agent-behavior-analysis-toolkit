@@ -191,6 +191,14 @@ def report(gaps, counts):
           f"(rises: {len(gaps) - n_drop}, drops: {n_drop} = {n_drop / len(gaps):.0%})")
     rho, p = _spear(x, absy)
     print(f"  POOLED  Spearman(strength, |change|) rho={rho:+.3f}  p={p:.2e}")
+    rng = np.random.default_rng(0); runs_u = np.unique(run); boots = []
+    for _ in range(2000):
+        samp = rng.choice(runs_u, len(runs_u), replace=True)
+        idx = np.concatenate([np.where(run == r_)[0] for r_ in samp])
+        if len(idx) > 3:
+            boots.append(_spear(x[idx], absy[idx])[0])
+    lo, hi = np.percentile(boots, [2.5, 97.5])
+    print(f"          95% cluster-bootstrap CI (resample runs) [{lo:+.3f}, {hi:+.3f}]")
     for e in ENV_DIR:
         m = env == e
         if m.sum() > 3:

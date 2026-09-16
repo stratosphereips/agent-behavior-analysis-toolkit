@@ -59,9 +59,9 @@ def auc(neg, pos):
     return float((r[len(neg):].sum() - len(pos) * (len(pos) + 1) / 2) / (len(neg) * len(pos)))
 
 
-def unique_runs(env_glob):
+def unique_runs(env_glob, seen=None):
     """All non-variant metric files under a glob, deduped by (mean_return, perplexity)."""
-    seen = set()
+    seen = set() if seen is None else seen
     for f in sorted(glob.glob(env_glob, recursive=True)):
         if any(t in f for t in EXCL):
             continue
@@ -86,8 +86,12 @@ def _zpair(mr, sr, i, j, N):
 def forecast():
     print("=== (A) run-level forecast: first-half activity separates recoverers from stalled ===")
     rows = []  # (is_tabular, recovered, first_half_activity)
+    # population: runs whose return is flat over the first half, from the two effort-genuine modes
+    # (Good Learning + Exploration Deprivation); standard alone saturates in activity and cannot separate.
     for envname, ed in ENV_DIR.items():
-        for f, d in unique_runs(os.path.join(ROOT, ed, "*", "standard", "**", "*_metrics.json")):
+        seen = set()
+        for mode in ("standard", "limited_exploration"):
+          for f, d in unique_runs(os.path.join(ROOT, ed, "*", mode, "**", "*_metrics.json"), seen):
             parts = os.path.relpath(f, ROOT).split(os.sep)
             algo = parts[1]
             fp = fp_active_series(d)
@@ -107,11 +111,17 @@ def forecast():
     rows = np.array([(t, r, a) for (t, r, a) in rows], float)
     n = len(rows); rec = int(rows[:, 1].sum())
     print(f"  flat-first-half runs n={n}  (recoverers {rec}, stalled {n-rec})")
+    rng = np.random.default_rng(0)
     for lab, mask in [("tabular", rows[:, 0] == 1), ("deep", rows[:, 0] == 0), ("all", np.ones(n, bool))]:
         sub = rows[mask]; pos = sub[sub[:, 1] == 1, 2]; neg = sub[sub[:, 1] == 0, 2]
+        a = auc(neg, pos)
+        ci = ""
+        if len(pos) >= 2 and len(neg) >= 2:
+            b = [auc(rng.choice(neg, len(neg)), rng.choice(pos, len(pos))) for _ in range(5000)]
+            lo, hi = np.percentile(b, [2.5, 97.5]); ci = f" [{lo:.2f},{hi:.2f}]"
         print(f"  {lab:8s} n={len(sub):3d}  recoverers={len(pos):2d} stalled={len(neg):2d}  "
               f"median act rec={np.median(pos) if len(pos) else float('nan'):.2f} vs stall={np.median(neg) if len(neg) else float('nan'):.2f}  "
-              f"AUC={auc(neg, pos):.2f}")
+              f"AUC={a:.2f}{ci}")
 
 
 # ---------------- (B) metric non-redundancy ----------------
