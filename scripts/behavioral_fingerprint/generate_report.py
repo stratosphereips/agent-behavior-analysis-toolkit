@@ -26,7 +26,7 @@ Usage:
          [--num_actions N] [--floor hard|estimated] [--random_dir DIR] [--force]
 RUN_DIR is a folder of cp_*.jsonl (searched recursively).
 """
-import argparse, glob, json, os, re, base64
+import argparse, glob, json, os, re, base64, functools, html
 import numpy as np
 from scipy import stats
 import scripts.behavioral_fingerprint.noise_null_ab as ab
@@ -744,52 +744,403 @@ def render_report(d, v, title):
  <div class="flags">{fl}{ip}</div>
 </div>'''
 
-def estimate_report_height(v, title, width=900):
-    """Content-aware height for render_report_svg, so the exported canvas neither clips the
-    report nor leaves a large blank margin below it. render_report()'s layout is fixed: a header
-    + exactly 4 panel rows ('.ag'), followed by one '.flag' div per raised flag plus exactly one
-    interpretation '.flag' div. Calibrated against headless-Chrome-measured renders at width=900
-    (0-flag / 1-flag / long-title reports all landed at 1110-1237px); the constants below add a
-    deliberate safety margin on top of that fit so a formula edge case still clears real content."""
-    n_notes = len(v.get("flags", [])) + max(len(v.get("interpretation", [])), 1)
-    text_len = len(str(title)) + len(str(v.get("run", "")))
-    return int(1050 + 85 * n_notes + max(0, text_len - 120) * 0.6 + 180)
 
-def render_report_svg(html, width=900, height=2000):
-    """Wrap an HTML report in an SVG foreignObject for single-file vector output.
+# ---------- Miro-safe flat SVG report (presentation attributes only) ----------
+# Miro's importer can't run CSS: no <style>, no class=, no var(--x), no external stylesheet/font/
+# image refs, no foreignObject/HTML. Every color, font and position below is a literal, computed
+# value baked straight onto each element. This is a second, independent renderer (not a wrapper
+# around render_report()'s HTML) because the two draw with entirely different primitives; the
+# reward-blind narrative logic is deliberately re-derived here rather than shared, so each renderer
+# stays a simple, self-contained read of (d, v).
+FLAT = {"bg": "#eef2f5", "surface": "#ffffff", "surface2": "#f6f8fa", "ink": "#141a20",
+        "mut": "#5a6673", "fnt": "#8390a0", "hair": "#dbe2e9", "accent": "#0072b2",
+        "good": "#1a875a", "good_bg": "#e4f2eb", "warn": "#b5620a", "warn_bg": "#f8ecdd",
+        "crit": "#b5322a", "crit_bg": "#f7e4e2", "c1": "#0072b2", "c2": "#b5322a", "c3": "#8a6d1f",
+        "purple": "#b39ddb"}
+F_SANS = "Arial, Helvetica, sans-serif"
+F_MONO = "Courier New, Courier, monospace"
+STATUS_STYLE = {"obs": (FLAT["surface2"], FLAT["mut"], FLAT["fnt"]),
+                 "watch": (FLAT["warn_bg"], FLAT["warn"], FLAT["warn"]),
+                 "flag": (FLAT["crit_bg"], FLAT["crit"], FLAT["crit"])}
+LABELS = {"obs": "NOT FLAGGED", "watch": "WORTH A LOOK", "flag": "CHECK THIS"}
+_esc = html.escape
 
-    The result is a valid .svg that renders in any browser.  The HTML is
-    sanitized to valid XHTML first (named entities → numeric, void tags
-    self-closed, bare & escaped) since SVG is XML.
-    """
-    import re
-    xhtml = html
-    # The report's inline chart <svg> tags carry no xmlns of their own, so once nested inside
-    # this wrapper's <html xmlns="...xhtml"> they'd inherit the XHTML namespace instead of SVG
-    # and render as inert text (axis labels run together, no lines/bars) rather than graphics.
-    xhtml = re.sub(r'<svg\b', '<svg xmlns="http://www.w3.org/2000/svg"', xhtml)
-    # Named HTML entities → numeric (XML only predefines &amp; &lt; &gt; &quot; &apos;)
-    for name, num in (('&middot;', '&#183;'), ('&rarr;', '&#8594;'),
-                      ('&plusmn;', '&#177;'), ('&mdash;', '&#8212;'),
-                      ('&ndash;', '&#8211;'), ('&nbsp;', '&#160;'),
-                      ('&bull;', '&#8226;')):
-        xhtml = xhtml.replace(name, num)
-    # Self-close void XHTML tags (<link ...> → <link ... />, <meta ...> → <meta ... />)
-    xhtml = re.sub(r'<(link|meta|br|hr|img)\b([^>]*?)(?<!/)\s*>', r'<\1\2 />', xhtml)
-    # Escape bare & (but not &amp; &lt; &gt; &quot; &apos; &#NNN; &#xHHH;)
-    xhtml = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)', '&amp;', xhtml)
-    return f'''<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}"
-     viewBox="0 0 {width} {height}" style="overflow:visible">
-  <foreignObject width="100%" height="100%" style="overflow:visible">
-    <html xmlns="http://www.w3.org/1999/xhtml">
-      <head><meta charset="utf-8"/></head>
-      <body style="margin:0;padding:0">
-        {xhtml}
-      </body>
-    </html>
-  </foreignObject>
-</svg>'''
+@functools.lru_cache(maxsize=None)
+def _flat_font_path(kind):
+    import matplotlib.font_manager as fm
+    if kind == "bold": return fm.findfont(fm.FontProperties(family="DejaVu Sans", weight="bold"))
+    if kind == "mono": return fm.findfont("DejaVu Sans Mono")
+    return fm.findfont("DejaVu Sans")
+
+@functools.lru_cache(maxsize=None)
+def _flat_font(kind, size):
+    from PIL import ImageFont
+    return ImageFont.truetype(_flat_font_path(kind), max(int(round(size)), 1))
+
+def _fw(word, kind, size):
+    """Pixel width of word, measured against a real proportional font (DejaVu Sans) as an
+    Arial-like stand-in -- Miro substitutes its own sans-serif at render time, so this is only
+    a wrapping guide, never exact typesetting."""
+    return _flat_font(kind, size).getlength(word)
+
+def _split_long_word(word, max_w, kind, size):
+    """Hard-break a single token at the character level once it alone exceeds max_w -- mirrors
+    the HTML report's word-break:break-all, needed for the underscore-joined run-name/title
+    tokens (e.g. 'dqn_batch_size=64_epsilon=...') that carry no spaces to wrap on."""
+    if len(word) <= 1 or _fw(word, kind, size) <= max_w:
+        return [word]
+    chunks, cur = [], ""
+    for ch in word:
+        trial = cur + ch
+        if cur and _fw(trial, kind, size) > max_w:
+            chunks.append(cur); cur = ch
+        else:
+            cur = trial
+    if cur: chunks.append(cur)
+    return chunks
+
+def _wrap_runs(runs, max_w, size, kind="regular", bold_kind="bold"):
+    """runs: [(word, is_bold), ...] in reading order. Packs them into lines <= max_w, returning
+    [[(word, is_bold), ...], ...]."""
+    space_w = _fw(" ", kind, size)
+    expanded = []
+    for word, bold in runs:
+        k = bold_kind if bold else kind
+        expanded += [(piece, bold) for piece in _split_long_word(word, max_w, k, size)]
+    lines, cur, cur_w = [], [], 0.0
+    for word, bold in expanded:
+        k = bold_kind if bold else kind
+        w = _fw(word, k, size)
+        add = w if not cur else w + space_w
+        if cur and cur_w + add > max_w:
+            lines.append(cur); cur = [(word, bold)]; cur_w = w
+        else:
+            cur.append((word, bold)); cur_w += add
+    if cur: lines.append(cur)
+    return lines or [[]]
+
+def _wrap(text, max_w, size, kind="regular", bold=False):
+    return _wrap_runs([(w, bold) for w in str(text).split()], max_w, size, kind)
+
+def _mixed_lines_svg(x, y, wrapped, size, fill, kind="regular", line_h=None):
+    """Render pre-wrapped [[(word,bold),...],...] as one <text> per line, bold words as their
+    own <tspan font-weight="700">. Returns (svg, total_height).
+
+    Per the SVG whitespace spec (xml:space="default"), leading/trailing whitespace is stripped
+    from EACH text chunk independently -- a per-word tspan with a leading space to separate it
+    from its neighbour loses that space on any strictly spec-compliant renderer (Chrome is lenient
+    about it, which is why this looked fine in a browser but came out with words run together
+    elsewhere). Fix: merge consecutive same-style words into one tspan joined by a real interior
+    space (never stripped, since it isn't at a chunk edge), and space out style-boundary tspans
+    with dx instead of a literal edge space."""
+    lh = line_h if line_h is not None else size * 1.42
+    fam = F_MONO if kind == "mono" else F_SANS
+    space_w = _fw(" ", "bold" if kind == "mono" else kind, size)
+    out = []
+    for i, line in enumerate(wrapped):
+        ty = y + i * lh
+        runs = []
+        for word, bold in line:
+            if runs and runs[-1][1] == bold:
+                runs[-1] = (runs[-1][0] + " " + word, bold)
+            else:
+                runs.append((word, bold))
+        spans = []
+        for k, (text, bold) in enumerate(runs):
+            w_attr = ' font-weight="700"' if bold else ""
+            dx_attr = f' dx="{space_w:.1f}"' if k > 0 else ""
+            spans.append(f'<tspan{w_attr}{dx_attr}>{_esc(text)}</tspan>')
+        out.append(f'<text x="{x:.1f}" y="{ty:.1f}" font-family="{fam}" font-size="{size}" fill="{fill}">{"".join(spans)}</text>')
+    return "".join(out), len(wrapped) * lh
+
+def _lc_svg(series, colors, floor=None, W=360, H=120, yr=None, xpos=None, xdom=None,
+            std=None, dashed=None, yscale="lin", xlab="checkpoint", ylab="", ymin0=False, ticks=None, hlines=None):
+    """Presentation-attribute twin of _lc(): identical geometry, no <style>/class/var()."""
+    arrs = [np.asarray(s, float) for s in series]
+    L, R, T, B = _MARG; m = len(arrs[0])
+    stk = list(arrs) + ([np.asarray(floor, float)] if floor is not None else [])
+    if hlines: stk += [np.array([float(y) for y, _, _ in hlines], float)]
+    if std is not None:
+        for j, sd in enumerate(std):
+            if sd is not None: stk += [arrs[j] + np.asarray(sd, float), arrs[j] - np.asarray(sd, float)]
+    allv = np.concatenate(stk)
+    if yr is not None: ymin, ymax = yr
+    else:
+        ymin, ymax = float(np.nanmin(allv)), float(np.nanmax(allv))
+        if yscale == "sqrt" or ymin0: ymin = 0.0
+        rng = (ymax - ymin) or 1.0; ymax += 0.08 * rng; ymin -= 0.08 * rng * (ymin < 0)
+    if ymax <= ymin: ymax = ymin + 1
+    xpos = np.arange(m, dtype=float) if xpos is None else np.asarray(xpos, float)
+    x0, x1 = (float(xpos[0]), float(xpos[-1])) if xdom is None else xdom
+    xr = (x1 - x0) or 1.0
+    PX = lambda p: L + (np.asarray(p, float) - x0) / xr * (W - R - L)
+    if yscale == "sqrt":
+        tf = lambda v: np.sqrt(np.clip(np.asarray(v, float), 0, None)); tmax = float(tf(ymax)) or 1.0
+    else:
+        tf = lambda v: np.clip(np.asarray(v, float), ymin, ymax) - ymin; tmax = (ymax - ymin) or 1.0
+    PY = lambda v: (H - B) - tf(v) / tmax * (H - B - T)
+    xw = PX(xpos); fnt = FLAT["fnt"]
+    s = (f'<svg width="{W}" height="{H}" viewBox="0 0 {W} {H}" preserveAspectRatio="none">'
+         f'<rect x="0" y="0" width="{W}" height="{H}" rx="8" ry="8" fill="{FLAT["surface2"]}" stroke="{FLAT["hair"]}" stroke-width="1"/>')
+    if std is not None:
+        for j, sd in enumerate(std):
+            if sd is None: continue
+            up, lo = arrs[j] + np.asarray(sd, float), arrs[j] - np.asarray(sd, float)
+            pts = ' '.join(f'{a:.1f},{PY(u):.1f}' for a, u in zip(xw, up)) + ' ' + ' '.join(f'{a:.1f},{PY(l):.1f}' for a, l in zip(xw[::-1], lo[::-1]))
+            s += f'<polygon points="{pts}" fill="{colors[j]}" fill-opacity=".13"/>'
+    if floor is not None:
+        s += '<polyline points="' + ' '.join(f'{a:.1f},{PY(vv):.1f}' for a, vv in zip(xw, np.asarray(floor, float))) + f'" fill="none" stroke="{fnt}" stroke-dasharray="3 2" stroke-width=".8" opacity=".6"/>'
+    if hlines:
+        for yv, lab, col in hlines:
+            yp = float(PY(float(yv)))
+            s += f'<line x1="{L}" y1="{yp:.1f}" x2="{W-R}" y2="{yp:.1f}" stroke="{col}" stroke-width=".9" stroke-dasharray="5 3" opacity=".85"/>'
+            s += f'<text x="{W-R-2}" y="{yp-2.5:.1f}" font-family="{F_MONO}" font-size="7.5" fill="{col}" text-anchor="end">{_esc(lab)}</text>'
+    for j, (arr, c) in enumerate(zip(arrs, colors)):
+        da = ' stroke-dasharray="4 2"' if dashed and dashed[j] else ''
+        s += '<polyline points="' + ' '.join(f'{a:.1f},{PY(vv):.1f}' for a, vv in zip(xw, arr)) + f'" fill="none" stroke="{c}" stroke-width="1.7"{da}/><circle cx="{xw[-1]:.1f}" cy="{PY(arr[-1]):.1f}" r="2.3" fill="{c}"/>'
+    s += f'<line x1="{L}" y1="{T-2}" x2="{L}" y2="{H-B}" stroke="{fnt}" stroke-width=".5" opacity=".4"/><line x1="{L}" y1="{H-B}" x2="{W-R}" y2="{H-B}" stroke="{fnt}" stroke-width=".5" opacity=".4"/>'
+    tickv = [(f * f) * ymax for f in (0, .25, .5, .75, 1)] if yscale == "sqrt" else list(np.linspace(ymin, ymax, 4))
+    for yv in tickv:
+        yp = float(PY(yv)); s += f'<line x1="{L-2.5}" y1="{yp:.1f}" x2="{L}" y2="{yp:.1f}" stroke="{fnt}" stroke-width=".5" opacity=".5"/><text x="{L-4}" y="{yp+2.5:.1f}" font-family="{F_MONO}" font-size="7.5" fill="{fnt}" text-anchor="end">{yv:.2g}</text>'
+    tickpos = xw if ticks is None else PX(np.asarray(ticks, float))
+    for xp in tickpos:
+        s += f'<line x1="{xp:.1f}" y1="{H-B}" x2="{xp:.1f}" y2="{H-B+3}" stroke="{fnt}" stroke-width=".6" opacity=".55"/>'
+    for xv in np.linspace(x0, x1, 5):
+        xp = float(PX(xv)); s += f'<line x1="{xp:.1f}" y1="{H-B}" x2="{xp:.1f}" y2="{H-B+6}" stroke="{fnt}" stroke-width=".8" opacity=".75"/><text x="{xp:.1f}" y="{H-B+13}" font-family="{F_MONO}" font-size="7.5" fill="{fnt}" text-anchor="middle">{_xfmt(xv)}</text>'
+    s += f'<text x="{(L+W-R)/2:.0f}" y="{H-2}" font-family="{F_SANS}" font-size="8.5" fill="{fnt}" opacity=".75" text-anchor="middle">{_esc(xlab)}</text>'
+    if ylab:
+        yc = (T + H - B) / 2; s += f'<text x="9" y="{yc:.0f}" font-family="{F_SANS}" font-size="8.5" fill="{fnt}" opacity=".75" text-anchor="middle" transform="rotate(-90 9 {yc:.0f})">{_esc(ylab)}</text>'
+    return s + '</svg>'
+
+def _stackts_svg(segs, colors, W=360, H=120, xpos=None, xdom=None, xlab="checkpoint", ylab="turnover", ymax=1.0, ticks=None):
+    """Presentation-attribute twin of _stackts()."""
+    arrs = [np.asarray(a, float) for a in segs]; m = len(arrs[0]); L, R, T, B = _MARG
+    xpos = np.arange(m, dtype=float) if xpos is None else np.asarray(xpos, float)
+    x0, x1 = (float(xpos[0]), float(xpos[-1])) if xdom is None else xdom; xr = (x1 - x0) or 1.0
+    PX = lambda p: L + (float(p) - x0) / xr * (W - R - L)
+    PY = lambda v: (H - B) - min(max(v, 0.0), ymax) / ymax * (H - B - T)
+    bw = max((W - R - L) / max(m, 1) * 0.8, 0.7); fnt = FLAT["fnt"]
+    s = (f'<svg width="{W}" height="{H}" viewBox="0 0 {W} {H}" preserveAspectRatio="none">'
+         f'<rect x="0" y="0" width="{W}" height="{H}" rx="8" ry="8" fill="{FLAT["surface2"]}" stroke="{FLAT["hair"]}" stroke-width="1"/>')
+    for i in range(m):
+        x = PX(xpos[i]); base = 0.0
+        for a, c in zip(arrs, colors):
+            h = float(a[i]); y1 = PY(base + h); y0 = PY(base)
+            if y0 - y1 > 0.2: s += f'<rect x="{x-bw/2:.1f}" y="{y1:.1f}" width="{bw:.1f}" height="{y0-y1:.1f}" fill="{c}" fill-opacity=".9"/>'
+            base += h
+    s += f'<line x1="{L}" y1="{T-2}" x2="{L}" y2="{H-B}" stroke="{fnt}" stroke-width=".5" opacity=".4"/><line x1="{L}" y1="{H-B}" x2="{W-R}" y2="{H-B}" stroke="{fnt}" stroke-width=".5" opacity=".4"/>'
+    for yv in np.linspace(0, ymax, 4):
+        yp = float(PY(yv)); s += f'<line x1="{L-2.5}" y1="{yp:.1f}" x2="{L}" y2="{yp:.1f}" stroke="{fnt}" stroke-width=".5" opacity=".5"/><text x="{L-4}" y="{yp+2.5:.1f}" font-family="{F_MONO}" font-size="7.5" fill="{fnt}" text-anchor="end">{yv:.2g}</text>'
+    for xp in [PX(p) for p in (xpos if ticks is None else np.asarray(ticks, float))]:
+        s += f'<line x1="{xp:.1f}" y1="{H-B}" x2="{xp:.1f}" y2="{H-B+3}" stroke="{fnt}" stroke-width=".6" opacity=".55"/>'
+    for xv in np.linspace(x0, x1, 5):
+        xp = float(PX(xv)); s += f'<line x1="{xp:.1f}" y1="{H-B}" x2="{xp:.1f}" y2="{H-B+6}" stroke="{fnt}" stroke-width=".8" opacity=".75"/><text x="{xp:.1f}" y="{H-B+13}" font-family="{F_MONO}" font-size="7.5" fill="{fnt}" text-anchor="middle">{_xfmt(xv)}</text>'
+    s += f'<text x="{(L+W-R)/2:.0f}" y="{H-2}" font-family="{F_SANS}" font-size="8.5" fill="{fnt}" opacity=".75" text-anchor="middle">{_esc(xlab)}</text>'
+    yc = (T + H - B) / 2; s += f'<text x="9" y="{yc:.0f}" font-family="{F_SANS}" font-size="8.5" fill="{fnt}" opacity=".75" text-anchor="middle" transform="rotate(-90 9 {yc:.0f})">{_esc(ylab)}</text>'
+    return s + '</svg>'
+
+def _placeholder_svg(W=360, H=120, msg="decomposition not available"):
+    return (f'<svg width="{W}" height="{H}" viewBox="0 0 {W} {H}" preserveAspectRatio="none">'
+            f'<rect x="0" y="0" width="{W}" height="{H}" rx="8" ry="8" fill="{FLAT["surface2"]}" stroke="{FLAT["hair"]}" stroke-width="1"/>'
+            f'<text x="{W/2:.0f}" y="{H/2+3:.0f}" font-family="{F_SANS}" font-size="8.5" fill="{FLAT["fnt"]}" opacity=".75" text-anchor="middle">{_esc(msg)}</text></svg>')
+
+def _legend_svg(items, x, y, w, size=9.5):
+    """items: [(hex_color_or_'dash', label), ...], wrapped left-to-right within width w."""
+    sw_w, sw_gap, gap_item = 10, 4, 12
+    cx, cy, line_h, started = x, y, size * 1.6, False
+    out = []
+    for col, lbl in items:
+        lbl_w = _fw(lbl, "regular", size); item_w = sw_w + sw_gap + lbl_w
+        if started and (cx - x + item_w) > w:
+            cx = x; cy += line_h
+        started = True
+        mid = cy + size * 0.55
+        if col == "dash":
+            out.append(f'<line x1="{cx:.1f}" y1="{mid:.1f}" x2="{cx+12:.1f}" y2="{mid:.1f}" stroke="{FLAT["fnt"]}" stroke-width="1.5" stroke-dasharray="3 2"/>')
+            used = 12
+        else:
+            out.append(f'<rect x="{cx:.1f}" y="{mid-1.5:.1f}" width="{sw_w}" height="3" rx="1.5" fill="{col}"/>')
+            used = sw_w
+        out.append(f'<text x="{cx+used+sw_gap:.1f}" y="{cy+size*0.95:.1f}" font-family="{F_SANS}" font-size="{size}" fill="{FLAT["mut"]}">{_esc(lbl)}</text>')
+        cx += used + sw_gap + lbl_w + gap_item
+    return "".join(out), ((cy - y) + line_h if started else 0.0)
+
+def _row_svg(x, y, w, chart_svg, name, trend_label, trend_color, status, why, chart_w=360, chart_h=120, legend_svg="", legend_h=0.0):
+    bg, fg, dot = STATUS_STYLE[status]; label = LABELS[status]
+    PAD_T, PAD_B, GAP_COL, GAP_ROW = 13, 13, 16, 6
+    out = [f'<line x1="{x:.1f}" y1="{y:.1f}" x2="{x+w:.1f}" y2="{y:.1f}" stroke="{FLAT["hair"]}" stroke-width="1"/>']
+    cy = y + PAD_T
+    right_x = x + chart_w + GAP_COL; right_w = max(w - chart_w - GAP_COL, 60)
+    lbl_w = _fw(label, "regular", 10); chip_pad, chip_h, dot_r = 8, 18, 3
+    chip_w = dot_r * 2 + 5 + lbl_w + 2 * chip_pad
+    out.append(f'<rect x="{right_x:.1f}" y="{cy:.1f}" width="{chip_w:.1f}" height="{chip_h}" rx="9" fill="{bg}"/>')
+    out.append(f'<circle cx="{right_x+chip_pad+dot_r:.1f}" cy="{cy+chip_h/2:.1f}" r="{dot_r}" fill="{dot}"/>')
+    out.append(f'<text x="{right_x+chip_pad+dot_r*2+5:.1f}" y="{cy+chip_h/2+3.5:.1f}" font-family="{F_SANS}" font-size="10" font-weight="700" fill="{fg}">{_esc(label)}</text>')
+    nx = right_x + chip_w + 9; name_w = _fw(name, "bold", 13)
+    out.append(f'<text x="{nx:.1f}" y="{cy+chip_h/2+4.5:.1f}" font-family="{F_SANS}" font-size="13" font-weight="700" fill="{FLAT["ink"]}">{_esc(name)}</text>')
+    tx = nx + name_w + 9
+    out.append(f'<text x="{tx:.1f}" y="{cy+chip_h/2+4:.1f}" font-family="{F_SANS}" font-size="12" font-weight="700" fill="{trend_color or fg}">{_esc(trend_label)}</text>')
+    header_h = chip_h + 4
+    why_svg, why_h = _mixed_lines_svg(right_x, cy + header_h + 9, _wrap(why, right_w, 12.5), 12.5, FLAT["mut"], line_h=17.5)
+    out.append(why_svg)
+    right_h = header_h + why_h
+    left_h = chart_h + (GAP_ROW + legend_h if legend_h else 0)
+    out.append(f'<g transform="translate({x:.1f},{cy:.1f})">{chart_svg}</g>')
+    if legend_svg:
+        out.append(f'<g transform="translate({x:.1f},{cy+chart_h+GAP_ROW:.1f})">{legend_svg}</g>')
+    return "".join(out), PAD_T + max(left_h, right_h) + PAD_B
+
+def _card_svg(x, y, w, icon, icon_color, bg, border, headline, body, border_opacity=1.0, size=13):
+    pad, icon_w = 13, 22
+    text_x = x + pad + icon_w; text_w = max(w - 2 * pad - icon_w, 60)
+    runs = [(wd, True) for wd in str(headline).split()] + [(wd, False) for wd in str(body).split()]
+    wrapped = _wrap_runs(runs, text_w, size); line_h = size * 1.5
+    text_svg, text_h = _mixed_lines_svg(text_x, y + pad + size * 0.9, wrapped, size, FLAT["ink"], line_h=line_h)
+    card_h = max(text_h + 2 * pad, 20 + 2 * pad)
+    out = [f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{card_h:.1f}" rx="9" fill="{bg}" stroke="{border}" stroke-width="1" stroke-opacity="{border_opacity}"/>',
+           f'<text x="{x+pad:.1f}" y="{y+pad+size*0.9:.1f}" font-family="{F_MONO}" font-size="12" font-weight="700" fill="{icon_color}">{icon}</text>',
+           text_svg]
+    return "".join(out), card_h
+
+def render_report_svg(d, v, title, width=900):
+    """Pure presentation-attribute SVG report for Miro: no <style>, class=, var(--x), external
+    refs, or <use>/<defs>. Height is computed exactly from the wrapped text/chart geometry (not
+    estimated), so the canvas never clips content or leaves a large blank margin."""
+    ret = np.array(d["mean_return"], float); perp = np.array(d["state_visitation_perplexity"], float)
+    nodes = np.array(d.get("total_nodes", perp), float)
+    Rn, floor_n, _ = _channels(d, v["epsilon_min"])
+    tp = v["turnover"]
+    if tp is not None:
+        disc = np.array(d["topological_shift_discovery_raw"], float); aban = np.array(d["topological_shift_abandonment_raw"], float)
+        over = np.array(d["topological_shift_overlap_raw"], float)
+    late = v["return_late"]; ksh = v["kind_shares"]; dom = v["kind_dominant"]
+    n = len(ret); cps = np.array(d.get("checkpoints", np.arange(n)), float)
+    if len(cps) != n: cps = np.arange(n, dtype=float)
+    xdom = (float(cps[0]), float(cps[-1])); xmid = (cps[:-1] + cps[1:]) / 2.0
+    std_ret = np.array(d.get("std_return", np.zeros(n)), float)
+    rtrue = np.array(d.get("mean_r_true", [np.nan] * n), float); std_rt = np.array(d.get("std_r_true", [np.nan] * n), float)
+    has_true = bool(np.isfinite(rtrue).any())
+    ss = v.get("settle_state", "settled" if v["settled"] else "unsettled")
+    KINDP = ["where it goes", "which actions it takes", "the order it acts in"]
+    UP, DOWN, FLATC = "#1a875a", "#b5322a", FLAT["fnt"]
+
+    if v["trend"] == "rising":
+        r_why = (f"Reward rises from {fnum(ret[0])} to {fnum(late)}, by more than its measurement error (slope {v['return_slope']:+.2g} per checkpoint)."
+                  + (" Most of the gain is one early jump." if v["step"] else ""))
+        r_st, r_tr, r_col = "obs", "▲ rising", UP
+    elif v["trend"] == "declining":
+        r_why = f"Reward decreases from {fnum(ret[0])} to {fnum(late)}, by more than its measurement error (slope {v['return_slope']:+.2g} per checkpoint)."
+        r_st, r_tr, r_col = "flag", "▼ decreasing", DOWN
+    else:
+        r_why = f"Reward shows no net trend: the change from start ({fnum(ret[0])}) to end ({fnum(late)}) stays within its measurement error, so it never improved."
+        r_st, r_tr, r_col = "watch", "→ no trend", FLATC
+    if has_true:
+        rew_chart = _lc_svg([ret, rtrue], [FLAT["accent"], FLAT["crit"]], xpos=cps, xdom=xdom, std=[std_ret, std_rt], dashed=[False, True], ylab="return")
+        rew_leg, rew_leg_h = _legend_svg([(FLAT["accent"], "proxy reward"), (FLAT["crit"], "true reward")], 0, 0, 360)
+    else:
+        rew_chart = _lc_svg([ret], [FLAT["accent"]], xpos=cps, xdom=xdom, std=[std_ret], ylab="return")
+        rew_leg, rew_leg_h = _legend_svg([(FLAT["accent"], "reward"), (FLAT["accent"], "±1 s.d.")], 0, 0, 360)
+
+    c_tr = "▲ rising" if v["cov_trend"] == "rising" else "▼ falling" if v["cov_trend"] == "falling" else "→ holding"
+    cov_leg, cov_leg_h = _legend_svg([(FLAT["accent"], "perplexity (effective states)"), (FLAT["fnt"], "distinct states / checkpoint"),
+                                       (FLAT["mut"], "peak reach (max)"), (FLAT["crit"], "20% line")], 0, 0, 360)
+    tau = v.get("tau", 0.20); contracting = v.get("cov_contracting", False)
+    peakn = int(round(float(v.get("peak_nodes") or 0))); cov_pct = None if v.get("footprint_frac") is None else int(round(100 * v["footprint_frac"]))
+    if peakn <= 0 or cov_pct is None:
+        c_why, c_st = "Not enough state-visitation data to measure coverage for this run.", "obs"
+    elif v["footprint_flag"]:
+        c_why, c_st = (f"By the end the agent effectively occupies {cov_pct}% of the {peakn} distinct states it reached at its widest during training "
+                        f"(perplexity vs the peak-reach ceiling), under the {int(round(tau*100))}% line. It has collapsed onto a fraction of the territory it once explored."), "flag"
+    else:
+        base = (f"By the end the agent effectively occupies {cov_pct}% of the {peakn} distinct states it reached at its widest during training "
+                f"(perplexity vs the peak-reach ceiling), at or above the {int(round(tau*100))}% line.")
+        c_why, c_st = base + (" Its footprint is shrinking over training (perplexity trends down), though it stays above the line." if contracting else ""), ("watch" if contracting else "obs")
+    _peakv = float(v.get("peak_nodes") or 0.0); cov_hl = []
+    if _peakv > 0:
+        cov_hl = [(_peakv, f"peak reach {int(round(_peakv))}", FLAT["mut"]), (tau * _peakv, f"{int(round(tau*100))}% line", FLAT["crit"])]
+    cov_chart = _lc_svg([perp, nodes], [FLAT["accent"], FLAT["fnt"]], xpos=cps, xdom=xdom, ylab="effective states", ymin0=True, hlines=cov_hl)
+
+    kindp = (KINDP[KKEY.index(dom)] if v["kind_clear"] else "several aspects at once")
+    mix = f"When it does change, most of that change is in {kindp} ({ksh[0]:.0f}% where it goes, {ksh[1]:.0f}% which actions, {ksh[2]:.0f}% action order)."
+    if v["static"]: b_why, b_tr = "Its behaviour never changes by more than the noise floor at any checkpoint.", "static"
+    elif ss == "settled" and v["settle_idx"] and v["settle_idx"] > 0: b_why, b_tr = (f"It changes early, then stops: after about {v['settle_frac']*100:.0f}% of training its behaviour stays below the noise floor. {mix}", f"settles ~{v['settle_frac']*100:.0f}%")
+    elif ss == "settled": b_why, b_tr = f"Its behaviour stays around the noise floor the whole time. {mix}", "at floor"
+    elif ss == "converging": b_why, b_tr = f"It has not settled yet, but its shift magnitude is shrinking toward the noise floor, so it looks on track to settle with more training. {mix}", "still settling"
+    else: b_why, b_tr = f"Its behaviour keeps changing and the shift magnitude is not shrinking toward the noise floor. {mix}", "unsettled"
+    shift_leg, shift_leg_h = _legend_svg([(FLAT["c1"], "topological shift"), (FLAT["c2"], "strategic shift"), (FLAT["c3"], "sequential shift"), ("dash", "noise floor")], 0, 0, 360)
+    shift_chart = _lc_svg([Rn[0], Rn[1], Rn[2]], [FLAT["c1"], FLAT["c2"], FLAT["c3"]], floor=np.maximum.reduce(floor_n), xpos=xmid, xdom=xdom, yr=(0, 1), ticks=cps, ylab="shift (norm.)")
+    b_st = "flag" if v["static"] else "obs"
+
+    TRAJ = {"grew": "Overall the footprint grows and stays near its widest.",
+            "grew_then_contracted": "Overall the footprint grows to a peak, then contracts, dropping some of the states it had reached.",
+            "shrank": "Overall the footprint shrinks over training.",
+            "stable": "Overall the footprint stays about the same size, turning over in place."}
+    TIMING = {"front-loaded": " The adding and dropping happens mostly early, then tapers off (healthy consolidation).",
+              "sustained": " The footprint keeps being restructured through training (discovery and abandonment persist), the perpetual-reshaping signature.",
+              "steady": " Adding and dropping continue at a fairly steady rate.", "negligible": ""}
+    if tp is None:
+        turn_chart = _placeholder_svg(360, 120, "decomposition not available")
+        turn_leg, turn_leg_h = "", 0.0
+        t_why = ("The topological-shift decomposition (discovery / abandonment / restructure) was not recorded for this run, "
+                 "so footprint turnover cannot be shown. Re-run Stage 1 with the decomposition enabled to populate this panel.")
+        traj_lbl = "—"
+    else:
+        t_why = (f"This looks only at how the set of places it visits changes. {tp['discovery']:.0f}% is finding new places, "
+                 f"{tp['abandonment']:.0f}% is dropping places it used to visit, {tp['reweighting']:.0f}% is restructure (revisiting the same places more or less often). "
+                 f"{TRAJ[tp['foot_traj']]}{TIMING.get(tp.get('disc_trend'), '')}")
+        turn_leg, turn_leg_h = _legend_svg([(FLAT["good"], "discovery"), (FLAT["crit"], "abandonment"), (FLAT["purple"], "restructure")], 0, 0, 360)
+        traj_lbl = {"grew": "▲ grew", "grew_then_contracted": "▲▼ peaked", "shrank": "▼ shrank", "stable": "→ stable"}[tp["foot_traj"]]
+        turn_chart = _stackts_svg([disc, aban, over], [FLAT["good"], FLAT["crit"], FLAT["purple"]], xpos=xmid, xdom=xdom, ylab="turnover", ticks=cps)
+
+    rows = [("Reward", r_tr, r_col, r_st, r_why, rew_chart, rew_leg, rew_leg_h),
+            ("State coverage", c_tr, None, c_st, c_why, cov_chart, cov_leg, cov_leg_h),
+            ("Behavioural change", b_tr, None, b_st, b_why, shift_chart, shift_leg, shift_leg_h),
+            ("Footprint turnover", traj_lbl, None, "obs", t_why, turn_chart, turn_leg, turn_leg_h)]
+
+    PAD_X, PAD_TOP, PAD_BOT = 20, 42, 40
+    content_w = min(width - 2 * PAD_X, 880)
+    x0 = max((width - content_w) / 2.0, PAD_X)
+    parts = []; y = PAD_TOP
+
+    kicker = "BEHAVIORAL FINGERPRINT · REWARD-BLIND INTERPRETATION"
+    parts.append(f'<text x="{x0:.1f}" y="{y:.1f}" font-family="{F_SANS}" font-size="11" font-weight="700" letter-spacing="1.2" fill="{FLAT["accent"]}">{_esc(kicker)}</text>')
+    y += 24
+    title_svg, title_h = _mixed_lines_svg(x0, y + 15, _wrap(title, content_w, 19, bold=True), 19, FLAT["ink"], line_h=26)
+    parts.append(title_svg); y += title_h + 6
+    run_svg, run_h = _mixed_lines_svg(x0, y + 9, _wrap(str(v.get("run", title)), content_w, 12, kind="mono"), 12, FLAT["mut"], kind="mono", line_h=16)
+    parts.append(run_svg); y += run_h + 8
+    meta = (f"{str(v.get('floor','hard'))} floor · {v['n_pairs']} checkpoint pairs · a reward-blind portrait read from the trajectories alone. "
+            f"Two conditions raise a validated red flag (low effective coverage, frozen policy); amber chips mark observations worth a look; "
+            f"the interpretation reads the panels together.")
+    meta_svg, meta_h = _mixed_lines_svg(x0, y + 9, _wrap(meta, content_w, 12.5), 12.5, FLAT["mut"], line_h=18)
+    parts.append(meta_svg); y += meta_h + 4
+
+    for name, trend, color, status, why, chart, leg, leg_h in rows:
+        row_svg, row_h = _row_svg(x0, y, content_w, chart, name, trend, color, status, why, legend_svg=leg, legend_h=leg_h)
+        parts.append(row_svg); y += row_h
+
+    if v["flags"]:
+        parts.append(f'<text x="{x0:.1f}" y="{y+16:.1f}" font-family="{F_SANS}" font-size="10" font-weight="700" letter-spacing=".8" fill="{FLAT["mut"]}">FLAGS</text>')
+        y += 24
+        for f in v["flags"]:
+            card_svg, card_h = _card_svg(x0, y, content_w, "▲", FLAT["crit"], FLAT["crit_bg"], FLAT["crit"], f["headline"], f["body"], border_opacity=.4)
+            parts.append(card_svg); y += card_h + 8
+
+    interp = v.get("interpretation", [])
+    if interp:
+        cap = "INTERPRETATION"
+        parts.append(f'<text x="{x0:.1f}" y="{y+16:.1f}" font-family="{F_SANS}" font-size="10" font-weight="700" letter-spacing=".8" fill="{FLAT["mut"]}">{cap}</text>')
+        cap_w = _fw(cap, "bold", 10) + len(cap) * 0.8  # + letter-spacing
+        parts.append(f'<text x="{x0+cap_w+6:.1f}" y="{y+16:.1f}" font-family="{F_SANS}" font-size="10" fill="{FLAT["fnt"]}">(what the panels mean together)</text>')
+        y += 24
+        for f in interp:
+            card_svg, card_h = _card_svg(x0, y, content_w, "◆", FLAT["accent"], FLAT["surface2"], FLAT["hair"], f["headline"], f["body"])
+            parts.append(card_svg); y += card_h + 8
+
+    total_h = y + PAD_BOT
+    body = f'<rect x="0" y="0" width="{width}" height="{total_h:.1f}" fill="{FLAT["bg"]}"/>' + "".join(parts)
+    return (f'<?xml version="1.0" encoding="UTF-8"?>\n'
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{total_h:.1f}" viewBox="0 0 {width} {total_h:.1f}">{body}</svg>')
 
 # ---------------- CLI ----------------
 def main():
@@ -859,10 +1210,8 @@ def main():
     if a.reachable is None:
         print("[stage2] note: no --reachable given -- coverage shown without a fraction; footprint flag omitted")
     title = a.title or name
-    html = render_report(d, v, title)
-    open(os.path.join(out, f"{name}_report.html"), "w", encoding="utf-8").write(html)
-    svg_height = estimate_report_height(v, title)
-    open(os.path.join(out, f"{name}_report.svg"), "w", encoding="utf-8").write(render_report_svg(html, height=svg_height))
+    open(os.path.join(out, f"{name}_report.html"), "w", encoding="utf-8").write(render_report(d, v, title))
+    open(os.path.join(out, f"{name}_report.svg"), "w", encoding="utf-8").write(render_report_svg(d, v, title))
     flags = "; ".join(f["headline"] for f in v["flags"]) or "no flags"
     print(f"[stage2] {v['trend']} return | {'settled' if v['settled'] else 'never settles'}"
           + (f" | coverage {100*v['footprint_frac']:.0f}%" if v['footprint_frac'] is not None else "")
