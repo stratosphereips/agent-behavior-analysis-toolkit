@@ -3,15 +3,20 @@
 
 Two stages:
   STAGE 1 (expensive, cached):  trajectories -> <run>_metrics.json   (M split-half floors)
-  STAGE 2 (cheap, re-derivable): metrics.json + epsilon_min -> verdict.json + fingerprint.png + report.html
+  STAGE 2 (cheap, re-derivable): metrics.json + epsilon_min -> verdict.json + report.html + report.svg
 
-STAGE 2 is a reward-blind behavioral PORTRAIT: a State chip + axes {return, footprint,
-stationarity, channel}, each {value, tag, severity}, plus templated flags. Gaming is a
-footprint flag (effective coverage < tau=0.20 of the run's OWN peak reach -- perplexity late
-vs max(total_nodes), inferred from the trajectories; validated vs true reward: pooled AUC 0.89),
-never a verdict. Self-contained: the same line applies to every environment, no external
-reachable-state count needed (--reachable, if given, is kept for reference only). Severity is a rule:
-a validated line crossed (problem), a significant good/bad direction (healthy/watch), or a bare fact (neutral).
+STAGE 2 is a reward-blind behavioral PORTRAIT with four panels -- reward, state coverage,
+behavioural change, footprint turnover -- each carrying a status chip (NOT FLAGGED / WORTH A LOOK /
+CHECK THIS), plus validated red flags and a cross-panel interpretation. Gaming is a footprint flag
+(effective coverage < tau=0.20 of the run's OWN peak reach -- perplexity late vs max(total_nodes),
+inferred from the trajectories; validated vs true reward: pooled AUC 0.89), never a verdict.
+Self-contained: the same line applies to every environment, no external reachable-state count
+needed (--reachable, if given, is kept for reference only).
+
+Code layout (top -> bottom): number formatting helpers; STAGE 1 metric builders; the interpret()
+verdict; the PANEL NARRATIVES section (_panel_reward/_coverage/_behaviour/_turnover) which turns the
+verdict into prose ONCE; the SVG/HTML chart primitives; the two report renderers (render_report ->
+HTML, render_report_svg -> flat Miro-safe SVG) which both consume the shared panel narratives; the CLI.
 
 epsilon_min (the practical-significance floor) is a STAGE-2 parameter, so switching
 floors is cheap (no floor recompute):
@@ -377,12 +382,18 @@ def interpret(d, emin, reachable=None, tau=TAU_LOW, n_eval=None):
             interp.append({"headline": "Under-exploring or stuck",
                            "body": f"{cov_txt.capitalize()} and {rew_txt}, so the agent is stuck or under-exploring rather than exploiting.{disc_corr}"})
     elif static:
-        if rise or (not decl and late > early):
+        if rise:
             interp.append({"headline": "Converged or hacked before this window",
                            "body": f"The policy is frozen from the start, yet {rew_txt}: it converged or hacked the reward before the evaluation window rather than never learning."})
+        elif decl:
+            interp.append({"headline": "Never learned or collapsed",
+                           "body": f"The policy is frozen from the start and {rew_txt}: consistent with a run that never learned or has collapsed."})
         else:
-            interp.append({"headline": "Never learned",
-                           "body": f"The policy is frozen from the start and {rew_txt}: consistent with a run that never learned."})
+            # flat reward + frozen policy is genuinely ambiguous reward-blind: a run that converged/hacked
+            # before the window and one that never learned both look like this. Do not assert either (a
+            # noise-level late>early used to mislabel random runs as "converged or hacked").
+            interp.append({"headline": "Frozen with no reward signal",
+                           "body": f"The policy is frozen from the start and {rew_txt}: it either converged (or hacked the reward) before the evaluation window or never learned. Compare the reward level against the task to tell which."})
     else:
         # coverage intact and behaviour not frozen: read the behaviour/reward combination
         if never_settles and ret_flat:
@@ -418,6 +429,114 @@ def interpret(d, emin, reachable=None, tau=TAU_LOW, n_eval=None):
             "disc_share_early": disc_share_early, "disc_share_late": disc_share_late,
             "epsilon_min": [float(x) for x in emin], "flags": flags}
 
+# ================= PANEL NARRATIVES (shared by both report renderers) =================
+# Each fingerprint panel (reward, coverage, behaviour, footprint turnover) is turned into prose here, ONCE,
+# from the verdict dict alone. render_report (HTML) and render_report_svg (flat SVG) both consume these, so a
+# run reads identically in every output format and any wording/logic fix lives in exactly one place (before
+# this, the same reading was re-derived in each renderer, and every fix had to be made twice).
+# Each builder returns a dict: why (the sentence), status ("obs"|"watch"|"flag" -> chip style), label (the
+# trend word, WITHOUT an arrow) and tone ("up"|"down"|"flat"|"updown"|"" -> the arrow glyph each renderer
+# prepends, and the colour of the reward chip). _panel_turnover also returns available=False when the
+# discovery/abandonment decomposition is missing.
+
+KINDP = ["where it goes", "which actions it takes", "the order it acts in"]   # index-aligned with KKEY
+
+# footprint SIZE trajectory (node count) -> one sentence; keyed by verdict["turnover"]["foot_traj"].
+_FOOT_TRAJ_TXT = {
+    "grew": "Overall the footprint grows and stays near its widest.",
+    "grew_then_contracted": "Overall the footprint grows to a peak, then contracts, dropping some of the states it had reached.",
+    "shrank": "Overall the footprint shrinks over training.",
+    "stable": "Overall the footprint stays about the same size, turning over in place."}
+_FOOT_TRAJ_LABEL = {"grew": "grew", "grew_then_contracted": "peaked", "shrank": "shrank", "stable": "stable"}
+_FOOT_TRAJ_TONE = {"grew": "up", "grew_then_contracted": "updown", "shrank": "down", "stable": "flat"}
+# churn TIMING (does discovery+abandonment persist or taper?) -> a trailing sentence; keyed by disc_trend.
+# "sustained" is handled specially in _panel_turnover so the reshaping label can be gated on the behaviour.
+_CHURN_TIMING_TXT = {
+    "front-loaded": " The adding and dropping happens mostly early, then tapers off (healthy consolidation).",
+    "steady": " Adding and dropping continue at a fairly steady rate.",
+    "negligible": ""}
+
+
+def _panel_reward(v):
+    """Reward trend + one-line reading. Direction comes from the validated start->late level-change test,
+    not the Theil slope (which rounds to ~0 for a step-shaped curve and once contradicted the trend word)."""
+    r0, late = fnum(v["return"][0]), fnum(v["return_late"])
+    if v["trend"] == "rising":
+        why = f"Reward rises from {r0} to {late}, a change larger than its measurement error."
+        if v["step"]: why += " Most of the gain is one early jump."
+        return {"why": why, "status": "obs", "label": "rising", "tone": "up"}
+    if v["trend"] == "declining":
+        return {"why": f"Reward decreases from {r0} to {late}, a change larger than its measurement error.",
+                "status": "watch", "label": "decreasing", "tone": "down"}
+    return {"why": f"Reward shows no net trend: the change from start ({r0}) to end ({late}) stays within its measurement error, so it never improved.",
+            "status": "watch", "label": "no trend", "tone": "flat"}
+
+
+def _panel_coverage(v):
+    """Effective-coverage reading, measured against the run's OWN widest reach. Low coverage is a validated
+    red flag; 'collapsed' wording is used only when coverage is actually falling, not merely low-but-rising."""
+    tau = v.get("tau", 0.20)
+    peakn = int(round(float(v.get("peak_nodes") or 0)))
+    cov_pct = None if v.get("footprint_frac") is None else int(round(100 * v["footprint_frac"]))
+    tone = {"rising": "up", "falling": "down"}.get(v["cov_trend"], "flat")
+    label = {"rising": "rising", "falling": "falling"}.get(v["cov_trend"], "holding")
+    if peakn <= 0 or cov_pct is None:
+        return {"why": "Not enough state-visitation data to measure coverage for this run.", "status": "obs", "label": label, "tone": tone}
+    head = (f"By the end the agent effectively occupies {cov_pct}% of the {peakn} distinct states it reached at its "
+            f"widest during training (perplexity vs the peak-reach ceiling), ")
+    if v["footprint_flag"]:
+        tail = (" Its effective coverage is low but rising, so it is expanding from a very narrow footprint rather than collapsing." if v["cov_trend"] == "rising"
+                else " It has collapsed onto a fraction of the territory it once explored." if v["cov_trend"] == "falling"
+                else " It stays on a small fraction of the territory it reached at its widest.")
+        return {"why": head + f"under the {int(round(tau * 100))}% line.{tail}", "status": "flag", "label": label, "tone": tone}
+    contracting = v.get("cov_contracting", False)
+    tail = " Its footprint is shrinking over training (perplexity trends down), though it stays above the line." if contracting else ""
+    return {"why": head + f"at or above the {int(round(tau * 100))}% line.{tail}", "status": "watch" if contracting else "obs", "label": label, "tone": tone}
+
+
+def _panel_behaviour(v):
+    """Settling state + composition-of-change reading. A frozen policy is the only validated red flag here;
+    'never settles' is reported but not flagged (most healthy runs never fully settle)."""
+    ss = v.get("settle_state", "settled" if v["settled"] else "unsettled")
+    kindp = KINDP[KKEY.index(v["kind_dominant"])] if v["kind_clear"] else "several aspects at once"
+    ksh = v["kind_shares"]
+    mix = f"When it does change, most of that change is in {kindp} ({ksh[0]:.0f}% where it goes, {ksh[1]:.0f}% which actions, {ksh[2]:.0f}% action order)."
+    if v["static"]:
+        return {"why": "Its behaviour never changes by more than the noise floor at any checkpoint.", "status": "flag", "label": "static", "tone": ""}
+    if ss == "settled" and v["settle_idx"] and v["settle_idx"] > 0:
+        return {"why": f"It changes early, then stops: after about {v['settle_frac']*100:.0f}% of training its behaviour stays below the noise floor. {mix}",
+                "status": "obs", "label": f"settles ~{v['settle_frac']*100:.0f}%", "tone": ""}
+    if ss == "settled":
+        return {"why": f"Its behaviour stays around the noise floor the whole time. {mix}", "status": "obs", "label": "at floor", "tone": ""}
+    if ss == "converging":
+        return {"why": f"It has not settled yet, but its shift magnitude is shrinking toward the noise floor, so it looks on track to settle with more training. {mix}",
+                "status": "obs", "label": "still settling", "tone": ""}
+    return {"why": f"Its behaviour keeps changing and the shift magnitude is not shrinking toward the noise floor. {mix}", "status": "obs", "label": "unsettled", "tone": ""}
+
+
+def _panel_turnover(v):
+    """Footprint-turnover reading (discovery / abandonment / restructure). The 'perpetual-reshaping
+    signature' phrase is used ONLY when the behaviour genuinely never settles (settle_state == 'unsettled');
+    a converging/settled run whose footprint still churns is consolidating, and calling that reshaping would
+    contradict the behaviour panel."""
+    tp = v.get("turnover")
+    if tp is None:
+        return {"why": ("The topological-shift decomposition (discovery / abandonment / restructure) was not recorded for this run, "
+                        "so footprint turnover cannot be shown. Re-run Stage 1 with the decomposition enabled to populate this panel."),
+                "status": "obs", "label": "", "tone": "", "available": False}
+    dt = tp.get("disc_trend")
+    if dt == "sustained":
+        timing = (" The footprint keeps being restructured through training (discovery and abandonment persist), the perpetual-reshaping signature."
+                  if v.get("settle_state") == "unsettled" else
+                  " The footprint keeps turning over states through training, but its overall behavioural change is at or heading toward the noise floor (see Behavioural change), so this reads as ongoing consolidation rather than perpetual reshaping.")
+    else:
+        timing = _CHURN_TIMING_TXT.get(dt, "")
+    why = (f"This looks only at how the set of places it visits changes. {tp['discovery']:.0f}% is finding new places, "
+           f"{tp['abandonment']:.0f}% is dropping places it used to visit, {tp['reweighting']:.0f}% is restructure (revisiting the same places more or less often). "
+           f"{_FOOT_TRAJ_TXT[tp['foot_traj']]}{timing}")
+    return {"why": why, "status": "obs", "label": _FOOT_TRAJ_LABEL[tp["foot_traj"]], "tone": _FOOT_TRAJ_TONE[tp["foot_traj"]], "available": True}
+
+
 # ---------- SVG helpers (self-contained, theme-aware inline charts) ----------
 _AC, _FNT, _GOOD, _CRIT = "var(--ac)", "var(--fnt)", "var(--good)", "var(--crit)"
 _C1, _C2, _C3 = "var(--c1)", "var(--c2)", "var(--c3)"
@@ -427,6 +546,18 @@ _MARG = (44, 10, 10, 30)   # left, right, top, bottom -- shared so every chart's
 
 def _xfmt(v):
     return f"{v/1000:.1f}k" if abs(v) >= 1000 else f"{v:.0f}"
+
+def _ytick(v):
+    """Y-axis tick label, never scientific notation (a plain '.2g' emits e.g. '-1.3e+02').
+    Uses a k-suffix for large magnitudes to match _xfmt, and fixed decimals below 1."""
+    a = abs(v)
+    if a < 5e-4: return "0"
+    if a >= 10000: return f"{v/1000:.0f}k"
+    if a >= 1000: return f"{v/1000:.1f}k"
+    if a >= 10: return f"{v:.0f}"
+    if a >= 1: return f"{v:.1f}"
+    if a >= 0.1: return f"{v:.2f}"
+    return f"{v:.3f}"
 
 def _lc(series, colors, floor=None, lbl="", W=360, H=120, yr=None, xpos=None, xdom=None,
         std=None, dashed=None, yscale="lin", xlab="checkpoint", ylab="", ymin0=False, ticks=None, hlines=None):
@@ -474,11 +605,14 @@ def _lc(series, colors, floor=None, lbl="", W=360, H=120, yr=None, xpos=None, xd
             s += f'<text x="{W-R-2}" y="{yp-2.5:.1f}" class="ax" text-anchor="end" fill="{col}">{lab}</text>'
     for j, (arr, c) in enumerate(zip(arrs, colors)):
         da = ' stroke-dasharray="4 2"' if dashed and dashed[j] else ''
-        s += '<polyline points="' + ' '.join(f'{a:.1f},{PY(vv):.1f}' for a, vv in zip(xw, arr)) + f'" fill="none" stroke="{c}" stroke-width="1.7"{da}/><circle cx="{xw[-1]:.1f}" cy="{PY(arr[-1]):.1f}" r="2.3" fill="{c}"/>'
+        pts = ' '.join(f'{a:.1f},{PY(vv):.1f}' for a, vv in zip(xw, arr))
+        s += (f'<polyline points="{pts}" fill="none" stroke="{c}" stroke-width="1.7"{da}/>'
+              + ''.join(f'<circle cx="{a:.1f}" cy="{PY(vv):.1f}" r="1.7" fill="{c}"/>' for a, vv in zip(xw, arr))
+              + f'<circle cx="{xw[-1]:.1f}" cy="{PY(arr[-1]):.1f}" r="2.3" fill="{c}"/>')
     s += f'<line x1="{L}" y1="{T-2}" x2="{L}" y2="{H-B}" stroke="var(--fnt)" stroke-width=".5" opacity=".4"/><line x1="{L}" y1="{H-B}" x2="{W-R}" y2="{H-B}" stroke="var(--fnt)" stroke-width=".5" opacity=".4"/>'
     tickv = [(f * f) * ymax for f in (0, .25, .5, .75, 1)] if yscale == "sqrt" else list(np.linspace(ymin, ymax, 4))
     for yv in tickv:
-        yp = float(PY(yv)); s += f'<line x1="{L-2.5}" y1="{yp:.1f}" x2="{L}" y2="{yp:.1f}" stroke="var(--fnt)" stroke-width=".5" opacity=".5"/><text x="{L-4}" y="{yp+2.5:.1f}" class="ax" text-anchor="end">{yv:.2g}</text>'
+        yp = float(PY(yv)); s += f'<line x1="{L-2.5}" y1="{yp:.1f}" x2="{L}" y2="{yp:.1f}" stroke="var(--fnt)" stroke-width=".5" opacity=".5"/><text x="{L-4}" y="{yp+2.5:.1f}" class="ax" text-anchor="end">{_ytick(yv)}</text>'
     tickpos = xw if ticks is None else PX(np.asarray(ticks, float))
     for xp in tickpos:  # minor ticks at every checkpoint (unlabeled)
         s += f'<line x1="{xp:.1f}" y1="{H-B}" x2="{xp:.1f}" y2="{H-B+3}" stroke="var(--fnt)" stroke-width=".6" opacity=".55"/>'
@@ -506,7 +640,7 @@ def _mirror(disc, aban, scale_max=None, W=360, H=120, xpos=None, xdom=None, xlab
     s += f'<polyline points="{npath}" fill="none" stroke="var(--ink)" stroke-width="1.2"/>'
     peak = mx / 1.05
     s += f'<line x1="{L}" y1="{T-2}" x2="{L}" y2="{H-B}" stroke="var(--fnt)" stroke-width=".5" opacity=".4"/>'
-    s += f'<text x="{L-4}" y="{T+3:.0f}" class="ax" text-anchor="end">+{peak:.2g}</text><text x="{L-4}" y="{mid+2:.0f}" class="ax" text-anchor="end">0</text><text x="{L-4}" y="{H-B:.0f}" class="ax" text-anchor="end">&#8722;{peak:.2g}</text>'
+    s += f'<text x="{L-4}" y="{T+3:.0f}" class="ax" text-anchor="end">+{_ytick(peak)}</text><text x="{L-4}" y="{mid+2:.0f}" class="ax" text-anchor="end">0</text><text x="{L-4}" y="{H-B:.0f}" class="ax" text-anchor="end">&#8722;{_ytick(peak)}</text>'
     for xv in np.linspace(x0, x1, 5):
         xp = L + (xv - x0) / xr * (W - R - L); s += f'<text x="{xp:.1f}" y="{H-B+11}" class="ax" text-anchor="middle">{_xfmt(xv)}</text>'
     s += f'<text x="{(L+W-R)/2:.0f}" y="{H-2}" class="axl" text-anchor="middle">{xlab}</text>'
@@ -521,7 +655,10 @@ def _stackts(segs, colors, W=360, H=120, xpos=None, xdom=None, xlab="checkpoint"
     x0, x1 = (float(xpos[0]), float(xpos[-1])) if xdom is None else xdom; xr = (x1 - x0) or 1.0
     PX = lambda p: L + (float(p) - x0) / xr * (W - R - L)
     PY = lambda v: (H - B) - min(max(v, 0.0), ymax) / ymax * (H - B - T)
-    bw = max((W - R - L) / max(m, 1) * 0.8, 0.7)
+    # thin bars centered on their own x position; width from the actual bar spacing so they never touch.
+    xw = np.array([PX(p) for p in xpos], float)
+    spacing = float(np.median(np.diff(np.sort(xw)))) if m > 1 else float(W - R - L)
+    bw = max(spacing * 0.5, 0.7)
     s = f'<svg viewBox="0 0 {W} {H}" class="lc" preserveAspectRatio="none">'
     for i in range(m):
         x = PX(xpos[i]); base = 0.0
@@ -531,8 +668,8 @@ def _stackts(segs, colors, W=360, H=120, xpos=None, xdom=None, xlab="checkpoint"
             base += h
     s += f'<line x1="{L}" y1="{T-2}" x2="{L}" y2="{H-B}" stroke="var(--fnt)" stroke-width=".5" opacity=".4"/><line x1="{L}" y1="{H-B}" x2="{W-R}" y2="{H-B}" stroke="var(--fnt)" stroke-width=".5" opacity=".4"/>'
     for yv in np.linspace(0, ymax, 4):
-        yp = float(PY(yv)); s += f'<line x1="{L-2.5}" y1="{yp:.1f}" x2="{L}" y2="{yp:.1f}" stroke="var(--fnt)" stroke-width=".5" opacity=".5"/><text x="{L-4}" y="{yp+2.5:.1f}" class="ax" text-anchor="end">{yv:.2g}</text>'
-    for xp in [PX(p) for p in (xpos if ticks is None else np.asarray(ticks, float))]:
+        yp = float(PY(yv)); s += f'<line x1="{L-2.5}" y1="{yp:.1f}" x2="{L}" y2="{yp:.1f}" stroke="var(--fnt)" stroke-width=".5" opacity=".5"/><text x="{L-4}" y="{yp+2.5:.1f}" class="ax" text-anchor="end">{_ytick(yv)}</text>'
+    for xp in xw:  # minor tick under each bar center, so the bars sit centered on their ticks
         s += f'<line x1="{xp:.1f}" y1="{H-B}" x2="{xp:.1f}" y2="{H-B+3}" stroke="var(--fnt)" stroke-width=".6" opacity=".55"/>'
     for xv in np.linspace(x0, x1, 5):
         xp = float(PX(xv)); s += f'<line x1="{xp:.1f}" y1="{H-B}" x2="{xp:.1f}" y2="{H-B+6}" stroke="var(--fnt)" stroke-width=".8" opacity=".75"/><text x="{xp:.1f}" y="{H-B+13}" class="ax" text-anchor="middle">{_xfmt(xv)}</text>'
@@ -615,8 +752,6 @@ def render_report(d, v, title):
     if tp is not None:
         disc = np.array(d["topological_shift_discovery_raw"], float); aban = np.array(d["topological_shift_abandonment_raw"], float)
         over = np.array(d["topological_shift_overlap_raw"], float)   # restructure: revisiting known states
-    frac = v["footprint_frac"]; pct = None if frac is None else int(round(100 * frac))
-    late = v["return_late"]; ksh = v["kind_shares"]; dom = v["kind_dominant"]
     # shared checkpoint x-axis: reward/coverage sit on the checkpoints, shifts/turnover on the pair midpoints
     n = len(ret); cps = np.array(d.get("checkpoints", np.arange(n)), float)
     if len(cps) != n: cps = np.arange(n, dtype=float)
@@ -625,100 +760,44 @@ def render_report(d, v, title):
     rtrue = np.array(d.get("mean_r_true", [np.nan] * n), float); std_rt = np.array(d.get("std_r_true", [np.nan] * n), float)
     has_true = bool(np.isfinite(rtrue).any())
 
-    # narration synthesis (plain gestalt; exact numbers live in the rows)
-    rw = ("improves, most of the gain early" if v["step"] else "improves" if v["trend"] == "rising" else "falls" if v["trend"] == "declining" else "shows no trend")
-    ss = v.get("settle_state", "settled" if v["settled"] else "unsettled")
-    if v["static"]: sw = "and its behaviour never changes beyond the noise floor"
-    elif ss == "settled" and v["settle_idx"] and v["settle_idx"] > 0: sw = f"and its behaviour settles about {v['settle_frac']*100:.0f}% of the way through"
-    elif ss == "settled": sw = "and its behaviour is at the noise floor from the start"
-    elif ss == "converging": sw = "and its behaviour is still settling (its changes are shrinking toward the noise floor, but had not crossed it by the last checkpoint, so it may just need more training)"
-    else: sw = "and its behaviour stays unsettled (its changes are not shrinking toward the noise floor)"
-    cw = f"effectively occupies {pct}% of its own widest reach late in training" if pct is not None else "covers only a small set of states"
-    narr = f"Reward {rw}; the agent {cw}, {sw}."
-
-    KINDP = ["where it goes", "which actions it takes", "the order it acts in"]
-    rows = []
-    # Return
+    # --- panels: the shared narrative (see the _panel_* builders above) + this renderer's chart per row ---
+    HTML_ARROW = {"up": "&#9650;", "down": "&#9660;", "flat": "&rarr;", "updown": "&#9650;&#9660;", "": ""}
     _RCOL = {"up": "#1a875a", "down": "#b5322a", "flat": "#8390a0"}
-    # reward chip: grey when rising (fine); amber ("worth a look") when it decreased or never improved beyond noise
-    if v["trend"] == "rising":
-        r_why, r_st, r_tr, r_col = (f"Reward rises from {fnum(ret[0])} to {fnum(late)}, by more than its measurement error (slope {v['return_slope']:+.2g} per checkpoint)." + (" Most of the gain is one early jump." if v["step"] else ""), "obs", "&#9650; rising", _RCOL["up"])
-    elif v["trend"] == "declining":
-        r_why, r_st, r_tr, r_col = (f"Reward decreases from {fnum(ret[0])} to {fnum(late)}, by more than its measurement error (slope {v['return_slope']:+.2g} per checkpoint).", "flag", "&#9660; decreasing", _RCOL["down"])
-    else:
-        r_why, r_st, r_tr, r_col = (f"Reward shows no net trend: the change from start ({fnum(ret[0])}) to end ({fnum(late)}) stays within its measurement error, so it never improved.", "watch", "&rarr; no trend", _RCOL["flat"])
+    chip = lambda p: f'{HTML_ARROW[p["tone"]]} {p["label"]}'.strip()   # arrow glyph + trend word
+    tau = v.get("tau", 0.20); _peakv = float(v.get("peak_nodes") or 0.0)
+    rows = []
+
+    # Reward -- the only chip coloured by direction
+    pr = _panel_reward(v)
     if has_true:
         rew_svg = _lc([ret, rtrue], [_AC, _CRIT], xpos=cps, xdom=xdom, std=[std_ret, std_rt], dashed=[False, True], ylab="return")
         rew_leg = _legend([(_AC, "proxy reward"), (_CRIT, "true reward")])
     else:
         rew_svg = _lc([ret], [_AC], xpos=cps, xdom=xdom, std=[std_ret], ylab="return")
         rew_leg = _legend([(_AC, "reward"), (_AC, "&plusmn;1 s.d.")])
-    rows.append(_ag(rew_svg + rew_leg, "Reward", r_tr, r_st, r_why, trend_col=r_col))
-    # Coverage
-    c_tr = "&#9650; rising" if v["cov_trend"] == "rising" else "&#9660; falling" if v["cov_trend"] == "falling" else "&rarr; holding"
+    rows.append(_ag(rew_svg + rew_leg, "Reward", chip(pr), pr["status"], pr["why"], trend_col=_RCOL[pr["tone"]]))
+
+    # State coverage -- perplexity vs the run's own peak-reach ceiling and the 20% flag line
+    pc = _panel_coverage(v)
+    cov_hl = [(_peakv, f"peak reach {int(round(_peakv))}", "var(--mut)"), (tau * _peakv, f"{int(round(tau*100))}% line", _CRIT)] if _peakv > 0 else []
     cov_leg = _legend([(_AC, "perplexity (effective states)"), (_FNT, "distinct states / checkpoint"), ("var(--mut)", "peak reach (max)"), (_CRIT, "20% line")])
-    tau = v.get("tau", 0.20)
-    contracting = v.get("cov_contracting", False)
-    peakn = int(round(float(v.get("peak_nodes") or 0)))
-    cov_pct = None if v.get("footprint_frac") is None else int(round(100 * v["footprint_frac"]))
-    # universal story: effective coverage is perplexity late, measured against the run's OWN peak reach (max
-    # distinct states, inferred from the trajectories). No external reachable-state count is assumed.
-    if peakn <= 0 or cov_pct is None:
-        c_why, c_st = ("Not enough state-visitation data to measure coverage for this run.", "obs")
-    elif v["footprint_flag"]:
-        c_why, c_st = (f"By the end the agent effectively occupies {cov_pct}% of the {peakn} distinct states it reached at its widest during training "
-                       f"(perplexity vs the peak-reach ceiling), under the {int(round(tau*100))}% line. It has collapsed onto a fraction of the territory it once explored.", "flag")
-    else:
-        base = f"By the end the agent effectively occupies {cov_pct}% of the {peakn} distinct states it reached at its widest during training (perplexity vs the peak-reach ceiling), at or above the {int(round(tau*100))}% line."
-        # amber chip when the footprint is shrinking (worth a look) even though it stays above the collapse line
-        c_why, c_st = (base + (" Its footprint is shrinking over training (perplexity trends down), though it stays above the line." if contracting else ""), "watch" if contracting else "obs")
-    # coverage panel: the peak-reach ceiling (a flat line at max distinct states), the 20% flag line, and the two
-    # per-checkpoint series (perplexity = effective states, and raw distinct states). Retention = perplexity vs ceiling.
-    _peakv = float(v.get("peak_nodes") or 0.0)
-    cov_hl = []
-    if _peakv > 0:
-        cov_hl = [(_peakv, f"peak reach {int(round(_peakv))}", "var(--mut)"), (tau * _peakv, f"{int(round(tau*100))}% line", _CRIT)]
-    rows.append(_ag(_lc([perp, nodes], [_AC, _FNT], xpos=cps, xdom=xdom, ylab="effective states", ymin0=True, hlines=cov_hl) + cov_leg, "State coverage", c_tr, c_st, c_why))
-    # Behavioural change: settling + kind of change
-    kindp = (KINDP[KKEY.index(dom)] if v["kind_clear"] else "several aspects at once")
-    mix = f"When it does change, most of that change is in {kindp} ({ksh[0]:.0f}% where it goes, {ksh[1]:.0f}% which actions, {ksh[2]:.0f}% action order)."
-    if v["static"]: b_why, b_tr = ("Its behaviour never changes by more than the noise floor at any checkpoint.", "static")
-    elif ss == "settled" and v["settle_idx"] and v["settle_idx"] > 0: b_why, b_tr = (f"It changes early, then stops: after about {v['settle_frac']*100:.0f}% of training its behaviour stays below the noise floor. {mix}", f"settles ~{v['settle_frac']*100:.0f}%")
-    elif ss == "settled": b_why, b_tr = (f"Its behaviour stays around the noise floor the whole time. {mix}", "at floor")
-    elif ss == "converging": b_why, b_tr = (f"It has not settled yet, but its shift magnitude is shrinking toward the noise floor, so it looks on track to settle with more training. {mix}", "still settling")
-    else: b_why, b_tr = (f"Its behaviour keeps changing and the shift magnitude is not shrinking toward the noise floor. {mix}", "unsettled")
+    rows.append(_ag(_lc([perp, nodes], [_AC, _FNT], xpos=cps, xdom=xdom, ylab="effective states", ymin0=True, hlines=cov_hl) + cov_leg, "State coverage", chip(pc), pc["status"], pc["why"]))
+
+    # Behavioural change -- shift channels vs their noise floor (only a frozen policy is a validated flag)
+    pb = _panel_behaviour(v)
     shift_leg = _legend([(_C1, "topological shift"), (_C2, "strategic shift"), (_C3, "sequential shift"), ("dash", "noise floor")])
     shift_svg = _lc([Rn[0], Rn[1], Rn[2]], [_C1, _C2, _C3], floor=np.maximum.reduce(floor_n), xpos=xmid, xdom=xdom, yr=(0, 1), ticks=cps, ylab="shift (norm.)") + shift_leg
-    # only Frozen (static) is a validated flag; "never settles" is reported (neutral chip), not flagged
-    b_st = "flag" if v["static"] else "obs"
-    rows.append(_ag(shift_svg, "Behavioural change", b_tr, b_st, b_why))
-    # Turnover
-    # describe the footprint SIZE trajectory (node count), which is exactly what the mirror plots, then when
-    # the new states were found. Endpoint "grows/shrinks" alone hides a grow-then-contract.
-    TRAJ = {"grew": "Overall the footprint grows and stays near its widest.",
-            "grew_then_contracted": "Overall the footprint grows to a peak, then contracts, dropping some of the states it had reached.",
-            "shrank": "Overall the footprint shrinks over training.",
-            "stable": "Overall the footprint stays about the same size, turning over in place."}
-    TIMING = {"front-loaded": " The adding and dropping happens mostly early, then tapers off (healthy consolidation).",
-              "sustained": " The footprint keeps being restructured through training (discovery and abandonment persist), the perpetual-reshaping signature.",
-              "steady": " Adding and dropping continue at a fairly steady rate.",
-              "negligible": ""}
-    if tp is None:
-        # no discovery/abandonment/overlap decomposition available for this run -- flag it, don't fabricate a panel
+    rows.append(_ag(shift_svg, "Behavioural change", chip(pb), pb["status"], pb["why"]))
+
+    # Footprint turnover -- per-checkpoint discovery / abandonment / restructure (or a placeholder if missing)
+    pt = _panel_turnover(v)
+    if not pt.get("available", True):
         placeholder = '<svg viewBox="0 0 360 120" class="lc" preserveAspectRatio="none"><text x="180" y="62" class="axl" text-anchor="middle" opacity=".7">decomposition not available</text></svg>'
-        rows.append(_ag(placeholder, "Footprint turnover", "&mdash;", "obs",
-                        "The topological-shift decomposition (discovery / abandonment / restructure) was not recorded for this run, "
-                        "so footprint turnover cannot be shown. Re-run Stage 1 with the decomposition enabled to populate this panel."))
+        rows.append(_ag(placeholder, "Footprint turnover", "&mdash;", pt["status"], pt["why"]))
     else:
-        t_why = (f"This looks only at how the set of places it visits changes. {tp['discovery']:.0f}% is finding new places, "
-                 f"{tp['abandonment']:.0f}% is dropping places it used to visit, {tp['reweighting']:.0f}% is restructure (revisiting the same places more or less often). "
-                 f"{TRAJ[tp['foot_traj']]}{TIMING.get(tp.get('disc_trend'), '')}")
-        # per-checkpoint stacked bars decomposing the topological shift into discovery / abandonment / restructure
-        # (restructure = revisiting known states). Fixed [0,1] y-axis so bars are comparable across runs.
         turn_leg = _legend([(_GOOD, "discovery"), (_CRIT, "abandonment"), (_PURP, "restructure")])
-        traj_lbl = {"grew": "&#9650; grew", "grew_then_contracted": "&#9650;&#9660; peaked", "shrank": "&#9660; shrank", "stable": "&rarr; stable"}[tp["foot_traj"]]
-        rows.append(_ag(_stackts([disc, aban, over], [_GOOD, _CRIT, _PURP], xpos=xmid, xdom=xdom, ylab="turnover", ticks=cps) + turn_leg, "Footprint turnover",
-                        traj_lbl, "obs", t_why))
+        rows.append(_ag(_stackts([disc, aban, over], [_GOOD, _CRIT, _PURP], xpos=xmid, xdom=xdom, ylab="turnover", ticks=cps) + turn_leg,
+                        "Footprint turnover", chip(pt), pt["status"], pt["why"]))
 
     # LAYER 1 validated red flags, then LAYER 2 interpretation (the one-line summary + the cross-panel reads),
     # both kept below the panels, each labelled.
@@ -897,11 +976,14 @@ def _lc_svg(series, colors, floor=None, W=360, H=120, yr=None, xpos=None, xdom=N
             s += f'<text x="{W-R-2}" y="{yp-2.5:.1f}" font-family="{F_MONO}" font-size="7.5" fill="{col}" text-anchor="end">{_esc(lab)}</text>'
     for j, (arr, c) in enumerate(zip(arrs, colors)):
         da = ' stroke-dasharray="4 2"' if dashed and dashed[j] else ''
-        s += '<polyline points="' + ' '.join(f'{a:.1f},{PY(vv):.1f}' for a, vv in zip(xw, arr)) + f'" fill="none" stroke="{c}" stroke-width="1.7"{da}/><circle cx="{xw[-1]:.1f}" cy="{PY(arr[-1]):.1f}" r="2.3" fill="{c}"/>'
+        pts = ' '.join(f'{a:.1f},{PY(vv):.1f}' for a, vv in zip(xw, arr))
+        s += (f'<polyline points="{pts}" fill="none" stroke="{c}" stroke-width="1.7"{da}/>'
+              + ''.join(f'<circle cx="{a:.1f}" cy="{PY(vv):.1f}" r="1.7" fill="{c}"/>' for a, vv in zip(xw, arr))
+              + f'<circle cx="{xw[-1]:.1f}" cy="{PY(arr[-1]):.1f}" r="2.3" fill="{c}"/>')
     s += f'<line x1="{L}" y1="{T-2}" x2="{L}" y2="{H-B}" stroke="{fnt}" stroke-width=".5" opacity=".4"/><line x1="{L}" y1="{H-B}" x2="{W-R}" y2="{H-B}" stroke="{fnt}" stroke-width=".5" opacity=".4"/>'
     tickv = [(f * f) * ymax for f in (0, .25, .5, .75, 1)] if yscale == "sqrt" else list(np.linspace(ymin, ymax, 4))
     for yv in tickv:
-        yp = float(PY(yv)); s += f'<line x1="{L-2.5}" y1="{yp:.1f}" x2="{L}" y2="{yp:.1f}" stroke="{fnt}" stroke-width=".5" opacity=".5"/><text x="{L-4}" y="{yp+2.5:.1f}" font-family="{F_MONO}" font-size="7.5" fill="{fnt}" text-anchor="end">{yv:.2g}</text>'
+        yp = float(PY(yv)); s += f'<line x1="{L-2.5}" y1="{yp:.1f}" x2="{L}" y2="{yp:.1f}" stroke="{fnt}" stroke-width=".5" opacity=".5"/><text x="{L-4}" y="{yp+2.5:.1f}" font-family="{F_MONO}" font-size="7.5" fill="{fnt}" text-anchor="end">{_ytick(yv)}</text>'
     tickpos = xw if ticks is None else PX(np.asarray(ticks, float))
     for xp in tickpos:
         s += f'<line x1="{xp:.1f}" y1="{H-B}" x2="{xp:.1f}" y2="{H-B+3}" stroke="{fnt}" stroke-width=".6" opacity=".55"/>'
@@ -919,7 +1001,11 @@ def _stackts_svg(segs, colors, W=360, H=120, xpos=None, xdom=None, xlab="checkpo
     x0, x1 = (float(xpos[0]), float(xpos[-1])) if xdom is None else xdom; xr = (x1 - x0) or 1.0
     PX = lambda p: L + (float(p) - x0) / xr * (W - R - L)
     PY = lambda v: (H - B) - min(max(v, 0.0), ymax) / ymax * (H - B - T)
-    bw = max((W - R - L) / max(m, 1) * 0.8, 0.7); fnt = FLAT["fnt"]
+    # thin bars, each centered on its own x position (the checkpoint-pair midpoint); width from the actual
+    # bar spacing rather than the full plot width / m, so bars stay centered and never touch.
+    xw = np.array([PX(p) for p in xpos], float)
+    spacing = float(np.median(np.diff(np.sort(xw)))) if m > 1 else float(W - R - L)
+    bw = max(spacing * 0.5, 0.7); fnt = FLAT["fnt"]
     s = (f'<svg width="{W}" height="{H}" viewBox="0 0 {W} {H}" preserveAspectRatio="none">'
          f'<rect x="0" y="0" width="{W}" height="{H}" rx="8" ry="8" fill="{FLAT["surface2"]}" stroke="{FLAT["hair"]}" stroke-width="1"/>')
     for i in range(m):
@@ -930,8 +1016,8 @@ def _stackts_svg(segs, colors, W=360, H=120, xpos=None, xdom=None, xlab="checkpo
             base += h
     s += f'<line x1="{L}" y1="{T-2}" x2="{L}" y2="{H-B}" stroke="{fnt}" stroke-width=".5" opacity=".4"/><line x1="{L}" y1="{H-B}" x2="{W-R}" y2="{H-B}" stroke="{fnt}" stroke-width=".5" opacity=".4"/>'
     for yv in np.linspace(0, ymax, 4):
-        yp = float(PY(yv)); s += f'<line x1="{L-2.5}" y1="{yp:.1f}" x2="{L}" y2="{yp:.1f}" stroke="{fnt}" stroke-width=".5" opacity=".5"/><text x="{L-4}" y="{yp+2.5:.1f}" font-family="{F_MONO}" font-size="7.5" fill="{fnt}" text-anchor="end">{yv:.2g}</text>'
-    for xp in [PX(p) for p in (xpos if ticks is None else np.asarray(ticks, float))]:
+        yp = float(PY(yv)); s += f'<line x1="{L-2.5}" y1="{yp:.1f}" x2="{L}" y2="{yp:.1f}" stroke="{fnt}" stroke-width=".5" opacity=".5"/><text x="{L-4}" y="{yp+2.5:.1f}" font-family="{F_MONO}" font-size="7.5" fill="{fnt}" text-anchor="end">{_ytick(yv)}</text>'
+    for xp in xw:  # minor tick under each bar center, so the bars sit centered on their ticks
         s += f'<line x1="{xp:.1f}" y1="{H-B}" x2="{xp:.1f}" y2="{H-B+3}" stroke="{fnt}" stroke-width=".6" opacity=".55"/>'
     for xv in np.linspace(x0, x1, 5):
         xp = float(PX(xv)); s += f'<line x1="{xp:.1f}" y1="{H-B}" x2="{xp:.1f}" y2="{H-B+6}" stroke="{fnt}" stroke-width=".8" opacity=".75"/><text x="{xp:.1f}" y="{H-B+13}" font-family="{F_MONO}" font-size="7.5" fill="{fnt}" text-anchor="middle">{_xfmt(xv)}</text>'
@@ -1013,27 +1099,21 @@ def render_report_svg(d, v, title, width=900):
     if tp is not None:
         disc = np.array(d["topological_shift_discovery_raw"], float); aban = np.array(d["topological_shift_abandonment_raw"], float)
         over = np.array(d["topological_shift_overlap_raw"], float)
-    late = v["return_late"]; ksh = v["kind_shares"]; dom = v["kind_dominant"]
     n = len(ret); cps = np.array(d.get("checkpoints", np.arange(n)), float)
     if len(cps) != n: cps = np.arange(n, dtype=float)
     xdom = (float(cps[0]), float(cps[-1])); xmid = (cps[:-1] + cps[1:]) / 2.0
     std_ret = np.array(d.get("std_return", np.zeros(n)), float)
     rtrue = np.array(d.get("mean_r_true", [np.nan] * n), float); std_rt = np.array(d.get("std_r_true", [np.nan] * n), float)
     has_true = bool(np.isfinite(rtrue).any())
-    ss = v.get("settle_state", "settled" if v["settled"] else "unsettled")
-    KINDP = ["where it goes", "which actions it takes", "the order it acts in"]
-    UP, DOWN, FLATC = "#1a875a", "#b5322a", FLAT["fnt"]
 
-    if v["trend"] == "rising":
-        r_why = (f"Reward rises from {fnum(ret[0])} to {fnum(late)}, by more than its measurement error (slope {v['return_slope']:+.2g} per checkpoint)."
-                  + (" Most of the gain is one early jump." if v["step"] else ""))
-        r_st, r_tr, r_col = "obs", "▲ rising", UP
-    elif v["trend"] == "declining":
-        r_why = f"Reward decreases from {fnum(ret[0])} to {fnum(late)}, by more than its measurement error (slope {v['return_slope']:+.2g} per checkpoint)."
-        r_st, r_tr, r_col = "flag", "▼ decreasing", DOWN
-    else:
-        r_why = f"Reward shows no net trend: the change from start ({fnum(ret[0])}) to end ({fnum(late)}) stays within its measurement error, so it never improved."
-        r_st, r_tr, r_col = "watch", "→ no trend", FLATC
+    # --- panels: the shared narrative (see the _panel_* builders above) + this renderer's flat-SVG chart ---
+    SVG_ARROW = {"up": "▲", "down": "▼", "flat": "→", "updown": "▲▼", "": ""}
+    R_COLOR = {"up": "#1a875a", "down": "#b5322a", "flat": FLAT["fnt"]}
+    chip = lambda p: (SVG_ARROW[p["tone"]] + " " + p["label"]).strip()   # arrow glyph + trend word
+    tau = v.get("tau", 0.20); _peakv = float(v.get("peak_nodes") or 0.0)
+
+    # Reward -- the only chip coloured by direction
+    pr = _panel_reward(v)
     if has_true:
         rew_chart = _lc_svg([ret, rtrue], [FLAT["accent"], FLAT["crit"]], xpos=cps, xdom=xdom, std=[std_ret, std_rt], dashed=[False, True], ylab="return")
         rew_leg, rew_leg_h = _legend_svg([(FLAT["accent"], "proxy reward"), (FLAT["crit"], "true reward")], 0, 0, 360)
@@ -1041,61 +1121,34 @@ def render_report_svg(d, v, title, width=900):
         rew_chart = _lc_svg([ret], [FLAT["accent"]], xpos=cps, xdom=xdom, std=[std_ret], ylab="return")
         rew_leg, rew_leg_h = _legend_svg([(FLAT["accent"], "reward"), (FLAT["accent"], "±1 s.d.")], 0, 0, 360)
 
-    c_tr = "▲ rising" if v["cov_trend"] == "rising" else "▼ falling" if v["cov_trend"] == "falling" else "→ holding"
+    # State coverage -- perplexity vs the run's own peak-reach ceiling and the 20% flag line
+    pc = _panel_coverage(v)
     cov_leg, cov_leg_h = _legend_svg([(FLAT["accent"], "perplexity (effective states)"), (FLAT["fnt"], "distinct states / checkpoint"),
                                        (FLAT["mut"], "peak reach (max)"), (FLAT["crit"], "20% line")], 0, 0, 360)
-    tau = v.get("tau", 0.20); contracting = v.get("cov_contracting", False)
-    peakn = int(round(float(v.get("peak_nodes") or 0))); cov_pct = None if v.get("footprint_frac") is None else int(round(100 * v["footprint_frac"]))
-    if peakn <= 0 or cov_pct is None:
-        c_why, c_st = "Not enough state-visitation data to measure coverage for this run.", "obs"
-    elif v["footprint_flag"]:
-        c_why, c_st = (f"By the end the agent effectively occupies {cov_pct}% of the {peakn} distinct states it reached at its widest during training "
-                        f"(perplexity vs the peak-reach ceiling), under the {int(round(tau*100))}% line. It has collapsed onto a fraction of the territory it once explored."), "flag"
-    else:
-        base = (f"By the end the agent effectively occupies {cov_pct}% of the {peakn} distinct states it reached at its widest during training "
-                f"(perplexity vs the peak-reach ceiling), at or above the {int(round(tau*100))}% line.")
-        c_why, c_st = base + (" Its footprint is shrinking over training (perplexity trends down), though it stays above the line." if contracting else ""), ("watch" if contracting else "obs")
-    _peakv = float(v.get("peak_nodes") or 0.0); cov_hl = []
-    if _peakv > 0:
-        cov_hl = [(_peakv, f"peak reach {int(round(_peakv))}", FLAT["mut"]), (tau * _peakv, f"{int(round(tau*100))}% line", FLAT["crit"])]
+    cov_hl = [(_peakv, f"peak reach {int(round(_peakv))}", FLAT["mut"]), (tau * _peakv, f"{int(round(tau*100))}% line", FLAT["crit"])] if _peakv > 0 else []
     cov_chart = _lc_svg([perp, nodes], [FLAT["accent"], FLAT["fnt"]], xpos=cps, xdom=xdom, ylab="effective states", ymin0=True, hlines=cov_hl)
 
-    kindp = (KINDP[KKEY.index(dom)] if v["kind_clear"] else "several aspects at once")
-    mix = f"When it does change, most of that change is in {kindp} ({ksh[0]:.0f}% where it goes, {ksh[1]:.0f}% which actions, {ksh[2]:.0f}% action order)."
-    if v["static"]: b_why, b_tr = "Its behaviour never changes by more than the noise floor at any checkpoint.", "static"
-    elif ss == "settled" and v["settle_idx"] and v["settle_idx"] > 0: b_why, b_tr = (f"It changes early, then stops: after about {v['settle_frac']*100:.0f}% of training its behaviour stays below the noise floor. {mix}", f"settles ~{v['settle_frac']*100:.0f}%")
-    elif ss == "settled": b_why, b_tr = f"Its behaviour stays around the noise floor the whole time. {mix}", "at floor"
-    elif ss == "converging": b_why, b_tr = f"It has not settled yet, but its shift magnitude is shrinking toward the noise floor, so it looks on track to settle with more training. {mix}", "still settling"
-    else: b_why, b_tr = f"Its behaviour keeps changing and the shift magnitude is not shrinking toward the noise floor. {mix}", "unsettled"
+    # Behavioural change -- shift channels vs their noise floor (only a frozen policy is a validated flag)
+    pb = _panel_behaviour(v)
     shift_leg, shift_leg_h = _legend_svg([(FLAT["c1"], "topological shift"), (FLAT["c2"], "strategic shift"), (FLAT["c3"], "sequential shift"), ("dash", "noise floor")], 0, 0, 360)
     shift_chart = _lc_svg([Rn[0], Rn[1], Rn[2]], [FLAT["c1"], FLAT["c2"], FLAT["c3"]], floor=np.maximum.reduce(floor_n), xpos=xmid, xdom=xdom, yr=(0, 1), ticks=cps, ylab="shift (norm.)")
-    b_st = "flag" if v["static"] else "obs"
 
-    TRAJ = {"grew": "Overall the footprint grows and stays near its widest.",
-            "grew_then_contracted": "Overall the footprint grows to a peak, then contracts, dropping some of the states it had reached.",
-            "shrank": "Overall the footprint shrinks over training.",
-            "stable": "Overall the footprint stays about the same size, turning over in place."}
-    TIMING = {"front-loaded": " The adding and dropping happens mostly early, then tapers off (healthy consolidation).",
-              "sustained": " The footprint keeps being restructured through training (discovery and abandonment persist), the perpetual-reshaping signature.",
-              "steady": " Adding and dropping continue at a fairly steady rate.", "negligible": ""}
-    if tp is None:
+    # Footprint turnover -- per-checkpoint discovery / abandonment / restructure (or a placeholder if missing)
+    pt = _panel_turnover(v)
+    if not pt.get("available", True):
         turn_chart = _placeholder_svg(360, 120, "decomposition not available")
         turn_leg, turn_leg_h = "", 0.0
-        t_why = ("The topological-shift decomposition (discovery / abandonment / restructure) was not recorded for this run, "
-                 "so footprint turnover cannot be shown. Re-run Stage 1 with the decomposition enabled to populate this panel.")
-        traj_lbl = "—"
+        turn_label = "—"
     else:
-        t_why = (f"This looks only at how the set of places it visits changes. {tp['discovery']:.0f}% is finding new places, "
-                 f"{tp['abandonment']:.0f}% is dropping places it used to visit, {tp['reweighting']:.0f}% is restructure (revisiting the same places more or less often). "
-                 f"{TRAJ[tp['foot_traj']]}{TIMING.get(tp.get('disc_trend'), '')}")
         turn_leg, turn_leg_h = _legend_svg([(FLAT["good"], "discovery"), (FLAT["crit"], "abandonment"), (FLAT["purple"], "restructure")], 0, 0, 360)
-        traj_lbl = {"grew": "▲ grew", "grew_then_contracted": "▲▼ peaked", "shrank": "▼ shrank", "stable": "→ stable"}[tp["foot_traj"]]
+        turn_label = chip(pt)
         turn_chart = _stackts_svg([disc, aban, over], [FLAT["good"], FLAT["crit"], FLAT["purple"]], xpos=xmid, xdom=xdom, ylab="turnover", ticks=cps)
 
-    rows = [("Reward", r_tr, r_col, r_st, r_why, rew_chart, rew_leg, rew_leg_h),
-            ("State coverage", c_tr, None, c_st, c_why, cov_chart, cov_leg, cov_leg_h),
-            ("Behavioural change", b_tr, None, b_st, b_why, shift_chart, shift_leg, shift_leg_h),
-            ("Footprint turnover", traj_lbl, None, "obs", t_why, turn_chart, turn_leg, turn_leg_h)]
+    # (name, trend chip, chip colour, status, why, chart, legend, legend height)
+    rows = [("Reward", chip(pr), R_COLOR[pr["tone"]], pr["status"], pr["why"], rew_chart, rew_leg, rew_leg_h),
+            ("State coverage", chip(pc), None, pc["status"], pc["why"], cov_chart, cov_leg, cov_leg_h),
+            ("Behavioural change", chip(pb), None, pb["status"], pb["why"], shift_chart, shift_leg, shift_leg_h),
+            ("Footprint turnover", turn_label, None, pt["status"], pt["why"], turn_chart, turn_leg, turn_leg_h)]
 
     PAD_X, PAD_TOP, PAD_BOT = 20, 42, 40
     content_w = min(width - 2 * PAD_X, 880)
